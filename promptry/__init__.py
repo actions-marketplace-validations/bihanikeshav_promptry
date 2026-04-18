@@ -41,6 +41,18 @@ from promptry.trajectory import (
     assert_tool_input_matches,
     assert_final_answer_present,
 )
+from promptry.capture import (
+    Capture,
+    CaptureRecorder,
+    ReplayResult,
+    get_recorder,
+    default_recorder,
+    capture_enabled,
+    load_captures,
+    iter_captures,
+    replay_captures,
+    redact_sensitive,
+)
 
 __all__ = [
     "track",
@@ -86,4 +98,14 @@ __all__ = [
     "assert_no_redundant_tool_calls",
     "assert_tool_input_matches",
     "assert_final_answer_present",
+    "Capture",
+    "CaptureRecorder",
+    "ReplayResult",
+    "get_recorder",
+    "default_recorder",
+    "capture_enabled",
+    "load_captures",
+    "iter_captures",
+    "replay_captures",
+    "redact_sensitive",
 ]
