@@ -104,7 +104,7 @@ def compare_with_baseline(
     return comparisons, hints
 
 
-def format_comparison(comparisons, hints=None) -> str:
+def format_comparison(comparisons, hints=None, *, explanation: str | None = None) -> str:
     """Format comparison results for terminal output."""
     lines = []
 
@@ -125,4 +125,125 @@ def format_comparison(comparisons, hints=None) -> str:
         for h in hints:
             lines.append(f"    -> {h.cause} ({h.detail})")
 
+    if explanation:
+        lines.append("")
+        lines.append("  LLM explanation:")
+        for line in explanation.splitlines() or [explanation]:
+            lines.append(f"    {line}")
+
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Optional LLM-powered regression explanations
+# ---------------------------------------------------------------------------
+
+_EXPLAIN_DISCLAIMER = "(LLM-generated; verify)"
+
+_EXPLAIN_PROMPT = """You are a senior engineer triaging an LLM eval regression.
+
+Suite: {suite_name}
+Overall score: {baseline_score} -> {current_score}
+
+Per-metric deltas:
+{metric_lines}
+
+Deterministic hints already derived:
+{hint_lines}
+
+Example failing tests (up to 5):
+{failure_lines}
+
+In 2-4 sentences aimed at the engineer who owns this pipeline, explain what likely broke and what to check first. Be concise. Do not repeat the raw numbers above. Do not use bullet points."""
+
+
+def explain_regression(
+    current: "SuiteResult",
+    baseline_run,
+    comparisons: list[ComparisonResult],
+    hints: list[RootCauseHint],
+    storage=None,
+) -> str | None:
+    """Generate a short natural-language explanation using the configured judge.
+
+    Returns None if no judge is set or if there's no regression to explain.
+    Never raises -- judge errors are swallowed and None is returned.
+    """
+    from promptry.assertions import get_judge
+
+    judge = get_judge()
+    if judge is None:
+        return None
+
+    if not comparisons or not any(not c.passed for c in comparisons):
+        return None
+
+    # build per-metric delta lines
+    metric_lines_list = []
+    for c in comparisons:
+        marker = "OK" if c.passed else "REGRESSION"
+        if c.metric.endswith("pass rate"):
+            metric_lines_list.append(
+                f"- {c.metric}: {c.baseline_value:.0%} -> {c.current_value:.0%} [{marker}]"
+            )
+        else:
+            metric_lines_list.append(
+                f"- {c.metric}: {c.baseline_value:.3f} -> {c.current_value:.3f} [{marker}]"
+            )
+    metric_lines = "\n".join(metric_lines_list) or "- (none)"
+
+    # deterministic hints
+    if hints:
+        hint_lines = "\n".join(f"- {h.cause}: {h.detail}" for h in hints)
+    else:
+        hint_lines = "- (none)"
+
+    # up to 5 failing tests with their errors
+    failing = [t for t in current.tests if not t.passed][:5]
+    if failing:
+        failure_lines_list = []
+        for t in failing:
+            err = (t.error or "").strip().replace("\n", " ")
+            if len(err) > 200:
+                err = err[:200] + "..."
+            failure_lines_list.append(f"- {t.test_name}: {err or '(no error message)'}")
+        failure_lines = "\n".join(failure_lines_list)
+    else:
+        failure_lines = "- (no per-test failure details available)"
+
+    baseline_score = (
+        f"{baseline_run.overall_score:.3f}"
+        if getattr(baseline_run, "overall_score", None) is not None
+        else "n/a"
+    )
+    current_score = (
+        f"{current.overall_score:.3f}"
+        if current.overall_score is not None
+        else "n/a"
+    )
+
+    prompt = _EXPLAIN_PROMPT.format(
+        suite_name=current.suite_name,
+        baseline_score=baseline_score,
+        current_score=current_score,
+        metric_lines=metric_lines,
+        hint_lines=hint_lines,
+        failure_lines=failure_lines,
+    )
+
+    # hard truncation guard -- keep well under 2000 tokens (~8000 chars)
+    if len(prompt) > 8000:
+        prompt = prompt[:8000] + "\n...(truncated)"
+
+    try:
+        raw = judge(prompt)
+    except Exception:
+        return None
+
+    if not raw:
+        return None
+
+    text = str(raw).strip()
+    if not text:
+        return None
+    return f"{text} {_EXPLAIN_DISCLAIMER}"

@@ -348,12 +348,13 @@ def run_cmd(
     model_version: Optional[str] = typer.Option(None, "--model-version"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write HTML report to file."),
     markdown: Optional[Path] = typer.Option(None, "--markdown", help="Write Markdown summary to file (for PR comments)."),
+    explain: bool = typer.Option(False, "--explain", help="Generate an LLM explanation for regressions (requires judge configured via set_judge)."),
 ):
     """Run an eval suite. Exit code 1 on regression."""
     _import_module(module)
 
     from promptry.runner import run_suite
-    from promptry.comparison import compare_with_baseline, format_comparison
+    from promptry.comparison import compare_with_baseline, format_comparison, explain_regression
 
     try:
         result = run_suite(
@@ -390,7 +391,21 @@ def run_cmd(
         if not comparisons:
             console.print("  [yellow]No baseline found to compare against.[/yellow]")
         else:
-            fmt_output = format_comparison(comparisons, hints)
+            explanation = None
+            if explain and any(not c.passed for c in comparisons):
+                from promptry.storage import get_storage
+
+                storage = get_storage()
+                runs = storage.get_eval_runs(result.suite_name, limit=10)
+                baseline_run = next(
+                    (r for r in runs if r.id != result.run_id), None
+                )
+                if baseline_run is not None:
+                    explanation = explain_regression(
+                        result, baseline_run, comparisons, hints, storage=storage
+                    )
+
+            fmt_output = format_comparison(comparisons, hints, explanation=explanation)
             console.print(fmt_output)
 
             if any(not c.passed for c in comparisons):
