@@ -876,6 +876,50 @@ def watch_cmd(
         console.print("\n[dim]Stopped[/dim]")
 
 
+@app.command("sample")
+def sample_cmd(
+    suite_name: Optional[str] = typer.Argument(None, help="Suite to run (default: all suites in module)."),
+    module: str = typer.Option("evals", "--module", "-m", help="Module containing suites."),
+    every: int = typer.Option(60, "--every", "-n", help="Sample interval in seconds (minimum 5)."),
+    compare: Optional[str] = typer.Option(None, "--compare", "-c", help="Baseline tag to compare against each run."),
+    max_runs: Optional[int] = typer.Option(None, "--max-runs", help="Upper bound on iterations (default: unlimited)."),
+):
+    """Continuously re-run an eval suite on a fixed time interval.
+
+    Like cron for your prompts. Runs the given suite (or every suite in
+    the module) immediately, then every --every seconds, printing each
+    iteration to the console. Ctrl+C to stop.
+    """
+    import time
+    from datetime import datetime
+
+    if every < 5:
+        console.print(f"[red]Error:[/red] --every must be at least 5 seconds (got {every}).")
+        raise typer.Exit(2)
+
+    header_compare = f"compare={compare}" if compare else "no compare"
+    console.print(
+        f"[bold]promptry sample[/bold] — {suite_name or 'all'} / {module} / every {every}s / {header_compare}"
+    )
+    console.print("  Press Ctrl+C to stop\n")
+
+    iteration = 0
+    try:
+        while True:
+            iteration += 1
+            ts = datetime.now().strftime("%H:%M:%S")
+            console.print(f"[dim][{ts}] iteration {iteration} ————————————[/dim]")
+            _run_suite_reload(suite_name, module, compare)
+
+            if max_runs is not None and iteration >= max_runs:
+                break
+
+            time.sleep(every)
+    except KeyboardInterrupt:
+        console.print(f"\n[dim]Stopped after {iteration} iterations[/dim]")
+        raise typer.Exit(0)
+
+
 # ---- init ----
 
 _EXAMPLE_EVAL = '''"""Example eval suite for promptry."""
