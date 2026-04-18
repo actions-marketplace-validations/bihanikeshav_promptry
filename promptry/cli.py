@@ -1353,9 +1353,8 @@ def cost_report_cmd(
 def dashboard_cmd(
     port: int = typer.Option(8420, "--port", "-p", help="Port to serve on."),
     no_open: bool = typer.Option(False, "--no-open", help="Don't auto-open browser."),
-    local: bool = typer.Option(False, "--local", help="Open localhost instead of hosted URL."),
 ):
-    """Start the promptry dashboard web UI."""
+    """Start the promptry dashboard web UI (local-only)."""
     try:
         import uvicorn
     except ImportError:
@@ -1363,19 +1362,16 @@ def dashboard_cmd(
         console.print("  Install with: pip install promptry[dashboard]")
         raise typer.Exit(1)
 
-    hosted_url = f"https://promptry.meownikov.xyz/dashboard?port={port}"
     local_url = f"http://localhost:{port}"
-    open_url = local_url if local else hosted_url
 
     console.print(f"\n[bold]promptry dashboard[/bold] starting on port {port}\n")
-    console.print(f"  Local API:  {local_url}/api/health")
-    console.print(f"  Dashboard:  {hosted_url}")
-    console.print(f"  Local UI:   {local_url}/")
+    console.print(f"  UI:    {local_url}/")
+    console.print(f"  API:   {local_url}/api/health")
     console.print()
 
     if not no_open:
         import webbrowser
-        webbrowser.open(open_url)
+        webbrowser.open(local_url)
 
     from promptry.dashboard.server import app as dashboard_app
     uvicorn.run(dashboard_app, host="127.0.0.1", port=port, log_level="info")
@@ -1610,3 +1606,7 @@ def doctor_cmd():
 
 def main():
     app()
+
+
+if __name__ == "__main__":
+    main()

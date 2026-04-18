@@ -42,6 +42,23 @@ from typing import Any, Callable, Iterable
 DEFAULT_CAPTURE_DIR = ".promptry/captures"
 
 
+# Per-path locks shared across all CaptureRecorder instances. Two
+# recorders writing to the same file must serialize — otherwise we
+# race on file.open/write and lose lines.
+_PATH_LOCKS: dict[str, threading.Lock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    key = str(path.resolve())
+    with _PATH_LOCKS_GUARD:
+        lock = _PATH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PATH_LOCKS[key] = lock
+        return lock
+
+
 @dataclass
 class Capture:
     """One recorded production invocation."""
@@ -99,8 +116,10 @@ class CaptureRecorder:
         self.task = task
         self.sample_rate = max(0.0, min(1.0, float(sample_rate)))
         self.scrub = scrub
-        self._lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Per-path lock so multiple CaptureRecorder instances targeting
+        # the same file don't race and lose lines.
+        self._lock = _lock_for(self.path)
 
     def write(
         self,

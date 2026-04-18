@@ -52,6 +52,9 @@ class EvalResultRecord:
 
 @dataclass
 class TestResult:
+    # Keep pytest from trying to collect this as a test class.
+    __test__ = False
+
     test_name: str
     passed: bool
     assertions: list  # list[AssertionResult] -- avoids circular import

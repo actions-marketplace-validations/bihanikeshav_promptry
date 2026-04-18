@@ -1074,7 +1074,7 @@ pip install promptry[dashboard]
 promptry dashboard
 ```
 
-This starts a local API server and opens the dashboard. The UI is hosted at `promptry.meownikov.xyz/dashboard` and connects to your local server — data never leaves your machine.
+This starts a local web server on `http://localhost:8420` and opens your browser there. The UI, the API, and the data all live on your machine — nothing leaves your laptop.
 
 **What you get:**
 

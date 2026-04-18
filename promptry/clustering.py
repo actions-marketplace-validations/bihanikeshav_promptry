@@ -247,13 +247,22 @@ def _collect_failures(storage, suite_name: str, days: int, limit: int) -> list:
 
 
 def _parse_iso(s: str) -> datetime | None:
+    """Parse a timestamp string into a timezone-aware UTC datetime.
+
+    Accepts ISO-8601 with or without a 'Z' suffix, and SQLite's
+    'YYYY-MM-DD HH:MM:SS' format (naive). Naive inputs are assumed
+    to be UTC, not local — local-timezone assumptions would silently
+    skew the 'last N days' window.
+    """
     if not isinstance(s, str):
         return None
     try:
-        # handle 'Z' suffix
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _attr_ts(obj) -> str | None:
