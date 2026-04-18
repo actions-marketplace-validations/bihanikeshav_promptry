@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.9.5 (unreleased — waiting on user sign-off before 1.0)
+
+### New features
+
+- **Agent trajectory model** (`promptry.trajectory`) — a `Trajectory`
+  dataclass with `.from_openai` / `.from_anthropic` / `.from_dicts`
+  constructors, plus `analyze_trajectory` for structural stats
+  (step count, tool counts, loops detected, token/duration totals)
+  and four new assertions: `assert_trajectory_max_steps`,
+  `assert_no_redundant_tool_calls`, `assert_tool_input_matches`,
+  `assert_final_answer_present`.
+- **Trajectory diff** — `diff_trajectories(baseline, candidate)`
+  returns a `TrajectoryDiff` with added/removed/reordered tool
+  calls and step/duration/token deltas.
+- **Production capture + replay** (`promptry.capture`) —
+  `CaptureRecorder` writes append-only JSONL at
+  `.promptry/captures/<task>.jsonl`. `default_recorder(task)` is
+  drop-in prod capture when `PROMPTRY_CAPTURE=1` is set.
+  `replay_captures(caps, pipeline, compare=...)` runs captured
+  inputs through the candidate pipeline and reports drift vs
+  the baseline output. `redact_sensitive()` scrub helper for
+  metadata at capture time.
+- **Failure clustering** (`promptry.clustering`) —
+  `cluster_failures(suite, days=7)` groups failing assertions by
+  signature so recurring patterns are visible. Semantic mode
+  (sentence-transformers) with string fallback.
+- **Garak result importer** (`promptry.garak`) —
+  `promptry garak import REPORT.jsonl` reads a NVIDIA garak
+  JSONL report and writes each (probe, detector) pair into
+  promptry's own storage. Garak runs show up as normal suites,
+  drift/history/comparison work on them for free. No runtime
+  dep on garak — just parses its output file.
+
+### Bug fixes
+
+- `python -m promptry.cli` silently exited with rc=0 — missing
+  `if __name__ == "__main__"` guard. Added, plus a new `__main__.py`
+  so `python -m promptry` also works.
+- `cluster_failures` raised `TypeError` on naive-vs-aware datetime
+  comparison. Parser now forces UTC.
+- Concurrent `CaptureRecorder` instances writing to the same file
+  raced and lost entries. Now a path-keyed global lock registry
+  serializes writes across instances.
+- Dashboard CLI advertised a phantom hosted URL
+  `promptry.meownikov.xyz/dashboard?port=N` that doesn't exist.
+  Removed — dashboard is local-only, matching the "no cloud"
+  positioning.
+- Dashboard auto-open raced uvicorn's port bind and often opened
+  the browser before the server was ready, showing
+  `ERR_CONNECTION_REFUSED`. Now the browser open is deferred
+  until `/api/health` responds.
+- When the dashboard port was already in use, uvicorn silently
+  exited after printing startup-looking messages. Now the CLI
+  probes the port first and exits with a clear error.
+- pytest `TestResult` collection warning spammed every test run.
+  Fixed with `__test__ = False`.
+
 ## 0.8.0
 
 ### New features

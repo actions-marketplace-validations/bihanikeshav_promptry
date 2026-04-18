@@ -23,10 +23,12 @@ prompt_app = typer.Typer(help="Manage prompt versions.", no_args_is_help=True)
 monitor_app = typer.Typer(help="Background monitoring.", no_args_is_help=True)
 templates_app = typer.Typer(help="Safety and jailbreak test templates.", no_args_is_help=True)
 dataset_app = typer.Typer(help="Manage test datasets.", no_args_is_help=True)
+garak_app = typer.Typer(help="Import reports from NVIDIA garak red-team runs.", no_args_is_help=True)
 app.add_typer(prompt_app, name="prompt")
 app.add_typer(monitor_app, name="monitor")
 app.add_typer(templates_app, name="templates")
 app.add_typer(dataset_app, name="dataset")
+app.add_typer(garak_app, name="garak")
 
 console = Console()
 
@@ -1353,6 +1355,7 @@ def cost_report_cmd(
 def dashboard_cmd(
     port: int = typer.Option(8420, "--port", "-p", help="Port to serve on."),
     no_open: bool = typer.Option(False, "--no-open", help="Don't auto-open browser."),
+    local: bool = typer.Option(False, "--local", help="Deprecated, kept for backwards compat."),
 ):
     """Start the promptry dashboard web UI (local-only)."""
     try:
@@ -1362,16 +1365,52 @@ def dashboard_cmd(
         console.print("  Install with: pip install promptry[dashboard]")
         raise typer.Exit(1)
 
+    import socket
+    import threading
+    import time
+    import webbrowser
+    import urllib.request
+    import urllib.error
+
     local_url = f"http://localhost:{port}"
+
+    # Fail fast if the port is already taken — uvicorn's error would otherwise
+    # look like a successful startup followed by a shutdown, confusing users.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("127.0.0.1", port))
+    except OSError:
+        console.print(
+            f"[red]Error:[/red] port {port} is already in use. "
+            f"Pass --port with a free port, or stop the other process."
+        )
+        probe.close()
+        raise typer.Exit(1)
+    finally:
+        probe.close()
 
     console.print(f"\n[bold]promptry dashboard[/bold] starting on port {port}\n")
     console.print(f"  UI:    {local_url}/")
     console.print(f"  API:   {local_url}/api/health")
     console.print()
 
+    # Only open the browser AFTER uvicorn has bound the port — otherwise the
+    # browser races the server and shows ERR_CONNECTION_REFUSED.
     if not no_open:
-        import webbrowser
-        webbrowser.open(local_url)
+        def _open_when_ready():
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                try:
+                    with urllib.request.urlopen(
+                        f"{local_url}/api/health", timeout=0.5,
+                    ) as r:
+                        if r.status < 500:
+                            break
+                except (urllib.error.URLError, ConnectionError, OSError, TimeoutError):
+                    time.sleep(0.2)
+            webbrowser.open(local_url)
+
+        threading.Thread(target=_open_when_ready, daemon=True).start()
 
     from promptry.dashboard.server import app as dashboard_app
     uvicorn.run(dashboard_app, host="127.0.0.1", port=port, log_level="info")
@@ -1602,6 +1641,31 @@ def doctor_cmd():
         _warn("LLM judge", "not configured -- call set_judge() to enable assert_llm")
 
     console.print(f"\n{ok_count} ok, {warn_count} warnings")
+
+
+@garak_app.command("import")
+def garak_import(
+    report: Path = typer.Argument(..., exists=True, readable=True, help="Path to a garak .report.jsonl file."),
+    suite_name: Optional[str] = typer.Option(
+        None, "--suite-name", "-s",
+        help="Override the auto-derived suite name (default: garak-<model-or-filename>).",
+    ),
+):
+    """Import a garak JSONL report into the promptry store.
+
+    Each (probe, detector) pair becomes one eval_result. All rows from
+    the file share one eval_run, so drift and history work across
+    multiple imports of the same probe set.
+    """
+    from promptry.garak import import_report, format_import_summary
+
+    try:
+        summary = import_report(report, suite_name=suite_name)
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    console.print(format_import_summary(summary))
 
 
 def main():

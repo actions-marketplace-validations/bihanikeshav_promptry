@@ -1,6 +1,6 @@
 """promptry - regression protection for LLM pipelines."""
 
-__version__ = "0.9.0.dev0"
+__version__ = "0.9.5"
 
 from promptry.registry import track, track_context, vote, save_dataset, load_dataset, PromptRegistry
 from promptry.feedback import analyze_votes
@@ -58,6 +58,12 @@ from promptry.clustering import (
     format_clustering_report,
     ClusteringReport,
     FailureCluster,
+)
+from promptry.garak import (
+    import_report as import_garak_report,
+    parse_garak_jsonl,
+    GarakEval,
+    GarakRun,
 )
 
 __all__ = [
@@ -118,4 +124,8 @@ __all__ = [
     "format_clustering_report",
     "ClusteringReport",
     "FailureCluster",
+    "import_garak_report",
+    "parse_garak_jsonl",
+    "GarakEval",
+    "GarakRun",
 ]
