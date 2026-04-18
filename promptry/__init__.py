@@ -53,6 +53,12 @@ from promptry.capture import (
     replay_captures,
     redact_sensitive,
 )
+from promptry.clustering import (
+    cluster_failures,
+    format_clustering_report,
+    ClusteringReport,
+    FailureCluster,
+)
 
 __all__ = [
     "track",
@@ -108,4 +114,8 @@ __all__ = [
     "iter_captures",
     "replay_captures",
     "redact_sensitive",
+    "cluster_failures",
+    "format_clustering_report",
+    "ClusteringReport",
+    "FailureCluster",
 ]
