@@ -260,6 +260,49 @@ def dataset_show(
     console.print(json.dumps(dataset["items"], indent=2))
 
 
+@dataset_app.command("generate")
+def dataset_generate(
+    spec_file: Path = typer.Argument(..., help="Path to a .yaml or .toml spec file."),
+    output: Path = typer.Option(
+        Path("generated_suite.py"), "--output", "-o", help="Path to write the Python file."
+    ),
+    count: Optional[int] = typer.Option(None, "--count", "-n", help="Override the count in the spec."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print to stdout instead of writing a file."),
+):
+    """Generate a @suite-decorated Python file from an LLM using a spec."""
+    from promptry.assertions import get_judge
+    from promptry import dataset_gen
+
+    judge = get_judge()
+    if judge is None:
+        console.print(
+            "[red]Error:[/red] No LLM judge configured. "
+            "Call promptry.assertions.set_judge(fn) in a promptry_config.py "
+            "or similar before running this command."
+        )
+        raise typer.Exit(1)
+
+    if not spec_file.is_file():
+        console.print(f"[red]Error:[/red] Spec file not found: {spec_file}")
+        raise typer.Exit(1)
+
+    try:
+        result = dataset_gen.generate_from_spec(spec_file, judge, count=count)
+    except (ValueError, RuntimeError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    if dry_run:
+        console.print(result.code)
+        return
+
+    output.write_text(result.code, encoding="utf-8")
+    console.print(
+        f"[green]Wrote[/green] {output} "
+        f"({len(result.cases)} cases, suite {result.spec.suite_name!r})"
+    )
+
+
 # ---- eval commands ----
 
 
