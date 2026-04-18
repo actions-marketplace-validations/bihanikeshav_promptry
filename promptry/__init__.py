@@ -1,6 +1,6 @@
 """promptry - regression protection for LLM pipelines."""
 
-__version__ = "0.7.0"
+__version__ = "0.9.0.dev0"
 
 from promptry.registry import track, track_context, vote, save_dataset, load_dataset, PromptRegistry
 from promptry.feedback import analyze_votes
@@ -29,6 +29,18 @@ from promptry.conversation import Conversation, Turn
 from promptry.runner import run_suite
 from promptry.drift import DriftMonitor
 from promptry.templates import get_templates, run_safety_audit
+from promptry.trajectory import (
+    Trajectory,
+    TrajectoryStep,
+    TrajectoryDiff,
+    analyze_trajectory,
+    diff_trajectories,
+    format_trajectory_diff,
+    assert_trajectory_max_steps,
+    assert_no_redundant_tool_calls,
+    assert_tool_input_matches,
+    assert_final_answer_present,
+)
 
 __all__ = [
     "track",
@@ -64,4 +76,14 @@ __all__ = [
     "DriftMonitor",
     "get_templates",
     "run_safety_audit",
+    "Trajectory",
+    "TrajectoryStep",
+    "TrajectoryDiff",
+    "analyze_trajectory",
+    "diff_trajectories",
+    "format_trajectory_diff",
+    "assert_trajectory_max_steps",
+    "assert_no_redundant_tool_calls",
+    "assert_tool_input_matches",
+    "assert_final_answer_present",
 ]
