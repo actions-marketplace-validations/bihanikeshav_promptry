@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import typer.main
 from typer.testing import CliRunner
 
 from promptry.cli import app, _resolve_module_paths, _run_suite_reload
@@ -42,15 +43,16 @@ def _write_module(dir_path: Path, name: str, body: str) -> Path:
 
 def test_watch_command_registered_with_expected_options():
     """The command is discoverable and exposes the documented flags."""
-    # Force a wide terminal so Rich doesn't truncate option names
-    # (CI runners default to ~80 cols, which collapses "--compare" to "--compa…").
-    result = runner.invoke(app, ["watch", "--help"], env={"COLUMNS": "200"})
-    assert result.exit_code == 0
-    out = result.output
-    assert "Watch files and re-run suites" in out
-    assert "--module" in out
-    assert "--compare" in out
-    assert "--debounce" in out
+    # Introspect the Click command object directly instead of parsing Rich's
+    # rendered --help output — that's TTY-width-dependent and flakes on CI
+    # runners where Rich truncates option names.
+    click_app = typer.main.get_command(app)
+    watch_cmd = click_app.commands["watch"]
+    flags = {opt for p in watch_cmd.params for opt in p.opts}
+    assert "--module" in flags
+    assert "--compare" in flags
+    assert "--debounce" in flags
+    assert (watch_cmd.help or "").startswith("Watch files and re-run suites")
 
 
 def test_resolve_module_paths_finds_module_and_siblings(tmp_path, monkeypatch):
