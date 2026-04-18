@@ -45,11 +45,24 @@ def get_storage() -> BaseStorage:
 
 
 def reset_storage():
-    """Close and discard the singleton storage instance."""
+    """Close and discard the singleton storage instance.
+
+    Also resets the prompt registry — it caches a reference to the
+    storage instance, and without this reset, subsequent track() calls
+    would operate on a closed database.
+    """
     global _storage_instance
     if _storage_instance is not None:
         _storage_instance.close()
     _storage_instance = None
+
+    # The registry caches our storage; drop its cache too so track()
+    # picks up the fresh instance on next call.
+    try:
+        from promptry.registry import reset_registry
+        reset_registry()
+    except ImportError:
+        pass
 
 
 __all__ = ["BaseStorage", "SQLiteStorage", "Storage", "get_storage", "reset_storage"]
