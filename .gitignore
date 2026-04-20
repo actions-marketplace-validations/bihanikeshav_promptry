@@ -34,3 +34,8 @@ seed_mock_data.py
 /package-lock.json
 /diagram.d2
 /render_d2.mjs
+
+# rag_lab regenerable artifacts (heavy / contains real LLM responses)
+mockdb/rag_lab/chroma/
+mockdb/rag_lab/data/
+mockdb/rag_lab/responses_cache.json
