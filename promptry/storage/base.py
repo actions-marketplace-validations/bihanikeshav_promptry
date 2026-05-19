@@ -115,6 +115,13 @@ class BaseStorage(ABC):
     def get_cost_data(self, days: int = 7, name: str | None = None, model: str | None = None) -> dict:
         ...
 
+    # ---- invocations ----
+
+    @abstractmethod
+    def record_invocation(self, prompt_name: str, metadata: dict | None = None, prompt_version: int | None = None) -> int:
+        """Append one row to the per-call ledger. No dedup. Returns row id."""
+        ...
+
     # ---- datasets ----
 
     @abstractmethod

@@ -175,6 +175,77 @@ def track(content: str, name: str, tag=None, metadata=None) -> str:
     return content
 
 
+def track_invocation(
+    name: str,
+    metadata: dict | None = None,
+    prompt_version: int | None = None,
+) -> None:
+    """Record one LLM invocation, separate from prompt-template versioning.
+
+    Use this for per-call telemetry (tokens, cost, latency, model) where
+    every call should produce a row regardless of whether the rendered
+    prompt is byte-identical to a previous one. ``track()`` versions
+    content and dedups by hash — that's the wrong shape for a cost
+    dashboard, because the second identical call gets silently dropped.
+
+    Cost is auto-computed when ``metadata`` includes ``model`` plus token
+    counts (any of ``tokens_in``/``prompt_tokens``/``input_tokens`` and the
+    output equivalents).
+    """
+    from promptry.config import get_config
+
+    config = get_config()
+    if config.storage.mode == "off":
+        return
+
+    meta = dict(metadata) if metadata else {}
+
+    # Auto-cost: same logic as track(), inlined to avoid coupling the
+    # two paths so changes to one don't silently break the other.
+    if "cost" not in meta and meta.get("model"):
+        try:
+            from promptry.pricing import calculate_cost
+
+            tokens_in = int(
+                meta.get("tokens_in",
+                         meta.get("prompt_tokens",
+                                  meta.get("input_tokens", 0))) or 0
+            )
+            tokens_out = int(
+                meta.get("tokens_out",
+                         meta.get("completion_tokens",
+                                  meta.get("output_tokens", 0))) or 0
+            )
+            cached_tokens = int(meta.get("cached_tokens", 0) or 0)
+            cache_write_tokens = int(meta.get("cache_write_tokens", 0) or 0)
+            if tokens_in or tokens_out:
+                auto_cost = calculate_cost(
+                    meta["model"],
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    cached_tokens=cached_tokens,
+                    cache_write_tokens=cache_write_tokens,
+                )
+                if auto_cost is not None:
+                    meta["cost"] = auto_cost
+        except Exception:
+            import logging
+            logging.getLogger("promptry").debug(
+                "auto cost computation failed", exc_info=True
+            )
+
+    try:
+        registry = _get_registry()
+        registry.storage.record_invocation(
+            prompt_name=name, metadata=meta, prompt_version=prompt_version,
+        )
+    except Exception:
+        import logging
+        logging.getLogger("promptry").warning(
+            "track_invocation() storage write failed", exc_info=True
+        )
+
+
 def track_context(
     chunks: list[str],
     name: str,

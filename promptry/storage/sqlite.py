@@ -97,6 +97,21 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         )""",
         "CREATE INDEX IF NOT EXISTS idx_datasets_name ON datasets(name)",
     ]),
+    (3, "add invocations table for per-call metrics", [
+        # Per-call ledger, distinct from prompts (which versions content).
+        # Every LLM invocation gets one row, even if the rendered prompt
+        # is byte-identical to a previous call. This is the right shape
+        # for cost/latency dashboards.
+        """CREATE TABLE IF NOT EXISTS invocations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_name TEXT NOT NULL,
+            prompt_version INTEGER,
+            metadata TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_invocations_name ON invocations(prompt_name)",
+        "CREATE INDEX IF NOT EXISTS idx_invocations_created ON invocations(created_at)",
+    ]),
 ]
 
 
@@ -418,13 +433,23 @@ class SQLiteStorage(BaseStorage):
                 name_filter = " AND name = ?"
                 params.append(name)
 
+            # Pull from BOTH the legacy prompts table (which versioned per
+            # call when track() was used naively) and the new invocations
+            # table (per-call ledger). Aliasing the column lets one loop
+            # process both.
+            inv_name_filter = name_filter.replace("name", "prompt_name") if name_filter else ""
             cur = self._conn.execute(
-                f"""SELECT name, metadata, created_at
-                    FROM prompts
-                    WHERE created_at >= datetime('now', ? || ' days')
-                    {name_filter}
-                    ORDER BY created_at ASC""",
-                [f"-{days}"] + params[1:],
+                f"""
+                SELECT name, metadata, created_at FROM prompts
+                WHERE created_at >= datetime('now', ? || ' days')
+                {name_filter}
+                UNION ALL
+                SELECT prompt_name AS name, metadata, created_at FROM invocations
+                WHERE created_at >= datetime('now', ? || ' days')
+                {inv_name_filter}
+                ORDER BY created_at ASC
+                """,
+                [f"-{days}"] + params[1:] + [f"-{days}"] + params[1:],
             )
             rows = cur.fetchall()
 
@@ -657,6 +682,25 @@ class SQLiteStorage(BaseStorage):
                     "item_count": item_count,
                 })
             return results
+
+    # ---- invocations ----
+
+    def record_invocation(self, prompt_name: str, metadata: dict | None = None, prompt_version: int | None = None) -> int:
+        """Append one row to the invocations ledger.
+
+        Unlike save_prompt(), there is no dedup by content/hash — every
+        call lands as its own row. This is the right shape for cost and
+        latency dashboards where each LLM invocation is a discrete event.
+        """
+        with self._lock:
+            meta_json = json.dumps(metadata) if metadata else None
+            cur = self._conn.execute(
+                """INSERT INTO invocations (prompt_name, prompt_version, metadata)
+                   VALUES (?, ?, ?)""",
+                (prompt_name, prompt_version, meta_json),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     # ---- votes ----
 
