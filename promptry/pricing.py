@@ -31,10 +31,16 @@ RATES = {
     "grok-3":                {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
     # xAI Grok-4 family. grok-4-fast tiers are cheaper than grok-3; the
     # non-reasoning variant is what most production RAG pipelines use.
-    "grok-4":                       {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
-    "grok-4-fast":                  {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
-    "grok-4-fast-non-reasoning":    {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
-    "grok-4-fast-reasoning":        {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    # xAI deploys point-release suffixes (grok-4-1-fast-*) as the rates
+    # don't change between them; covered by explicit entries below.
+    "grok-4":                         {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
+    "grok-4-fast":                    {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    "grok-4-fast-non-reasoning":      {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    "grok-4-fast-reasoning":          {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    "grok-4-1":                       {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
+    "grok-4-1-fast":                  {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    "grok-4-1-fast-non-reasoning":    {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    "grok-4-1-fast-reasoning":        {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
 }
 
 
