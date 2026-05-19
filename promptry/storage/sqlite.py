@@ -453,8 +453,21 @@ class SQLiteStorage(BaseStorage):
             if model is not None and row_model != model:
                 continue
 
-            tokens_in = int(meta.get("tokens_in", meta.get("input_tokens", 0)) or 0)
-            tokens_out = int(meta.get("tokens_out", meta.get("output_tokens", 0)) or 0)
+            # Accept the three key spellings we've seen in the wild:
+            # - tokens_in / tokens_out (promptry's documented names)
+            # - input_tokens / output_tokens (Anthropic SDK style)
+            # - prompt_tokens / completion_tokens (OpenAI SDK style — common
+            #   when an integration just forwards the LLM response object)
+            tokens_in = int(
+                meta.get("tokens_in",
+                         meta.get("input_tokens",
+                                  meta.get("prompt_tokens", 0))) or 0
+            )
+            tokens_out = int(
+                meta.get("tokens_out",
+                         meta.get("output_tokens",
+                                  meta.get("completion_tokens", 0))) or 0
+            )
             cached_tokens = int(meta.get("cached_tokens", 0) or 0)
             cache_write_tokens = int(meta.get("cache_write_tokens", 0) or 0)
             cost = float(meta.get("cost", 0) or 0)
