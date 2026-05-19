@@ -29,6 +29,12 @@ RATES = {
     # xAI Grok (grok-2 / grok-3 era)
     "grok-2":                {"in": 2.00, "cached": 0.50, "cache_write": 2.00, "out": 10.00},
     "grok-3":                {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
+    # xAI Grok-4 family. grok-4-fast tiers are cheaper than grok-3; the
+    # non-reasoning variant is what most production RAG pipelines use.
+    "grok-4":                       {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
+    "grok-4-fast":                  {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    "grok-4-fast-non-reasoning":    {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    "grok-4-fast-reasoning":        {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
 }
 
 
