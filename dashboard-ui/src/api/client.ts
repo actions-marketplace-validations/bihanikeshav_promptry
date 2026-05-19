@@ -14,21 +14,14 @@ import type {
 } from "./types";
 
 function getBaseUrl(): string {
-  const params = new URLSearchParams(window.location.search);
-  const port = params.get("port") || "8420";
-  const hostname = window.location.hostname;
-
-  // If we're on localhost and the page is served from the same backend, use relative URLs
-  if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "0.0.0.0"
-  ) {
-    return "";
-  }
-
-  // Otherwise, point to the backend explicitly
-  return `http://localhost:${port}`;
+  // The dashboard HTML is always served by the same FastAPI process that
+  // serves /api/*, so a relative URL points at the right backend no matter
+  // how the page was reached (localhost, a VM's public IP, an ssh tunnel,
+  // a reverse-proxied subdomain, etc). The previous logic hard-coded
+  // http://localhost:8420 for non-localhost hostnames, which broke every
+  // remote dashboard: the browser would fetch from the *user's* machine
+  // instead of the server hosting the dashboard.
+  return "";
 }
 
 const BASE = getBaseUrl();
