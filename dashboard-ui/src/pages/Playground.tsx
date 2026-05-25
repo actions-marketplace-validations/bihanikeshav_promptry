@@ -1,511 +1,1045 @@
-import { useState } from "react";
-import { runPlaygroundEval } from "../api/client";
-import type {
-  PlaygroundAssertionDef,
-  PlaygroundAssertionResult,
-  PlaygroundEvalResponse,
-} from "../api/types";
-import { theme } from "../theme";
+import { useEffect, useMemo, useState } from "react";
+import { PageHeader } from "../components/ui";
+import { runPlaygroundModel } from "../api/client";
+import type { PlaygroundRuleType } from "../api/types";
 
-type AssertionType = PlaygroundAssertionDef["type"];
+/* -------- presets -------- */
+interface Preset {
+  id: string;
+  name: string;
+  desc: string;
+  sys: string;
+  user: string;
+  vars: Record<string, string>;
+  context: string;
+  golden: string;
+  rules: Rule[];
+}
 
-const ASSERTION_TYPES: { value: AssertionType; label: string }[] = [
-  { value: "contains", label: "Contains keywords" },
-  { value: "not_contains", label: "Does not contain" },
-  { value: "json_valid", label: "Valid JSON" },
-  { value: "matches", label: "Regex match" },
-];
-
-interface AssertionRow {
+interface Rule {
   id: number;
-  type: AssertionType;
+  type: PlaygroundRuleType;
   value: string;
 }
 
-let nextId = 1;
+const PRESETS: Preset[] = [
+  {
+    id: "billing-rate-limit",
+    name: "billing/rate_limit",
+    desc: "RAG answer about free-tier rate limiting",
+    sys: 'You are a careful billing support assistant. Answer using ONLY the provided context. If the answer isn\'t supported, reply "I don\'t know.". Return JSON: {answer, sources}.',
+    user: "What is the rate limit on the {{plan}} plan?",
+    vars: { plan: "free" },
+    context:
+      "# billing.md\n## rate-limits\n- free: 100 req/min, 10k/day\n- pro: 1000 req/min, 250k/day\n- burst requests over the limit return HTTP 429",
+    golden: '{"answer":"100 requests per minute","sources":["billing.md#rate-limits"]}',
+    rules: [
+      { id: 1, type: "contains", value: "100 requests" },
+      { id: 2, type: "json_valid", value: "" },
+      { id: 3, type: "not_contains", value: "unlimited, unsure" },
+      { id: 4, type: "json_path_eq", value: "sources[0]=billing.md#rate-limits" },
+      { id: 5, type: "max_tokens", value: "120" },
+    ],
+  },
+  {
+    id: "support-refund",
+    name: "support/refund_policy",
+    desc: "Refund eligibility with cited policy doc",
+    sys: "You are a support agent. Be concise. Cite policy lines. Do not guess beyond 30-day window.",
+    user: "I cancelled on day 45 — can I get a refund?",
+    vars: {},
+    context:
+      "# refunds.md\n- refunds allowed within 30 days of invoice\n- prorated refunds are not offered\n- cancellations after 30d are effective at period end",
+    golden:
+      "No — refunds are only available within 30 days of the invoice date (refunds.md#policy).",
+    rules: [
+      { id: 1, type: "contains", value: "30 days" },
+      { id: 2, type: "not_contains", value: "I'm not sure, maybe" },
+      { id: 3, type: "max_tokens", value: "80" },
+    ],
+  },
+  {
+    id: "classifier",
+    name: "intent/classifier",
+    desc: "Classifies a user message into one of 6 intents",
+    sys: "Classify the message into EXACTLY ONE of: billing, bug, feature_request, auth, onboarding, other. Reply with JSON {intent, confidence}.",
+    user: "I keep getting logged out after 30 seconds on Safari.",
+    vars: {},
+    context: "",
+    golden: '{"intent":"auth","confidence":0.9}',
+    rules: [
+      { id: 1, type: "json_valid", value: "" },
+      { id: 2, type: "json_path_eq", value: "intent=auth" },
+      { id: 3, type: "matches", value: '"confidence"\\s*:\\s*0\\.[89]\\d*' },
+    ],
+  },
+];
 
-function newAssertion(): AssertionRow {
-  return { id: nextId++, type: "contains", value: "" };
+/* -------- models (display metadata; server uses the id) -------- */
+interface ModelMeta {
+  id: string;
+  label: string;
+  inCost: number;
+  outCost: number;
 }
 
-export default function Playground() {
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [mockResponse, setMockResponse] = useState("");
-  const [assertions, setAssertions] = useState<AssertionRow[]>([newAssertion()]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [evalResult, setEvalResult] = useState<PlaygroundEvalResponse | null>(null);
+const MODELS: ModelMeta[] = [
+  { id: "gpt-4o", label: "gpt-4o", inCost: 2.5, outCost: 10 },
+  { id: "gpt-4o-mini", label: "gpt-4o-mini", inCost: 0.15, outCost: 0.6 },
+  { id: "claude-haiku-4-5", label: "claude-haiku-4-5", inCost: 0.25, outCost: 1.25 },
+  { id: "claude-sonnet-4-5", label: "claude-sonnet-4-5", inCost: 3, outCost: 15 },
+  { id: "llama-3.3-70b", label: "llama-3.3-70b", inCost: 0.59, outCost: 0.79 },
+];
 
-  const addAssertion = () => {
-    setAssertions((prev) => [...prev, newAssertion()]);
-  };
+/* -------- assertion types + client-side evaluator -------- */
+interface RuleTypeDef {
+  v: PlaygroundRuleType;
+  label: string;
+  weight: number;
+  hint: string;
+}
 
-  const removeAssertion = (id: number) => {
-    setAssertions((prev) => prev.filter((a) => a.id !== id));
-  };
+const RULE_TYPES: RuleTypeDef[] = [
+  { v: "contains", label: "Must contain", weight: 1.0, hint: "keyword1, keyword2" },
+  { v: "not_contains", label: "Must NOT contain", weight: 1.0, hint: "banned, term" },
+  { v: "json_valid", label: "Valid JSON", weight: 0.5, hint: "" },
+  { v: "json_path_eq", label: "JSON field equals", weight: 1.5, hint: "path.to.key=value" },
+  { v: "matches", label: "Regex match", weight: 1.0, hint: "^\\{.*\\}$" },
+  { v: "max_tokens", label: "Max tokens ≤", weight: 0.5, hint: "120" },
+  { v: "similarity", label: "Similar to golden", weight: 1.5, hint: "(uses golden)" },
+];
 
-  const updateAssertion = (id: number, field: keyof AssertionRow, value: string) => {
-    setAssertions((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, [field]: value } : a)),
-    );
-  };
+interface RuleResult {
+  passed: boolean;
+  score: number;
+  detail: string;
+}
 
-  const handleRun = async () => {
-    if (!mockResponse.trim()) {
-      setError("Please provide a mock response to evaluate.");
-      return;
-    }
-    if (assertions.length === 0) {
-      setError("Add at least one assertion.");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setEvalResult(null);
-
+function evalRule(r: Rule, response: string, golden: string): RuleResult {
+  if (r.type === "contains") {
+    const kws = r.value.split(",").map((x) => x.trim()).filter(Boolean);
+    if (!kws.length) return { passed: true, score: 1, detail: "(no keywords)" };
+    const hits = kws.filter((k) => response.toLowerCase().includes(k.toLowerCase()));
+    const passed = hits.length === kws.length;
+    return { passed, score: hits.length / kws.length, detail: `${hits.length}/${kws.length} keywords found` };
+  }
+  if (r.type === "not_contains") {
+    const kws = r.value.split(",").map((x) => x.trim()).filter(Boolean);
+    const hits = kws.filter((k) => response.toLowerCase().includes(k.toLowerCase()));
+    const passed = hits.length === 0;
+    return { passed, score: passed ? 1 : 0, detail: passed ? "no banned terms" : `found: ${hits.join(", ")}` };
+  }
+  if (r.type === "json_valid") {
     try {
-      const defs: PlaygroundAssertionDef[] = assertions.map((a) => {
-        if (a.type === "contains" || a.type === "not_contains") {
-          const keywords = a.value
-            .split(",")
-            .map((k) => k.trim())
-            .filter(Boolean);
-          return { type: a.type, value: keywords };
-        }
-        if (a.type === "matches") {
-          return { type: a.type, value: a.value, options: { fullmatch: false } };
-        }
-        // json_valid needs no value
-        return { type: a.type };
-      });
-
-      const result = await runPlaygroundEval(mockResponse, defs);
-      setEvalResult(result);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
+      JSON.parse(response);
+      return { passed: true, score: 1, detail: "parses as JSON" };
+    } catch {
+      return { passed: false, score: 0, detail: "JSON parse error" };
     }
+  }
+  if (r.type === "matches") {
+    try {
+      const passed = new RegExp(r.value).test(response);
+      return { passed, score: passed ? 1 : 0, detail: passed ? "pattern matched" : "no match" };
+    } catch {
+      return { passed: false, score: 0, detail: "invalid regex" };
+    }
+  }
+  if (r.type === "json_path_eq") {
+    try {
+      const parsed = JSON.parse(response);
+      const [pathRaw, expected] = r.value.split("=").map((x) => x.trim());
+      let cur: unknown = parsed;
+      for (const seg of pathRaw.replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean)) {
+        cur = (cur as Record<string, unknown> | undefined)?.[seg];
+      }
+      const passed = String(cur) === expected;
+      return {
+        passed,
+        score: passed ? 1 : 0,
+        detail: passed ? `${pathRaw} == ${expected}` : `got ${JSON.stringify(cur)}`,
+      };
+    } catch {
+      return { passed: false, score: 0, detail: "could not parse/path" };
+    }
+  }
+  if (r.type === "max_tokens") {
+    const limit = parseInt(r.value, 10) || 0;
+    const tokens = Math.ceil(response.length / 3.8);
+    const passed = tokens <= limit;
+    return { passed, score: passed ? 1 : Math.max(0, limit / tokens), detail: `${tokens} / ${limit} token budget` };
+  }
+  if (r.type === "similarity") {
+    const target = r.value || golden;
+    const a = new Set(response.toLowerCase().split(/\W+/).filter(Boolean));
+    const b = new Set(target.toLowerCase().split(/\W+/).filter(Boolean));
+    const inter = [...a].filter((x) => b.has(x)).length;
+    const union = new Set([...a, ...b]).size || 1;
+    const score = inter / union;
+    return { passed: score >= 0.5, score, detail: `~${(score * 100).toFixed(0)}% overlap vs. reference` };
+  }
+  return { passed: false, score: 0, detail: "unknown rule" };
+}
+
+function interpolate(tmpl: string, vars: Record<string, string>): string {
+  return tmpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => vars[k] ?? `{{${k}}}`);
+}
+
+/* -------- per-model run record -------- */
+interface AssertionDisplay extends Rule {
+  weight: number;
+  passed: boolean;
+  score: number;
+  detail: string;
+}
+
+interface ModelRunRecord {
+  body: string;
+  latency_ms: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost: number;
+  assertions: AssertionDisplay[];
+  overall_score: number;
+  overall_passed: boolean;
+  pass_count: number;
+  error?: string;
+}
+
+/* -------- component -------- */
+export default function Playground() {
+  const [preset, setPreset] = useState<Preset>(PRESETS[0]);
+  const [sys, setSys] = useState(PRESETS[0].sys);
+  const [user, setUser] = useState(PRESETS[0].user);
+  const [vars, setVars] = useState<Record<string, string>>(PRESETS[0].vars);
+  const [context, setContext] = useState(PRESETS[0].context);
+  const [golden, setGolden] = useState(PRESETS[0].golden);
+  const [rules, setRules] = useState<Rule[]>(PRESETS[0].rules);
+  const [models, setModels] = useState<string[]>(["gpt-4o-mini", "claude-haiku-4-5"]);
+  const [temp, setTemp] = useState(0.2);
+  const [results, setResults] = useState<Record<string, ModelRunRecord>>({});
+  const [running, setRunning] = useState(false);
+  const [tab, setTab] = useState<"prompt" | "context" | "rules">("prompt");
+  const [focusedModel, setFocusedModel] = useState<string | null>(null);
+
+  const loadPreset = (p: Preset) => {
+    setPreset(p);
+    setSys(p.sys);
+    setUser(p.user);
+    setVars(p.vars || {});
+    setContext(p.context || "");
+    setGolden(p.golden || "");
+    setRules(p.rules);
+    setResults({});
+    setFocusedModel(null);
   };
+
+  const resolvedUser = interpolate(user, vars);
+  const varKeys = useMemo(
+    () => [...user.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((m) => m[1]),
+    [user]
+  );
+
+  const addRule = () =>
+    setRules([...rules, { id: Date.now(), type: "contains", value: "" }]);
+  const updateRule = (id: number, patch: Partial<Rule>) =>
+    setRules(rules.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const removeRule = (id: number) => setRules(rules.filter((r) => r.id !== id));
+
+  const runAll = async () => {
+    setRunning(true);
+    setResults({});
+    const out: Record<string, ModelRunRecord> = {};
+    for (const mId of models) {
+      try {
+        const resp = await runPlaygroundModel({
+          model: mId,
+          system: sys,
+          user: resolvedUser,
+          context,
+          temperature: temp,
+        });
+        const assertions: AssertionDisplay[] = rules.map((r) => {
+          const def = RULE_TYPES.find((t) => t.v === r.type);
+          const ev = evalRule(r, resp.response, golden);
+          return { ...r, ...ev, weight: def?.weight ?? 1 };
+        });
+        const totalWeight = assertions.reduce((a, b) => a + b.weight, 0) || 1;
+        const weightedScore =
+          assertions.reduce((a, b) => a + b.score * b.weight, 0) / totalWeight;
+        const pass_count = assertions.filter((a) => a.passed).length;
+        out[mId] = {
+          body: resp.response,
+          latency_ms: resp.latency_ms,
+          tokens_in: resp.tokens_in,
+          tokens_out: resp.tokens_out,
+          cost: resp.cost,
+          assertions,
+          overall_score: weightedScore,
+          overall_passed: pass_count === rules.length,
+          pass_count,
+        };
+      } catch (e) {
+        out[mId] = {
+          body: "",
+          latency_ms: 0,
+          tokens_in: 0,
+          tokens_out: 0,
+          cost: 0,
+          assertions: [],
+          overall_score: 0,
+          overall_passed: false,
+          pass_count: 0,
+          error: String(e),
+        };
+      }
+      setResults({ ...out });
+    }
+    setFocusedModel(models[0] ?? null);
+    setRunning(false);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        runAll();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sys, user, vars, context, rules, models, golden, temp]);
+
+  const toggleModel = (id: string) =>
+    setModels(models.includes(id) ? models.filter((x) => x !== id) : [...models, id]);
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: theme.muted, marginBottom: 4, fontFamily: theme.fontUI }}>
-        Playground
-      </div>
-      <h1
-        style={{
-          fontSize: 18,
-          fontWeight: 600,
-          color: theme.text,
-          marginBottom: 20,
-          fontFamily: theme.fontUI,
-        }}
-      >
-        Prompt Playground
-      </h1>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 20,
-          alignItems: "start",
-        }}
-      >
-        {/* Left panel: Input */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* System prompt */}
-          <div
-            style={{
-              background: theme.surface,
-              border: `1px solid ${theme.border}`,
-              borderRadius: 6,
-              padding: 16,
-            }}
+      <PageHeader
+        eyebrow="~/promptry · playground"
+        title="Prompt Playground"
+        description="Iterate on a prompt, try it across models, and preview assertion results before promoting to a suite."
+        tags={[preset.name, `${models.length} model${models.length === 1 ? "" : "s"}`, `${rules.length} assertions`]}
+        actions={
+          <button
+            className="btn btn-primary"
+            onClick={runAll}
+            disabled={running || !models.length}
           >
-            <label
-              style={{
-                display: "block",
-                fontSize: 10,
-                color: theme.muted,
-                marginBottom: 6,
-                textTransform: "uppercase",
-                fontFamily: theme.fontUI,
-              }}
-            >
-              System Prompt (reference only)
-            </label>
-            <textarea
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              placeholder="You are a helpful assistant..."
-              rows={4}
-              style={textareaStyle}
-            />
-          </div>
-
-          {/* Mock response */}
-          <div
-            style={{
-              background: theme.surface,
-              border: `1px solid ${theme.border}`,
-              borderRadius: 6,
-              padding: 16,
-            }}
-          >
-            <label
-              style={{
-                display: "block",
-                fontSize: 10,
-                color: theme.muted,
-                marginBottom: 6,
-                textTransform: "uppercase",
-                fontFamily: theme.fontUI,
-              }}
-            >
-              Mock Response (paste what the LLM would say)
-            </label>
-            <textarea
-              value={mockResponse}
-              onChange={(e) => setMockResponse(e.target.value)}
-              placeholder="Paste the LLM output to evaluate..."
-              rows={8}
-              style={textareaStyle}
-            />
-          </div>
-
-          {/* Assertions */}
-          <div
-            style={{
-              background: theme.surface,
-              border: `1px solid ${theme.border}`,
-              borderRadius: 6,
-              padding: 16,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                marginBottom: 12,
-              }}
-            >
-              <label
-                style={{
-                  fontSize: 10,
-                  color: theme.muted,
-                  textTransform: "uppercase",
-                  fontFamily: theme.fontUI,
-                }}
-              >
-                Assertions
-              </label>
-              <button onClick={addAssertion} style={addBtnStyle}>
-                + Add
-              </button>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {assertions.map((a) => (
-                <div
-                  key={a.id}
+            {running ? (
+              <>
+                <span
+                  className="live-dot"
+                  style={{ width: 6, height: 6, background: "#1a0e04" }}
+                />
+                Running…
+              </>
+            ) : (
+              <>
+                Run
+                <span
+                  className="kbd"
                   style={{
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
+                    marginLeft: 4,
+                    background: "rgba(26,14,4,0.2)",
+                    borderColor: "rgba(26,14,4,0.3)",
+                    color: "#1a0e04",
                   }}
                 >
-                  <select
-                    value={a.type}
-                    onChange={(e) =>
-                      updateAssertion(a.id, "type", e.target.value)
-                    }
-                    style={selectStyle}
-                  >
-                    {ASSERTION_TYPES.map((t) => (
-                      <option key={t.value} value={t.value}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
+                  ⌘↵
+                </span>
+              </>
+            )}
+          </button>
+        }
+      />
 
-                  {a.type !== "json_valid" && (
-                    <input
-                      type="text"
-                      value={a.value}
-                      onChange={(e) =>
-                        updateAssertion(a.id, "value", e.target.value)
-                      }
-                      placeholder={
-                        a.type === "matches"
-                          ? "regex pattern"
-                          : "keyword1, keyword2, ..."
-                      }
-                      style={inputStyle}
-                    />
-                  )}
-                  {a.type === "json_valid" && (
-                    <span
+      {/* Preset strip */}
+      <div
+        className="card"
+        style={{
+          padding: 10,
+          marginBottom: 12,
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
+        <span
+          style={{
+            fontSize: 10,
+            color: "var(--muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            fontFamily: "var(--font-mono)",
+            marginRight: 4,
+          }}
+        >
+          Presets
+        </span>
+        {PRESETS.map((p) => {
+          const active = p.id === preset.id;
+          return (
+            <button
+              key={p.id}
+              onClick={() => loadPreset(p)}
+              className="btn"
+              style={{
+                borderColor: active ? "var(--accent-line)" : "var(--border)",
+                background: active ? "var(--accent-soft)" : "var(--bg-elev)",
+                color: active ? "var(--accent)" : "var(--text-dim)",
+                fontFamily: "var(--font-mono)",
+                fontSize: 11.5,
+              }}
+            >
+              {p.name}
+            </button>
+          );
+        })}
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{preset.desc}</span>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.2fr)", gap: 14 }}>
+        {/* LEFT: editor */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+          <div className="card" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", borderBottom: "1px solid var(--border)", background: "var(--bg-elev)" }}>
+              {(
+                [
+                  { v: "prompt" as const, l: "Prompt", c: `${sys.length + user.length}` },
+                  { v: "context" as const, l: "Context", c: context ? `${context.length}` : "—" },
+                  { v: "rules" as const, l: "Assertions", c: `${rules.length}` },
+                ]
+              ).map((t) => {
+                const active = tab === t.v;
+                return (
+                  <button
+                    key={t.v}
+                    onClick={() => setTab(t.v)}
+                    className="btn btn-ghost"
+                    style={{
+                      borderRadius: 0,
+                      borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
+                      color: active ? "var(--text)" : "var(--secondary)",
+                      padding: "10px 14px",
+                      fontWeight: active ? 600 : 500,
+                      fontSize: 12.5,
+                      gap: 8,
+                    }}
+                  >
+                    {t.l}
+                    <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                      {t.c}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {tab === "prompt" && (
+              <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "var(--font-mono)" }}>
+                      System
+                    </div>
+                    <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+                      {sys.length} chars
+                    </span>
+                  </div>
+                  <textarea
+                    className="inp"
+                    value={sys}
+                    onChange={(e) => setSys(e.target.value)}
+                    rows={4}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "var(--font-mono)" }}>
+                      User message
+                    </div>
+                    <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+                      use <span style={{ color: "var(--accent)" }}>{"{{name}}"}</span> for variables
+                    </span>
+                  </div>
+                  <textarea
+                    className="inp"
+                    value={user}
+                    onChange={(e) => setUser(e.target.value)}
+                    rows={3}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                {varKeys.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, fontFamily: "var(--font-mono)" }}>
+                      Variables
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+                      {varKeys.map((k) => (
+                        <div
+                          key={k}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            background: "var(--bg-elev)",
+                            border: "1px solid var(--border)",
+                            borderRadius: 6,
+                            padding: "4px 8px",
+                          }}
+                        >
+                          <span className="mono" style={{ fontSize: 11, color: "var(--accent)" }}>
+                            {k}
+                          </span>
+                          <span style={{ color: "var(--muted)" }}>=</span>
+                          <input
+                            className="inp"
+                            style={{ flex: 1, minWidth: 0, padding: "2px 6px", border: "none", background: "transparent" }}
+                            value={vars[k] || ""}
+                            onChange={(e) => setVars({ ...vars, [k]: e.target.value })}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div
                       style={{
-                        flex: 1,
-                        fontSize: 11,
-                        color: theme.muted,
-                        fontFamily: theme.fontUI,
+                        marginTop: 8,
+                        padding: 8,
+                        background: "var(--bg-elev)",
+                        border: "1px dashed var(--border-strong)",
+                        borderRadius: 4,
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 11.5,
+                        color: "var(--text-dim)",
                       }}
                     >
-                      Checks if response is valid JSON
+                      <span style={{ color: "var(--muted)" }}>resolves → </span>
+                      {resolvedUser}
+                    </div>
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 18, paddingTop: 6, borderTop: "1px solid var(--border)" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--secondary)" }}>
+                    <span
+                      style={{
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 10,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                      }}
+                    >
+                      temp
                     </span>
-                  )}
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={temp}
+                      onChange={(e) => setTemp(parseFloat(e.target.value))}
+                      style={{ accentColor: "var(--accent)", width: 110 }}
+                    />
+                    <span className="mono" style={{ color: "var(--text)", width: 30 }}>
+                      {temp.toFixed(2)}
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
 
-                  <button
-                    onClick={() => removeAssertion(a.id)}
-                    style={removeBtnStyle}
-                    title="Remove assertion"
-                  >
-                    x
-                  </button>
+            {tab === "context" && (
+              <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "var(--font-mono)" }}>
+                      Retrieved context
+                    </div>
+                    <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>
+                      ~{Math.ceil(context.length / 3.8)} tokens
+                    </span>
+                  </div>
+                  <textarea
+                    className="inp"
+                    value={context}
+                    onChange={(e) => setContext(e.target.value)}
+                    rows={10}
+                    style={{ width: "100%" }}
+                    placeholder="Paste RAG context / retrieved docs here…"
+                  />
                 </div>
-              ))}
-              {assertions.length === 0 && (
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: theme.muted,
-                    fontFamily: theme.fontUI,
-                    padding: "8px 0",
-                  }}
+                <div>
+                  <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, fontFamily: "var(--font-mono)" }}>
+                    Golden response (for similarity)
+                  </div>
+                  <textarea
+                    className="inp"
+                    value={golden}
+                    onChange={(e) => setGolden(e.target.value)}
+                    rows={3}
+                    style={{ width: "100%" }}
+                    placeholder="Expected model output — used by the similarity assertion."
+                  />
+                </div>
+              </div>
+            )}
+
+            {tab === "rules" && (
+              <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+                {rules.map((r) => {
+                  const t = RULE_TYPES.find((x) => x.v === r.type) || RULE_TYPES[0];
+                  return (
+                    <div
+                      key={r.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "auto 1fr auto auto",
+                        gap: 8,
+                        alignItems: "center",
+                        padding: "6px 0",
+                      }}
+                    >
+                      <select
+                        className="inp"
+                        value={r.type}
+                        onChange={(e) => updateRule(r.id, { type: e.target.value as PlaygroundRuleType })}
+                        style={{ minWidth: 170 }}
+                      >
+                        {RULE_TYPES.map((x) => (
+                          <option key={x.v} value={x.v}>
+                            {x.label}
+                          </option>
+                        ))}
+                      </select>
+                      {r.type === "json_valid" ? (
+                        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                          Checks the response parses as JSON.
+                        </span>
+                      ) : r.type === "similarity" ? (
+                        <span style={{ fontSize: 11.5, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                          compares against golden (Context tab)
+                        </span>
+                      ) : (
+                        <input
+                          className="inp"
+                          value={r.value}
+                          onChange={(e) => updateRule(r.id, { value: e.target.value })}
+                          placeholder={t.hint}
+                          style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}
+                        />
+                      )}
+                      <span
+                        className="mono"
+                        style={{ fontSize: 10, color: "var(--muted)", padding: "0 4px" }}
+                        data-tt={`weight ×${t.weight}`}
+                      >
+                        w={t.weight}
+                      </span>
+                      <button
+                        className="btn btn-ghost"
+                        onClick={() => removeRule(r.id)}
+                        style={{ color: "var(--muted)", padding: "4px 8px" }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+                <button
+                  className="btn"
+                  onClick={addRule}
+                  style={{ alignSelf: "flex-start", color: "var(--accent)", borderColor: "var(--accent-line)" }}
                 >
-                  No assertions defined. Click "+ Add" to create one.
-                </div>
-              )}
+                  + Add assertion
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Models selector */}
+          <div className="card" style={{ padding: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                Models ({models.length})
+              </div>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>Select 1–5 to compare</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {MODELS.map((m) => {
+                const on = models.includes(m.id);
+                return (
+                  <label
+                    key={m.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "7px 10px",
+                      borderRadius: 6,
+                      border: "1px solid " + (on ? "var(--accent-line)" : "var(--border)"),
+                      background: on ? "var(--accent-soft)" : "var(--bg-elev)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => toggleModel(m.id)}
+                      style={{ accentColor: "var(--accent)" }}
+                    />
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 12.5,
+                        color: on ? "var(--text)" : "var(--text-dim)",
+                        fontWeight: 600,
+                        flex: 1,
+                      }}
+                    >
+                      {m.label}
+                    </span>
+                    <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                      ${m.inCost.toFixed(2)}/M in
+                    </span>
+                    <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                      ${m.outCost.toFixed(2)}/M out
+                    </span>
+                  </label>
+                );
+              })}
             </div>
           </div>
-
-          {/* Run button */}
-          <button
-            onClick={handleRun}
-            disabled={loading}
-            style={{
-              background: theme.accent,
-              color: "#fff",
-              border: "none",
-              padding: "10px 24px",
-              borderRadius: 6,
-              cursor: loading ? "not-allowed" : "pointer",
-              fontSize: 13,
-              fontFamily: theme.fontUI,
-              fontWeight: 600,
-              opacity: loading ? 0.6 : 1,
-              alignSelf: "flex-start",
-            }}
-          >
-            {loading ? "Running..." : "Run"}
-          </button>
         </div>
 
-        {/* Right panel: Output */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Raw response preview */}
-          <div
-            style={{
-              background: theme.surface,
-              border: `1px solid ${theme.border}`,
-              borderRadius: 6,
-              padding: 16,
-            }}
-          >
-            <label
-              style={{
-                display: "block",
-                fontSize: 10,
-                color: theme.muted,
-                marginBottom: 6,
-                textTransform: "uppercase",
-                fontFamily: theme.fontUI,
-              }}
-            >
-              Response Preview
-            </label>
-            <pre
-              style={{
-                fontFamily: theme.fontMono,
-                fontSize: 12,
-                color: theme.text,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                margin: 0,
-                minHeight: 80,
-                maxHeight: 300,
-                overflow: "auto",
-              }}
-            >
-              {mockResponse || (
-                <span style={{ color: theme.muted }}>
-                  Response will appear here...
-                </span>
-              )}
-            </pre>
-          </div>
-
-          {/* Error */}
-          {error && (
+        {/* RIGHT: runs */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+          {!Object.keys(results).length && !running && (
             <div
+              className="card"
               style={{
-                color: theme.error,
-                padding: 16,
-                background: "rgba(248,113,113,0.1)",
-                borderRadius: 6,
-                fontSize: 13,
-                fontFamily: theme.fontUI,
+                padding: 40,
+                textAlign: "center",
+                color: "var(--muted)",
+                border: "1px dashed var(--border-strong)",
+                background: "transparent",
               }}
             >
-              {error}
+              <svg width="40" height="40" viewBox="0 0 40 40" style={{ marginBottom: 12, opacity: 0.5 }}>
+                <rect
+                  x="2"
+                  y="2"
+                  width="36"
+                  height="36"
+                  rx="8"
+                  stroke="var(--border-strong)"
+                  strokeWidth="1.5"
+                  fill="none"
+                  strokeDasharray="3 3"
+                />
+                <path d="M14 20 L18 24 L26 16" stroke="var(--accent)" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 4 }}>No runs yet</div>
+              <div style={{ fontSize: 11.5 }}>
+                Click <span className="kbd">⌘</span> <span className="kbd">↵</span> to run across {models.length}{" "}
+                model{models.length === 1 ? "" : "s"}
+              </div>
             </div>
           )}
 
-          {/* Results */}
-          {evalResult && (
-            <div
-              style={{
-                background: theme.surface,
-                border: `1px solid ${theme.border}`,
-                borderRadius: 6,
-                padding: 16,
-              }}
-            >
-              {/* Overall score banner */}
+          {models.map((mId) => {
+            const m = MODELS.find((x) => x.id === mId)!;
+            const r = results[mId];
+            const isFocused = focusedModel === mId;
+            const isLoading = running && !r;
+            return (
               <div
+                key={mId}
+                className={`card ${r ? "enter" : ""}`}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 16,
-                  marginBottom: 16,
-                  paddingBottom: 12,
-                  borderBottom: `1px solid ${theme.border}`,
+                  padding: 0,
+                  overflow: "hidden",
+                  borderColor: isFocused ? "var(--accent-line)" : "var(--border)",
+                  boxShadow: isFocused ? "0 0 0 1px var(--accent-line)" : "none",
                 }}
               >
                 <div
+                  onClick={() => r && setFocusedModel(isFocused ? null : mId)}
                   style={{
-                    fontSize: 24,
-                    fontWeight: 700,
-                    fontFamily: theme.fontMono,
-                    color: evalResult.overall_passed
-                      ? theme.success
-                      : theme.error,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "10px 14px",
+                    background: "var(--bg-elev)",
+                    borderBottom: "1px solid var(--border)",
+                    cursor: r ? "pointer" : "default",
                   }}
                 >
-                  {(evalResult.overall_score * 100).toFixed(0)}%
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      fontFamily: theme.fontUI,
-                      color: evalResult.overall_passed
-                        ? theme.success
-                        : theme.error,
-                    }}
-                  >
-                    {evalResult.overall_passed ? "ALL PASSED" : "SOME FAILED"}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: theme.secondary,
-                      fontFamily: theme.fontUI,
-                    }}
-                  >
-                    {evalResult.passed_count}/{evalResult.total_count} assertions passed
-                  </div>
-                </div>
-              </div>
-
-              {/* Per-assertion results */}
-              <label
-                style={{
-                  display: "block",
-                  fontSize: 10,
-                  color: theme.muted,
-                  marginBottom: 8,
-                  textTransform: "uppercase",
-                  fontFamily: theme.fontUI,
-                }}
-              >
-                Assertion Results
-              </label>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {evalResult.results.map((r: PlaygroundAssertionResult) => (
-                  <div
-                    key={r.index}
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 10,
-                      padding: "8px 10px",
-                      borderRadius: 4,
-                      background: r.passed
-                        ? "rgba(74,222,128,0.08)"
-                        : "rgba(248,113,113,0.08)",
-                      border: `1px solid ${r.passed ? "rgba(74,222,128,0.2)" : "rgba(248,113,113,0.2)"}`,
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 700,
-                        color: r.passed ? theme.success : theme.error,
-                        fontFamily: theme.fontMono,
-                        flexShrink: 0,
-                        marginTop: 1,
-                      }}
-                    >
-                      {r.passed ? "PASS" : "FAIL"}
+                  <span className="mono" style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", flex: 1 }}>
+                    {m.label}
+                  </span>
+                  {isLoading && (
+                    <span style={{ fontSize: 11, color: "var(--accent)", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span
+                        className="live-dot"
+                        style={{ background: "var(--accent)", boxShadow: "0 0 0 3px rgba(251,146,60,0.2)" }}
+                      />
+                      running…
                     </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
+                  )}
+                  {r && !r.error && (
+                    <>
+                      <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }} data-tt="latency">
+                        {r.latency_ms}ms
+                      </span>
+                      <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }} data-tt="tokens in/out">
+                        {r.tokens_in}→{r.tokens_out}
+                      </span>
+                      <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }} data-tt="cost">
+                        ${r.cost.toFixed(4)}
+                      </span>
+                      <span
+                        className="mono"
                         style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: theme.text,
-                          fontFamily: theme.fontUI,
-                          marginBottom: 2,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          padding: "3px 8px",
+                          borderRadius: 4,
+                          background: r.overall_passed ? "var(--success-soft)" : "var(--error-soft)",
+                          color: r.overall_passed ? "var(--success)" : "var(--error)",
                         }}
                       >
-                        {r.type}
-                        <span
-                          style={{
-                            marginLeft: 8,
-                            fontSize: 11,
-                            fontWeight: 400,
-                            color: theme.secondary,
-                            fontFamily: theme.fontMono,
-                          }}
-                        >
-                          score: {r.score.toFixed(2)}
-                        </span>
-                      </div>
-                      {r.details && Object.keys(r.details).length > 0 && (
-                        <pre
-                          style={{
-                            fontSize: 10,
-                            fontFamily: theme.fontMono,
-                            color: theme.secondary,
-                            margin: 0,
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-word",
-                          }}
-                        >
-                          {JSON.stringify(r.details, null, 2)}
-                        </pre>
-                      )}
-                    </div>
+                        {(r.overall_score * 100).toFixed(0)}% · {r.pass_count}/{r.assertions.length}
+                      </span>
+                    </>
+                  )}
+                  {r?.error && (
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 11,
+                        padding: "3px 8px",
+                        borderRadius: 4,
+                        background: "var(--error-soft)",
+                        color: "var(--error)",
+                      }}
+                    >
+                      ERROR
+                    </span>
+                  )}
+                </div>
+
+                {isLoading && (
+                  <div style={{ padding: 14 }}>
+                    <div className="skeleton" style={{ height: 10, width: "85%", borderRadius: 3, marginBottom: 8 }} />
+                    <div className="skeleton" style={{ height: 10, width: "62%", borderRadius: 3, marginBottom: 8 }} />
+                    <div className="skeleton" style={{ height: 10, width: "72%", borderRadius: 3 }} />
                   </div>
-                ))}
+                )}
+
+                {r?.error && (
+                  <div
+                    style={{
+                      padding: 14,
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                      color: "var(--error)",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {r.error}
+                  </div>
+                )}
+
+                {r && !r.error && (
+                  <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+                    <pre
+                      className="mono"
+                      style={{
+                        margin: 0,
+                        fontSize: 12.5,
+                        color: "var(--text-dim)",
+                        whiteSpace: "pre-wrap",
+                        lineHeight: 1.6,
+                        background: "var(--bg)",
+                        padding: 12,
+                        borderRadius: 6,
+                        border: "1px solid var(--border)",
+                        maxHeight: isFocused ? 320 : 120,
+                        overflow: "auto",
+                        transition: "max-height .2s ease",
+                      }}
+                    >
+                      {r.body}
+                    </pre>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 2,
+                        height: 4,
+                        borderRadius: 2,
+                        overflow: "hidden",
+                        background: "var(--bg-elev)",
+                      }}
+                    >
+                      {r.assertions.map((a, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            flex: a.weight,
+                            background: a.passed ? "var(--success)" : "var(--error)",
+                            opacity: 0.3 + a.score * 0.7,
+                          }}
+                          data-tt={`${a.type}: ${a.detail}`}
+                        />
+                      ))}
+                    </div>
+
+                    {isFocused && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {r.assertions.map((a, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "42px 1fr auto auto",
+                              gap: 10,
+                              alignItems: "center",
+                              padding: "6px 10px",
+                              borderRadius: 4,
+                              fontSize: 12,
+                              background: a.passed ? "var(--success-soft)" : "var(--error-soft)",
+                              border: `1px solid ${
+                                a.passed ? "rgba(74,222,128,0.18)" : "rgba(248,113,113,0.18)"
+                              }`,
+                            }}
+                          >
+                            <span
+                              className="mono"
+                              style={{
+                                fontSize: 10.5,
+                                fontWeight: 700,
+                                color: a.passed ? "var(--success)" : "var(--error)",
+                              }}
+                            >
+                              {a.passed ? "PASS" : "FAIL"}
+                            </span>
+                            <span
+                              style={{
+                                fontFamily: "var(--font-mono)",
+                                color: "var(--text-dim)",
+                                fontSize: 11.5,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {a.type}
+                              {a.value && (
+                                <span style={{ color: "var(--muted)" }}>
+                                  {" · "}
+                                  {a.value.length > 38 ? a.value.slice(0, 38) + "…" : a.value}
+                                </span>
+                              )}
+                            </span>
+                            <span style={{ fontSize: 10.5, color: "var(--muted)", fontStyle: "italic" }}>
+                              {a.detail}
+                            </span>
+                            <span
+                              className="mono"
+                              style={{
+                                fontSize: 11,
+                                color: a.passed ? "var(--success)" : "var(--error)",
+                                fontWeight: 600,
+                                width: 36,
+                                textAlign: "right",
+                              }}
+                            >
+                              {(a.score * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
+            );
+          })}
+
+          {Object.values(results).filter((r) => !r.error).length >= 2 && !running && (
+            <div className="card enter" style={{ padding: 14 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  marginBottom: 10,
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                Comparison
+              </div>
+              <table className="pr" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th className="r">Score</th>
+                    <th className="r">Latency</th>
+                    <th className="r">Cost</th>
+                    <th className="r">Tokens</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(results)
+                    .filter(([, r]) => !r.error)
+                    .sort((a, b) => b[1].overall_score - a[1].overall_score)
+                    .map(([mId, r], i) => (
+                      <tr key={mId}>
+                        <td style={{ fontFamily: "var(--font-mono)" }}>
+                          {i === 0 && (
+                            <span className="mono" style={{ color: "var(--accent)", marginRight: 6 }}>
+                              ▸
+                            </span>
+                          )}
+                          {MODELS.find((x) => x.id === mId)?.label ?? mId}
+                        </td>
+                        <td
+                          className="mono"
+                          style={{
+                            textAlign: "right",
+                            color: r.overall_passed ? "var(--success)" : "var(--error)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {(r.overall_score * 100).toFixed(0)}%
+                        </td>
+                        <td className="mono" style={{ textAlign: "right", color: "var(--text-dim)" }}>
+                          {r.latency_ms}ms
+                        </td>
+                        <td className="mono" style={{ textAlign: "right", color: "var(--text-dim)" }}>
+                          ${r.cost.toFixed(4)}
+                        </td>
+                        <td className="mono" style={{ textAlign: "right", color: "var(--muted)" }}>
+                          {r.tokens_in}→{r.tokens_out}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
@@ -513,62 +1047,3 @@ export default function Playground() {
     </div>
   );
 }
-
-const textareaStyle: React.CSSProperties = {
-  width: "100%",
-  background: theme.bg,
-  border: `1px solid ${theme.border}`,
-  color: theme.text,
-  fontFamily: theme.fontMono,
-  fontSize: 12,
-  padding: "10px 12px",
-  borderRadius: 4,
-  resize: "vertical",
-  outline: "none",
-  boxSizing: "border-box",
-};
-
-const selectStyle: React.CSSProperties = {
-  background: theme.surface,
-  border: `1px solid ${theme.border}`,
-  color: theme.text,
-  padding: "6px 10px",
-  borderRadius: 4,
-  fontSize: 12,
-  fontFamily: theme.fontUI,
-  minWidth: 160,
-};
-
-const inputStyle: React.CSSProperties = {
-  flex: 1,
-  background: theme.bg,
-  border: `1px solid ${theme.border}`,
-  color: theme.text,
-  padding: "6px 10px",
-  borderRadius: 4,
-  fontSize: 12,
-  fontFamily: theme.fontMono,
-  outline: "none",
-};
-
-const addBtnStyle: React.CSSProperties = {
-  background: "transparent",
-  border: `1px solid ${theme.border}`,
-  color: theme.secondary,
-  padding: "4px 12px",
-  borderRadius: 4,
-  fontSize: 11,
-  fontFamily: theme.fontUI,
-  cursor: "pointer",
-};
-
-const removeBtnStyle: React.CSSProperties = {
-  background: "transparent",
-  border: "none",
-  color: theme.muted,
-  padding: "4px 8px",
-  fontSize: 13,
-  fontFamily: theme.fontMono,
-  cursor: "pointer",
-  flexShrink: 0,
-};

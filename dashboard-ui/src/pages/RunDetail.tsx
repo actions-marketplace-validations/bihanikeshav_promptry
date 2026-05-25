@@ -1,322 +1,244 @@
-import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import { Breadcrumbs, KPI, PageHeader, StatusPill } from "../components/ui";
+import { pct, scoreColor } from "../utils";
 import { getRunDetail } from "../api/client";
-import type { RunDetailResponse, AssertionResult } from "../api/types";
-import { theme, scoreColor } from "../theme";
-import AssertionBar from "../components/AssertionBar";
-import ClaimBreakdown from "../components/ClaimBreakdown";
+import type { RunDetailResponse } from "../api/types";
 
 export default function RunDetail() {
-  const { name, runId } = useParams<{ name: string; runId: string }>();
+  const { name = "", runId = "0" } = useParams();
+  const suiteName = decodeURIComponent(name);
+  const id = parseInt(runId, 10);
   const [data, setData] = useState<RunDetailResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [filter, setFilter] = useState<"all" | "failed" | "passed">("all");
 
   useEffect(() => {
-    if (!name || !runId) return;
-    setLoading(true);
-    getRunDetail(name, parseInt(runId, 10))
+    getRunDetail(suiteName, id)
       .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [name, runId]);
+      .catch(() => setData(null));
+  }, [suiteName, id]);
 
-  const toggleExpand = (id: number) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  // Group assertions by test_name
-  const grouped: Record<string, AssertionResult[]> = {};
-  if (data) {
-    for (const a of data.assertions) {
-      const key = a.test_name || "(unnamed)";
-      if (!grouped[key]) grouped[key] = [];
-      grouped[key].push(a);
-    }
-  }
-
-  return (
-    <div>
-      {/* Breadcrumbs */}
-      <div style={{ fontSize: 11, color: theme.muted, marginBottom: 4, fontFamily: theme.fontUI }}>
-        <Link to="/" style={{ color: theme.accent, textDecoration: "none" }}>
-          Overview
-        </Link>
-        {" / "}
-        <Link
-          to={`/suite/${encodeURIComponent(name ?? "")}`}
-          style={{ color: theme.accent, textDecoration: "none" }}
-        >
-          {name}
-        </Link>
-        {" / "}
-        <span style={{ color: theme.text }}>Run #{runId}</span>
-      </div>
-
-      <h1 style={{ fontSize: 18, fontWeight: 600, color: theme.text, marginBottom: 20, fontFamily: theme.fontUI }}>
-        Run #{runId}
-      </h1>
-
-      {loading && (
-        <div style={{ color: theme.muted, padding: 32, textAlign: "center" }}>
-          Loading...
-        </div>
-      )}
-
-      {error && (
-        <div
-          style={{
-            color: theme.error,
-            padding: 16,
-            background: "rgba(248,113,113,0.1)",
-            borderRadius: 6,
-            fontSize: 13,
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      {!loading && data && (
-        <>
-          {/* Run metadata */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-              gap: 12,
-              marginBottom: 24,
-            }}
-          >
-            <MetaCard
-              label="Status"
-              value={data.run.overall_pass ? "PASS" : "FAIL"}
-              color={data.run.overall_pass ? theme.success : theme.error}
-            />
-            <MetaCard
-              label="Score"
-              value={
-                data.run.overall_score !== null
-                  ? (data.run.overall_score * 100).toFixed(1) + "%"
-                  : "--"
-              }
-              color={scoreColor(data.run.overall_score)}
-            />
-            <MetaCard
-              label="Model"
-              value={data.run.model_version ?? "--"}
-              color={theme.text}
-            />
-            <MetaCard
-              label="Prompt"
-              value={
-                data.run.prompt_name
-                  ? `${data.run.prompt_name} v${data.run.prompt_version ?? "?"}`
-                  : "--"
-              }
-              color={theme.text}
-            />
-            <MetaCard
-              label="Timestamp"
-              value={new Date(data.run.timestamp).toLocaleString()}
-              color={theme.secondary}
-            />
-          </div>
-
-          {/* Assertions grouped by test_name */}
-          {Object.entries(grouped).map(([testName, assertions]) => (
-            <div
-              key={testName}
-              style={{
-                background: theme.surface,
-                border: `1px solid ${theme.border}`,
-                borderRadius: 6,
-                marginBottom: 16,
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  padding: "10px 16px",
-                  borderBottom: `1px solid ${theme.border}`,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: theme.text,
-                  fontFamily: theme.fontUI,
-                }}
-              >
-                {testName}
-              </div>
-              {assertions.map((a) => (
-                <div key={a.id}>
-                  <div
-                    onClick={() => toggleExpand(a.id)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      padding: "8px 16px",
-                      borderBottom: `1px solid ${theme.border}`,
-                      cursor: "pointer",
-                      fontSize: 12,
-                    }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background =
-                        "rgba(249,115,22,0.04)")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "transparent")
-                    }
-                  >
-                    <span
-                      style={{
-                        color: a.passed ? theme.success : theme.error,
-                        fontWeight: 700,
-                        width: 36,
-                        fontFamily: theme.fontUI,
-                      }}
-                    >
-                      {a.passed ? "PASS" : "FAIL"}
-                    </span>
-                    <span style={{ color: theme.secondary, width: 100, fontFamily: theme.fontUI }}>
-                      {a.assertion_type}
-                    </span>
-                    <AssertionBar score={a.score} />
-                    <span
-                      style={{
-                        color: scoreColor(a.score),
-                        fontWeight: 600,
-                        width: 50,
-                        textAlign: "right",
-                        fontFamily: theme.fontMono,
-                      }}
-                    >
-                      {a.score !== null
-                        ? (a.score * 100).toFixed(0) + "%"
-                        : "--"}
-                    </span>
-                    {a.latency_ms !== null && (
-                      <span style={{ color: theme.muted, marginLeft: "auto", fontFamily: theme.fontMono }}>
-                        {a.latency_ms}ms
-                      </span>
-                    )}
-                    <span style={{ color: theme.muted, marginLeft: 8 }}>
-                      {expandedIds.has(a.id) ? "▼" : "▶"}
-                    </span>
-                  </div>
-
-                  {/* Expanded details */}
-                  {expandedIds.has(a.id) && a.details && (
-                    <div
-                      style={{
-                        padding: "12px 16px 12px 64px",
-                        borderBottom: `1px solid ${theme.border}`,
-                        background: "rgba(0,0,0,0.15)",
-                      }}
-                    >
-                      <AssertionDetails
-                        type={a.assertion_type}
-                        details={a.details}
-                      />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ))}
-        </>
-      )}
-    </div>
-  );
-}
-
-function MetaCard({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: string;
-  color: string;
-}) {
-  return (
-    <div
-      style={{
-        background: theme.surface,
-        border: `1px solid ${theme.border}`,
-        borderRadius: 6,
-        padding: "10px 14px",
-      }}
-    >
-      <div style={{ fontSize: 10, color: theme.muted, marginBottom: 2, fontFamily: theme.fontUI }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 14, fontWeight: 600, color, fontFamily: theme.fontMono }}>{value}</div>
-    </div>
-  );
-}
-
-function AssertionDetails({
-  type,
-  details,
-}: {
-  type: string;
-  details: Record<string, unknown>;
-}) {
-  // Grounded type: render claim-by-claim
-  if (type === "grounded") {
-    return <ClaimBreakdown details={details} />;
-  }
-
-  // Schema type: show errors list
-  if (type === "schema" && details.errors) {
-    const errors = details.errors as string[];
+  if (!data) {
     return (
       <div>
-        <div
-          style={{
-            fontSize: 11,
-            color: theme.error,
-            fontWeight: 600,
-            marginBottom: 6,
-            fontFamily: theme.fontUI,
-          }}
-        >
-          Schema Errors:
-        </div>
-        <ul style={{ margin: 0, paddingLeft: 16 }}>
-          {errors.map((e, i) => (
-            <li
-              key={i}
-              style={{ color: theme.secondary, fontSize: 12, marginBottom: 4, fontFamily: theme.fontMono }}
-            >
-              {e}
-            </li>
-          ))}
-        </ul>
+        <Breadcrumbs
+          items={[
+            { label: "overview", to: "/" },
+            { label: suiteName, to: `/suite/${encodeURIComponent(suiteName)}` },
+            { label: `run #${id}` },
+          ]}
+        />
+        <PageHeader eyebrow="Run" title={`#${id}`} description="Loading…" />
       </div>
     );
   }
 
-  // Default: formatted JSON
+  const { run, assertions } = data;
+  const filtered = assertions.filter((a) =>
+    filter === "all" ? true : filter === "passed" ? a.passed : !a.passed
+  );
+  const passedCount = assertions.filter((a) => a.passed).length;
+
   return (
-    <pre
-      style={{
-        color: theme.secondary,
-        fontSize: 11,
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        margin: 0,
-        fontFamily: theme.fontMono,
-      }}
-    >
-      {JSON.stringify(details, null, 2)}
-    </pre>
+    <div>
+      <Breadcrumbs
+        items={[
+          { label: "overview", to: "/" },
+          { label: suiteName, to: `/suite/${encodeURIComponent(suiteName)}` },
+          { label: `run #${run.id}` },
+        ]}
+      />
+
+      <PageHeader
+        eyebrow={`Run · ${new Date(run.timestamp).toLocaleString()}`}
+        title={`#${run.id}`}
+        tags={run.overall_pass ? [] : ["FAIL"]}
+        description={`${passedCount}/${assertions.length} assertions passed · ${run.model_version ?? "—"} · prompt v${run.prompt_version ?? "—"}`}
+      />
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+        <KPI
+          label="Score"
+          value={pct(run.overall_score, 1)}
+          accent={scoreColor(run.overall_score)}
+          sub={run.overall_pass ? "pass" : "fail"}
+        />
+        <KPI
+          label="Assertions"
+          value={`${passedCount}/${assertions.length}`}
+          accent="var(--text)"
+          sub="passed"
+        />
+        <KPI label="Model" value={run.model_version ?? "—"} accent="var(--text-dim)" sub="runtime" />
+        <KPI
+          label="Prompt"
+          value={run.prompt_version != null ? `v${run.prompt_version}` : "—"}
+          accent="var(--text-dim)"
+          sub={run.prompt_name ?? "—"}
+        />
+      </div>
+
+      <div className="card" style={{ overflow: "hidden" }}>
+        <div
+          style={{
+            padding: "14px 16px",
+            borderBottom: "1px solid var(--border)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Assertions</div>
+          <div
+            style={{
+              display: "inline-flex",
+              gap: 4,
+              background: "var(--bg-elev)",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              padding: 2,
+            }}
+          >
+            {(["all", "failed", "passed"] as const).map((x) => (
+              <button
+                key={x}
+                onClick={() => setFilter(x)}
+                style={{
+                  padding: "3px 10px",
+                  fontSize: 11,
+                  borderRadius: 4,
+                  background: filter === x ? "var(--surface)" : "transparent",
+                  border: "1px solid " + (filter === x ? "var(--border)" : "transparent"),
+                  color: filter === x ? "var(--text)" : "var(--secondary)",
+                  cursor: "pointer",
+                  fontFamily: "var(--font-ui)",
+                }}
+              >
+                {x}
+              </button>
+            ))}
+          </div>
+        </div>
+        {filtered.map((a, i) => {
+          const isOpen = expanded.has(a.id);
+          return (
+            <div key={a.id} style={{ borderBottom: i === filtered.length - 1 ? "none" : "1px solid var(--border)" }}>
+              <div
+                onClick={() => {
+                  const n = new Set(expanded);
+                  if (n.has(a.id)) n.delete(a.id);
+                  else n.add(a.id);
+                  setExpanded(n);
+                }}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "64px 150px 1fr 80px 60px 16px",
+                  gap: 12,
+                  alignItems: "center",
+                  padding: "10px 16px",
+                  cursor: "pointer",
+                  borderLeft: a.passed ? "2px solid transparent" : "2px solid var(--error)",
+                }}
+              >
+                <span
+                  style={{
+                    color: a.passed ? "var(--success)" : "var(--error)",
+                    fontWeight: 700,
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  {a.passed ? "PASS" : "FAIL"}
+                </span>
+                <span style={{ color: "var(--text-dim)", fontSize: 12, fontFamily: "var(--font-mono)" }}>
+                  {a.assertion_type}
+                </span>
+                <span
+                  style={{
+                    color: "var(--text)",
+                    fontSize: 13,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {a.test_name}
+                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      height: 4,
+                      background: "var(--bg-elev)",
+                      borderRadius: 2,
+                      overflow: "hidden",
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: ((a.score ?? 0) * 100) + "%",
+                        height: "100%",
+                        background: scoreColor(a.score),
+                      }}
+                    />
+                  </div>
+                </div>
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 12,
+                    color: scoreColor(a.score),
+                    fontWeight: 600,
+                    textAlign: "right",
+                  }}
+                >
+                  {pct(a.score, 0)}
+                </span>
+                <span style={{ color: "var(--muted)", textAlign: "right", fontSize: 11 }}>
+                  {isOpen ? "▾" : "▸"}
+                </span>
+              </div>
+              {isOpen && (
+                <div
+                  className="mono enter"
+                  style={{
+                    padding: "12px 16px 16px 82px",
+                    background: "rgba(0,0,0,0.2)",
+                    fontSize: 11.5,
+                    color: "var(--text-dim)",
+                    lineHeight: 1.7,
+                    borderTop: "1px solid var(--border)",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  <div style={{ color: "var(--muted)", marginBottom: 6 }}>
+                    $ promptry assertion --id {a.id}
+                  </div>
+                  {a.details ? (
+                    <pre style={{ margin: 0, color: "var(--text-dim)" }}>
+                      {JSON.stringify(a.details, null, 2)}
+                    </pre>
+                  ) : (
+                    <div style={{ color: "var(--muted)" }}>(no details)</div>
+                  )}
+                  {a.latency_ms != null && (
+                    <div style={{ marginTop: 6, color: "var(--muted)" }}>
+                      latency: {a.latency_ms}ms
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {filtered.length === 0 && (
+          <div style={{ padding: 24, color: "var(--muted)", textAlign: "center", fontSize: 13 }}>
+            No assertions match this filter.
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

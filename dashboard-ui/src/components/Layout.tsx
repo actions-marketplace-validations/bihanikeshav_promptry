@@ -1,77 +1,74 @@
-import { NavLink, Outlet } from "react-router-dom";
-import { theme } from "../theme";
+import { useEffect, useState } from "react";
+import { Outlet } from "react-router-dom";
+import { SideNav } from "./SideNav";
+import { ActivityFooter } from "./ActivityFooter";
+import { CommandK } from "./CommandK";
+import { getSuites, getPrompts } from "../api/client";
+import type { SuiteSummary, PromptSummary } from "../api/types";
 
-const navItems = [
-  { to: "/", label: "Overview" },
-  { to: "/prompts", label: "Prompts" },
-  { to: "/models", label: "Models" },
-  { to: "/cost", label: "Cost" },
-  { to: "/playground", label: "Playground" },
-];
+export interface LayoutContext {
+  suites: SuiteSummary[];
+  prompts: PromptSummary[];
+  refresh: () => void;
+}
 
 export default function Layout() {
-  const port =
-    new URLSearchParams(window.location.search).get("port") || "8420";
+  const [suites, setSuites] = useState<SuiteSummary[]>([]);
+  const [prompts, setPrompts] = useState<PromptSummary[]>([]);
+  const [cmdOpen, setCmdOpen] = useState(false);
+  const [nonce, setNonce] = useState(0);
+
+  useEffect(() => {
+    getSuites().then(setSuites).catch(() => setSuites([]));
+    getPrompts().then(setPrompts).catch(() => setPrompts([]));
+  }, [nonce]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const regressions = suites.filter((s) => !s.passed).length;
+  const drifting = suites.filter((s) => s.drift_status === "drifting").length;
+
+  const ctx: LayoutContext = {
+    suites,
+    prompts,
+    refresh: () => setNonce((n) => n + 1),
+  };
 
   return (
-    <div style={{ minHeight: "100vh", background: theme.bg, fontFamily: theme.fontUI }}>
-      {/* Top bar */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 24px",
-          height: 44,
-          borderBottom: `1px solid ${theme.border}`,
-          background: theme.surface,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <NavLink
-            to="/"
-            style={{
-              color: theme.text,
-              textDecoration: "none",
-              fontWeight: 700,
-              fontSize: 15,
-              fontFamily: theme.fontUI,
-            }}
-          >
-            <span>prompt</span>
-            <span style={{ color: theme.accent }}>ry</span>
-          </NavLink>
-          <nav style={{ display: "flex", gap: 16 }}>
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === "/"}
-                style={({ isActive }) => ({
-                  color: isActive ? theme.accent : theme.secondary,
-                  textDecoration: "none",
-                  fontSize: 13,
-                  fontFamily: theme.fontUI,
-                  padding: "4px 0",
-                  borderBottom: isActive
-                    ? `2px solid ${theme.accent}`
-                    : "2px solid transparent",
-                })}
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
-        </div>
-        <span style={{ color: theme.muted, fontSize: 12, fontFamily: theme.fontMono }}>
-          localhost:{port}
-        </span>
-      </header>
-
-      {/* Main content */}
-      <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
-        <Outlet />
-      </main>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "row" }}>
+      <SideNav
+        onCmdK={() => setCmdOpen(true)}
+        counters={{ suites: suites.length, regressions, drifting }}
+      />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <main
+          style={{
+            flex: 1,
+            maxWidth: 1400,
+            width: "100%",
+            margin: "0 auto",
+            padding: "4px 32px 40px",
+          }}
+        >
+          <Outlet context={ctx} />
+        </main>
+        <ActivityFooter suites={suites} />
+      </div>
+      <CommandK
+        open={cmdOpen}
+        onClose={() => setCmdOpen(false)}
+        suites={suites}
+        prompts={prompts}
+      />
     </div>
   );
 }
