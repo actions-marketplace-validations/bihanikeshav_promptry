@@ -3,6 +3,7 @@
 __version__ = "0.9.5"
 
 from promptry.registry import track, track_context, track_invocation, vote, save_dataset, load_dataset, PromptRegistry
+from promptry.prompts import seed_prompt, get_prompt_template, render_prompt
 from promptry.feedback import analyze_votes
 from promptry.evaluator import suite, check_all
 from promptry.assertions import (
@@ -70,6 +71,9 @@ __all__ = [
     "track",
     "track_context",
     "track_invocation",
+    "seed_prompt",
+    "get_prompt_template",
+    "render_prompt",
     "vote",
     "save_dataset",
     "load_dataset",
