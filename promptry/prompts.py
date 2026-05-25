@@ -45,36 +45,50 @@ def seed_prompt(name: str, default_content: str) -> None:
         logger.debug("seed_prompt failed for %s", name, exc_info=True)
 
 
-def get_prompt_template(name: str, default_content: str, ttl: float = DEFAULT_TTL) -> str:
-    """Latest registry content for *name*, cached for *ttl* seconds, falling
-    back to *default_content* on any miss or error."""
+def get_prompt_template(name: str, default_content: str, ttl: float = DEFAULT_TTL,
+                        env: str | None = None) -> str:
+    """Registry content for *name*, cached for *ttl* seconds, falling back to
+    *default_content* on any miss or error.
+
+    With ``env`` (e.g. "prod"), resolves the version tagged with that
+    environment instead of the latest — so dashboard edits don't go live
+    until promoted. Falls back to latest if the env tag isn't set yet.
+    """
+    cache_key = f"{name}@{env}" if env else name
     now = time.time()
     with _lock:
-        hit = _cache.get(name)
+        hit = _cache.get(cache_key)
         if hit and hit[1] > now:
             return hit[0]
 
     content = default_content
     try:
         from promptry.storage import get_storage
-        rec = get_storage().get_prompt(name)
+        storage = get_storage()
+        rec = None
+        if env:
+            rec = storage.get_prompt_by_tag(name, env)
+        if rec is None:
+            rec = storage.get_prompt(name)
         if rec and rec.content:
             content = rec.content
     except Exception:
         logger.debug("get_prompt_template fetch failed for %s", name, exc_info=True)
 
     with _lock:
-        _cache[name] = (content, now + ttl)
+        _cache[cache_key] = (content, now + ttl)
     return content
 
 
-def render_prompt(name: str, default_content: str, *, ttl: float = DEFAULT_TTL, **variables) -> str:
+def render_prompt(name: str, default_content: str, *, ttl: float = DEFAULT_TTL,
+                  env: str | None = None, **variables) -> str:
     """Fetch the managed template for *name* and substitute ``$placeholders``.
 
     Falls back to *default_content* cleanly; substitution never raises, so a
-    malformed dashboard edit can't crash a request.
+    malformed dashboard edit can't crash a request. Pass ``env`` to serve a
+    promoted version (see get_prompt_template).
     """
-    template_str = get_prompt_template(name, default_content, ttl=ttl)
+    template_str = get_prompt_template(name, default_content, ttl=ttl, env=env)
     try:
         return Template(template_str).safe_substitute(**variables)
     except Exception:

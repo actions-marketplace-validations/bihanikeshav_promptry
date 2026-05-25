@@ -18,6 +18,7 @@ import type {
   LintFinding,
   InvocationRow,
   InvocationDetail,
+  BisectResult,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -123,6 +124,20 @@ export function listInvocations(params: { name?: string; days?: number; limit?: 
 
 export function getInvocation(id: number): Promise<InvocationDetail> {
   return fetchJson(`/api/invocations/${id}`);
+}
+
+export async function promotePrompt(name: string, version: number, env: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${BASE}/api/prompts/${encodeURIComponent(name)}/promote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ version, env }),
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export function getSuiteBisect(name: string): Promise<BisectResult> {
+  return fetchJson(`/api/suite/${encodeURIComponent(name)}/bisect`);
 }
 
 export async function lintPromptText(content: string): Promise<{ variables: string[]; lint: LintFinding[] }> {

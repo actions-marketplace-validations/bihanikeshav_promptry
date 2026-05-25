@@ -10,6 +10,7 @@ import {
   getPromptStats,
   getPromptRuns,
   lintPromptText,
+  promotePrompt,
 } from "../api/client";
 import type { PromptVersion, DiffResponse, PromptStats, PromptRun, LintFinding } from "../api/types";
 
@@ -99,6 +100,17 @@ export default function PromptDetail() {
   }, [view, draft]);
 
   const isLatest = versions.length > 0 && selected === versions[0].version;
+  const prodVersion = versions.find((v) => v.tags?.includes("prod"))?.version ?? null;
+
+  async function handlePromote() {
+    if (selected == null) return;
+    try {
+      await promotePrompt(promptName, selected, "prod");
+      await reloadVersions();
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -176,6 +188,11 @@ export default function PromptDetail() {
                       LATEST
                     </span>
                   )}
+                  {v.tags?.includes("prod") && (
+                    <span style={{ fontSize: 9, color: "var(--accent)", marginLeft: 6, letterSpacing: "0.04em" }}>
+                      PROD
+                    </span>
+                  )}
                 </span>
                 <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>
                   {v.hash.slice(0, 7)}
@@ -210,16 +227,31 @@ export default function PromptDetail() {
               {tab("stats", "Stats")}
               {tab("evals", "Evals")}
             </div>
-            {view === "diff" && diff && (
-              <div style={{ display: "flex", gap: 6 }}>
-                <span className="chip mono" style={{ fontSize: 10, color: "var(--error)" }}>
-                  − {diff.deletions}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {view === "diff" && diff && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <span className="chip mono" style={{ fontSize: 10, color: "var(--error)" }}>− {diff.deletions}</span>
+                  <span className="chip mono" style={{ fontSize: 10, color: "var(--success)" }}>+ {diff.additions}</span>
+                </div>
+              )}
+              {selected != null && selected !== prodVersion && (
+                <button
+                  onClick={handlePromote}
+                  title="Point the prod env tag at this version (render_prompt(env='prod') will serve it)"
+                  style={{
+                    padding: "5px 11px", borderRadius: 6, fontSize: 11.5, fontWeight: 600,
+                    cursor: "pointer", color: "var(--bg)", background: "var(--accent)", border: "none",
+                  }}
+                >
+                  Promote v{selected} → prod
+                </button>
+              )}
+              {selected != null && selected === prodVersion && (
+                <span className="chip mono" style={{ fontSize: 10, color: "var(--accent)", borderColor: "var(--accent-line)", background: "var(--accent-soft)" }}>
+                  serving in prod
                 </span>
-                <span className="chip mono" style={{ fontSize: 10, color: "var(--success)" }}>
-                  + {diff.additions}
-                </span>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* CURRENT — the actual prompt text */}

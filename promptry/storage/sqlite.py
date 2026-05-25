@@ -398,6 +398,31 @@ class SQLiteStorage(BaseStorage):
 
         return {"name": name, "days": days, "count": len(rows), "metrics": metrics, "histogram": hist}
 
+    def set_prompt_env(self, name: str, version: int, env: str) -> bool:
+        """Point an environment tag (e.g. 'prod') at a specific version,
+        moving it off whatever version currently holds it. Returns False if
+        the version doesn't exist."""
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id FROM prompts WHERE name = ? AND version = ?", (name, version)
+            )
+            row = cur.fetchone()
+            if not row:
+                return False
+            target_id = row["id"]
+            # Clear this env tag from all versions of the prompt.
+            self._conn.execute(
+                """DELETE FROM prompt_tags WHERE tag = ? AND prompt_id IN
+                   (SELECT id FROM prompts WHERE name = ?)""",
+                (env, name),
+            )
+            self._conn.execute(
+                "INSERT OR IGNORE INTO prompt_tags (prompt_id, tag) VALUES (?, ?)",
+                (target_id, env),
+            )
+            self._conn.commit()
+            return True
+
     def get_runs_for_prompt(self, prompt_name: str, limit: int = 50) -> list[dict]:
         """Eval runs that exercised a given prompt, newest first, with the
         prompt version each ran against. Powers the prompt↔eval linkage so a
@@ -483,6 +508,41 @@ class SQLiteStorage(BaseStorage):
             "input_text": r["input_text"],
             "output_text": r["output_text"],
         }
+
+    def bisect_regression(self, suite_name: str) -> dict:
+        """Find the first eval run where the suite went from passing to
+        failing (a `git bisect` for evals), with the prompt/model deltas at
+        that boundary. Returns {found, run, previous} or {found: False}."""
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT id, prompt_version, model_version, timestamp,
+                          overall_pass, overall_score
+                   FROM eval_runs WHERE suite_name = ? ORDER BY id ASC""",
+                (suite_name,),
+            )
+            runs = cur.fetchall()
+        prev = None
+        for r in runs:
+            if prev is not None and prev["overall_pass"] and not r["overall_pass"]:
+                return {
+                    "found": True,
+                    "suite": suite_name,
+                    "first_bad": {
+                        "run_id": r["id"], "prompt_version": r["prompt_version"],
+                        "model_version": r["model_version"], "timestamp": r["timestamp"],
+                        "score": r["overall_score"],
+                    },
+                    "last_good": {
+                        "run_id": prev["id"], "prompt_version": prev["prompt_version"],
+                        "model_version": prev["model_version"], "timestamp": prev["timestamp"],
+                        "score": prev["overall_score"],
+                    },
+                    "prompt_changed": prev["prompt_version"] != r["prompt_version"],
+                    "model_changed": prev["model_version"] != r["model_version"],
+                }
+            prev = r
+        return {"found": False, "suite": suite_name,
+                "reason": "No passing→failing transition found." if runs else "No runs."}
 
     def get_invocation_models(self, days: int = 30) -> list[dict]:
         """Distinct models seen in the invocations ledger over the window,

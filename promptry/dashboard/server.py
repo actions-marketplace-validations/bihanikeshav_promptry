@@ -425,6 +425,33 @@ def prompt_stats(name: str, days: int = Query(default=30, ge=1)):
     return storage.get_invocation_stats(name, days=days)
 
 
+class _PromoteReq(BaseModel):
+    version: int
+    env: str = "prod"
+
+
+@app.post("/api/prompts/{name}/promote")
+def promote_prompt(name: str, body: _PromoteReq):
+    """Point an environment tag (dev/staging/prod) at a specific version so
+    render_prompt(env=...) serves it — a gate between editing and going live."""
+    storage = get_storage()
+    if not hasattr(storage, "set_prompt_env"):
+        raise HTTPException(status_code=501, detail="promotion not supported by this backend")
+    ok = storage.set_prompt_env(name, body.version, body.env)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"{name} v{body.version} not found")
+    return {"ok": True, "name": name, "version": body.version, "env": body.env}
+
+
+@app.get("/api/suite/{name}/bisect")
+def suite_bisect(name: str):
+    """Find the first run where the suite regressed (passing→failing)."""
+    storage = get_storage()
+    if not hasattr(storage, "bisect_regression"):
+        return {"found": False}
+    return storage.bisect_regression(name)
+
+
 @app.post("/api/prompts/{name}/prune")
 def prune_prompt(name: str, keep: int = Query(default=1, ge=1)):
     """Collapse a prompt's version history to the newest *keep* versions.

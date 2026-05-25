@@ -100,6 +100,16 @@ export interface InvocationDetail {
   output_text: string | null;
 }
 
+export interface BisectResult {
+  found: boolean;
+  suite: string;
+  reason?: string;
+  first_bad?: { run_id: number; prompt_version: number | null; model_version: string | null; timestamp: string; score: number | null };
+  last_good?: { run_id: number; prompt_version: number | null; model_version: string | null; timestamp: string; score: number | null };
+  prompt_changed?: boolean;
+  model_changed?: boolean;
+}
+
 export interface CostCoverage {
   days: number;
   models_seen: number;
