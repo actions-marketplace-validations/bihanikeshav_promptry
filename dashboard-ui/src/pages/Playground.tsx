@@ -1,79 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { PageHeader } from "../components/ui";
+import { PageHeader, Select } from "../components/ui";
 import { runPlaygroundModel, getConfig, getPrompts, getPromptContent } from "../api/client";
 import type { PlaygroundRuleType } from "../api/types";
-
-/* -------- presets -------- */
-interface Preset {
-  id: string;
-  name: string;
-  desc: string;
-  sys: string;
-  user: string;
-  vars: Record<string, string>;
-  context: string;
-  golden: string;
-  rules: Rule[];
-}
 
 interface Rule {
   id: number;
   type: PlaygroundRuleType;
   value: string;
 }
-
-const PRESETS: Preset[] = [
-  {
-    id: "billing-rate-limit",
-    name: "billing/rate_limit",
-    desc: "RAG answer about free-tier rate limiting",
-    sys: 'You are a careful billing support assistant. Answer using ONLY the provided context. If the answer isn\'t supported, reply "I don\'t know.". Return JSON: {answer, sources}.',
-    user: "What is the rate limit on the {{plan}} plan?",
-    vars: { plan: "free" },
-    context:
-      "# billing.md\n## rate-limits\n- free: 100 req/min, 10k/day\n- pro: 1000 req/min, 250k/day\n- burst requests over the limit return HTTP 429",
-    golden: '{"answer":"100 requests per minute","sources":["billing.md#rate-limits"]}',
-    rules: [
-      { id: 1, type: "contains", value: "100 requests" },
-      { id: 2, type: "json_valid", value: "" },
-      { id: 3, type: "not_contains", value: "unlimited, unsure" },
-      { id: 4, type: "json_path_eq", value: "sources[0]=billing.md#rate-limits" },
-      { id: 5, type: "max_tokens", value: "120" },
-    ],
-  },
-  {
-    id: "support-refund",
-    name: "support/refund_policy",
-    desc: "Refund eligibility with cited policy doc",
-    sys: "You are a support agent. Be concise. Cite policy lines. Do not guess beyond 30-day window.",
-    user: "I cancelled on day 45 — can I get a refund?",
-    vars: {},
-    context:
-      "# refunds.md\n- refunds allowed within 30 days of invoice\n- prorated refunds are not offered\n- cancellations after 30d are effective at period end",
-    golden:
-      "No — refunds are only available within 30 days of the invoice date (refunds.md#policy).",
-    rules: [
-      { id: 1, type: "contains", value: "30 days" },
-      { id: 2, type: "not_contains", value: "I'm not sure, maybe" },
-      { id: 3, type: "max_tokens", value: "80" },
-    ],
-  },
-  {
-    id: "classifier",
-    name: "intent/classifier",
-    desc: "Classifies a user message into one of 6 intents",
-    sys: "Classify the message into EXACTLY ONE of: billing, bug, feature_request, auth, onboarding, other. Reply with JSON {intent, confidence}.",
-    user: "I keep getting logged out after 30 seconds on Safari.",
-    vars: {},
-    context: "",
-    golden: '{"intent":"auth","confidence":0.9}',
-    rules: [
-      { id: 1, type: "json_valid", value: "" },
-      { id: 2, type: "json_path_eq", value: "intent=auth" },
-      { id: 3, type: "matches", value: '"confidence"\\s*:\\s*0\\.[89]\\d*' },
-    ],
-  },
-];
 
 /* -------- models (display metadata; server uses the id) -------- */
 interface ModelMeta {
@@ -208,13 +142,12 @@ interface ModelRunRecord {
 
 /* -------- component -------- */
 export default function Playground() {
-  const [preset, setPreset] = useState<Preset>(PRESETS[0]);
-  const [sys, setSys] = useState(PRESETS[0].sys);
-  const [user, setUser] = useState(PRESETS[0].user);
-  const [vars, setVars] = useState<Record<string, string>>(PRESETS[0].vars);
-  const [context, setContext] = useState(PRESETS[0].context);
-  const [golden, setGolden] = useState(PRESETS[0].golden);
-  const [rules, setRules] = useState<Rule[]>(PRESETS[0].rules);
+  const [sys, setSys] = useState("");
+  const [user, setUser] = useState("");
+  const [vars, setVars] = useState<Record<string, string>>({});
+  const [context, setContext] = useState("");
+  const [golden, setGolden] = useState("");
+  const [rules, setRules] = useState<Rule[]>([]);
   const [models, setModels] = useState<string[]>(["gpt-4o-mini", "claude-haiku-4-5"]);
   const [temp, setTemp] = useState(0.2);
   const [results, setResults] = useState<Record<string, ModelRunRecord>>({});
@@ -255,24 +188,6 @@ export default function Playground() {
       .catch(() => {});
   }, []);
 
-  // List of real tracked prompts to load into the editor.
-  useEffect(() => {
-    getPrompts().then((ps) => setRegistry(ps.map((p) => p.name))).catch(() => setRegistry([]));
-  }, []);
-
-  const loadPreset = (p: Preset) => {
-    setPreset(p);
-    setSys(p.sys);
-    setUser(p.user);
-    setVars(p.vars || {});
-    setContext(p.context || "");
-    setGolden(p.golden || "");
-    setRules(p.rules);
-    setResults({});
-    setFocusedModel(null);
-    setLoadedPrompt(null);
-  };
-
   // Load a real tracked prompt's current content into the system field.
   const loadFromRegistry = async (name: string) => {
     if (!name) return;
@@ -285,10 +200,23 @@ export default function Playground() {
     } catch { /* ignore */ }
   };
 
+  // Load the list of real tracked prompts; auto-load the first so the editor
+  // starts on real content instead of a blank or hardcoded sample.
+  useEffect(() => {
+    getPrompts()
+      .then((ps) => {
+        const names = ps.map((p) => p.name);
+        setRegistry(names);
+        if (names.length) loadFromRegistry(names[0]);
+      })
+      .catch(() => setRegistry([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Pin the current results as variant A to compare the next run against.
   const pinVariantA = () => {
     if (!Object.keys(results).length) return;
-    setVariantA({ label: loadedPrompt || preset.name, results: { ...results } });
+    setVariantA({ label: loadedPrompt || "variant A", results: { ...results } });
   };
 
   const resolvedUser = interpolate(user, vars);
@@ -377,7 +305,7 @@ export default function Playground() {
         eyebrow="~/promptry · playground"
         title="Prompt Playground"
         description="Iterate on a prompt, try it across models, and preview assertion results before promoting to a suite."
-        tags={[loadedPrompt || preset.name, `${models.length} model${models.length === 1 ? "" : "s"}`, `${rules.length} assertions`]}
+        tags={[loadedPrompt || "scratch", `${models.length} model${models.length === 1 ? "" : "s"}`, `${rules.length} assertions`]}
         actions={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {variantA ? (
@@ -422,64 +350,31 @@ export default function Playground() {
         }
       />
 
-      {/* Preset strip */}
+      {/* Prompt source — load a real tracked prompt into the editor */}
       <div
         className="card"
-        style={{
-          padding: 10,
-          marginBottom: 12,
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
+        style={{ padding: 10, marginBottom: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}
       >
         <span
-          style={{
-            fontSize: 10,
-            color: "var(--muted)",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            fontFamily: "var(--font-mono)",
-            marginRight: 4,
-          }}
+          style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-mono)" }}
         >
-          Presets
+          Prompt
         </span>
-        {PRESETS.map((p) => {
-          const active = p.id === preset.id;
-          return (
-            <button
-              key={p.id}
-              onClick={() => loadPreset(p)}
-              className="btn"
-              style={{
-                borderColor: active ? "var(--accent-line)" : "var(--border)",
-                background: active ? "var(--accent-soft)" : "var(--bg-elev)",
-                color: active ? "var(--accent)" : "var(--text-dim)",
-                fontFamily: "var(--font-mono)",
-                fontSize: 11.5,
-              }}
-            >
-              {p.name}
-            </button>
-          );
-        })}
-        {registry.length > 0 && (
-          <select
-            className="inp"
+        {registry.length > 0 ? (
+          <Select
             value={loadedPrompt ?? ""}
-            onChange={(e) => loadFromRegistry(e.target.value)}
-            title="Load a real tracked prompt into the editor"
-            style={{ height: 28, fontSize: 11.5, maxWidth: 220 }}
-          >
-            <option value="">Load tracked prompt…</option>
-            {registry.map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
+            onChange={(v) => loadFromRegistry(v)}
+            minWidth={240}
+            options={registry.map((n) => ({ value: n, label: n }))}
+          />
+        ) : (
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            No tracked prompts yet — type below, or wrap one with <span className="mono">track()</span>.
+          </span>
         )}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
-          {loadedPrompt ? <>editing <span className="mono" style={{ color: "var(--accent)" }}>{loadedPrompt}</span></> : preset.desc}
+          {loadedPrompt ? <>editing <span className="mono" style={{ color: "var(--accent)" }}>{loadedPrompt}</span></> : "scratch prompt"}
         </span>
       </div>
 
@@ -712,18 +607,12 @@ export default function Playground() {
                         padding: "6px 0",
                       }}
                     >
-                      <select
-                        className="inp"
+                      <Select
                         value={r.type}
-                        onChange={(e) => updateRule(r.id, { type: e.target.value as PlaygroundRuleType })}
-                        style={{ minWidth: 170 }}
-                      >
-                        {RULE_TYPES.map((x) => (
-                          <option key={x.v} value={x.v}>
-                            {x.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => updateRule(r.id, { type: v as PlaygroundRuleType })}
+                        minWidth={170}
+                        options={RULE_TYPES.map((x) => ({ value: x.v, label: x.label }))}
+                      />
                       {r.type === "json_valid" ? (
                         <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
                           Checks the response parses as JSON.

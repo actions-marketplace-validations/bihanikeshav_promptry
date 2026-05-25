@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PageHeader } from "../components/ui";
+import { PageHeader, Select } from "../components/ui";
 import { getConfig, updateConfig } from "../api/client";
 import type { ProjectConfig, ModelEntry } from "../api/types";
 
@@ -84,9 +84,8 @@ export default function Settings() {
         </table>
         <div style={{ display: "flex", gap: 8, padding: "12px 16px", borderTop: "1px solid var(--border)", alignItems: "center", flexWrap: "wrap" }}>
           <input className="inp" placeholder="model id (e.g. gpt-4o)" value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} style={{ width: 200 }} />
-          <select className="inp" value={draft.provider} onChange={(e) => setDraft({ ...draft, provider: e.target.value })}>
-            {PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
+          <Select value={draft.provider} onChange={(v) => setDraft({ ...draft, provider: v })}
+            options={PROVIDERS.map((p) => ({ value: p, label: p }))} minWidth={130} />
           <input className="inp" placeholder="label (optional)" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} style={{ width: 160 }} />
           <button className="btn" onClick={addModel} style={{ background: "var(--accent)", color: "var(--bg)" }}>Add model</button>
           {saving && <span style={{ fontSize: 11, color: "var(--muted)" }}>saving…</span>}
