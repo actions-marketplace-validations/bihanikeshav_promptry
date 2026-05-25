@@ -118,9 +118,34 @@ def run_detail(name: str, run_id: int):
             detail=f"Run {run_id} does not belong to suite '{name}'",
         )
     assertions = storage.get_eval_results(run_id)
+
+    # Judge-cost attribution: sum the per-assertion estimates the judge
+    # assertions stashed in their details (see assertions._judge_cost_details).
+    jc_calls = jc_in = jc_out = 0
+    jc_cost = 0.0
+    jc_model = None
+    jc_unpriced = False
+    for a in assertions:
+        d = a.details or {}
+        if not d.get("judge_cost_estimated"):
+            continue
+        jc_calls += 1
+        jc_model = d.get("judge_model") or jc_model
+        jc_in += d.get("judge_tokens_in") or 0
+        jc_out += d.get("judge_tokens_out") or 0
+        if d.get("judge_cost") is not None:
+            jc_cost += d["judge_cost"]
+        else:
+            jc_unpriced = True
+    judge = {
+        "calls": jc_calls, "model": jc_model, "tokens_in": jc_in,
+        "tokens_out": jc_out, "cost": jc_cost, "estimated": True, "unpriced": jc_unpriced,
+    } if jc_calls else None
+
     return {
         "run": _dc_to_dict(run),
         "assertions": [_dc_to_dict(a) for a in assertions],
+        "judge": judge,
     }
 
 

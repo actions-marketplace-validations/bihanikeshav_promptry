@@ -265,6 +265,33 @@ def _parse_judge_output(raw: str) -> tuple[float, str]:
     return score, reason
 
 
+def _judge_cost_details(judge_input: str, judge_output: str) -> dict:
+    """Estimate what a judge LLM call cost, to attribute eval spend.
+
+    The judge is an opaque user callable, so we never see its real token
+    usage — we estimate from the grading prompt we sent and the text it
+    returned, priced at the judge model configured in .promptry/config.toml
+    ([judge] model = ...). Honest about being an estimate; cost is None when
+    no judge model is configured or the model has no pricing entry.
+    """
+    try:
+        from promptry.pricing import estimate_tokens, calculate_cost
+        from promptry.projectconfig import load_project_config
+        model = (load_project_config().get("judge") or {}).get("model")
+        ti = estimate_tokens(judge_input)
+        to = estimate_tokens(judge_output or "")
+        cost = calculate_cost(model, tokens_in=ti, tokens_out=to) if model else None
+        return {
+            "judge_model": model,
+            "judge_tokens_in": ti,
+            "judge_tokens_out": to,
+            "judge_cost": cost,
+            "judge_cost_estimated": True,
+        }
+    except Exception:
+        return {}
+
+
 def assert_llm(
     response: str,
     criteria: str,
@@ -306,6 +333,7 @@ def assert_llm(
     start = time.perf_counter()
     raw_output = judge_fn(grading_prompt)
     latency = (time.perf_counter() - start) * 1000
+    jc = _judge_cost_details(grading_prompt, raw_output)
 
     try:
         score, reason = _parse_judge_output(raw_output)
@@ -319,6 +347,7 @@ def assert_llm(
                 "raw_output": raw_output[:500],
                 "criteria": criteria,
                 "latency_ms": latency,
+                **jc,
             },
         ))
         raise AssertionError(f"LLM judge returned unparseable output: {e}")
@@ -334,6 +363,7 @@ def assert_llm(
             "threshold": threshold,
             "response_preview": response[:200],
             "latency_ms": latency,
+            **jc,
         },
     ))
 
@@ -629,6 +659,7 @@ def assert_grounded(
     start = time.perf_counter()
     raw_output = judge_fn(prompt)
     latency = (time.perf_counter() - start) * 1000
+    jc = _judge_cost_details(prompt, raw_output)
 
     try:
         score, claims = _parse_grounding_output(raw_output)
@@ -641,6 +672,7 @@ def assert_grounded(
                 "error": str(e),
                 "raw_output": raw_output[:500],
                 "latency_ms": latency,
+                **jc,
             },
         ))
         raise AssertionError(f"Grounding judge returned unparseable output: {e}")
@@ -662,6 +694,7 @@ def assert_grounded(
             "fabricated": fabricated,
             "response_preview": response[:200],
             "latency_ms": latency,
+            **jc,
         },
     ))
 

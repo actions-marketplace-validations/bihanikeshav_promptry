@@ -79,6 +79,24 @@ export default function RunDetail() {
         />
       </div>
 
+      {data.judge && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 20, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "var(--font-mono)" }}>Judge cost</span>
+          <span style={{ fontSize: 15, fontWeight: 600 }}>
+            {data.judge.unpriced && data.judge.cost === 0 ? "—" : "$" + data.judge.cost.toFixed(4)}
+          </span>
+          <span style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
+            {data.judge.calls} judge call{data.judge.calls === 1 ? "" : "s"} · {data.judge.tokens_in + data.judge.tokens_out} tok
+            {data.judge.model ? ` · ${data.judge.model}` : ""}
+          </span>
+          <span style={{ fontSize: 10.5, color: "var(--muted)", marginLeft: "auto" }}>
+            {data.judge.unpriced
+              ? (data.judge.model ? `no pricing for ${data.judge.model}` : "set [judge] model in config to price")
+              : "estimated (~4 chars/token)"}
+          </span>
+        </div>
+      )}
+
       <div className="card" style={{ overflow: "hidden" }}>
         <div
           style={{

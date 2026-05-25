@@ -32,9 +32,20 @@ export interface AssertionResult {
   latency_ms: number | null;
 }
 
+export interface JudgeCost {
+  calls: number;
+  model: string | null;
+  tokens_in: number;
+  tokens_out: number;
+  cost: number;
+  estimated: boolean;
+  unpriced: boolean;
+}
+
 export interface RunDetailResponse {
   run: EvalRun;
   assertions: AssertionResult[];
+  judge?: JudgeCost | null;
 }
 
 export interface PromptSummary {
