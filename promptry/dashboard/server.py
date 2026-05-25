@@ -12,8 +12,10 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from promptry.storage import get_storage
+from promptry.registry import PromptRegistry
 
 app = FastAPI(title="promptry dashboard", docs_url="/api/docs")
 
@@ -362,6 +364,29 @@ def prompt_content(name: str, v: Optional[int] = Query(default=None)):
     return _dc_to_dict(record)
 
 
+class _PromptEdit(BaseModel):
+    content: str
+
+
+@app.post("/api/prompts/{name}/content")
+def update_prompt_content(name: str, body: _PromptEdit):
+    """Save an edited prompt as a new version from the dashboard.
+
+    Dedups by content hash (same as track()), so saving an unchanged
+    body is a no-op that returns the existing latest version. Apps that
+    fetch their templates from promptry by name will pick up the new
+    version on their next cache refresh.
+    """
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Prompt content cannot be empty")
+    storage = get_storage()
+    h = PromptRegistry.content_hash(content)
+    record = storage.save_prompt(name=name, content=content, content_hash=h,
+                                 metadata={"source": "dashboard_edit"})
+    return {"ok": True, "name": name, "version": record.version, "hash": record.hash}
+
+
 @app.get("/api/prompts/{name}/diff")
 def prompt_diff(name: str, v1: int = Query(...), v2: int = Query(...)):
     storage = get_storage()
@@ -512,6 +537,72 @@ def vote_analyze(
 
 
 # ---- Playground ----
+
+class _PlaygroundModelReq(BaseModel):
+    model: str
+    system: str = ""
+    user: str
+    context: str = ""
+    temperature: float = 0.7
+
+
+@app.post("/api/playground/model")
+def playground_model(body: _PlaygroundModelReq):
+    """Run a single prompt against a live model and return the output with
+    token usage and cost. Used by the Playground's model comparison.
+
+    Calls the provider via litellm (so any model litellm supports works,
+    given the right API key in the environment). Cost is computed from
+    promptry's rate table.
+    """
+    import time as _time
+    try:
+        import litellm
+    except ImportError:
+        raise HTTPException(status_code=503, detail="litellm is not installed on the server")
+
+    messages = []
+    if body.system.strip():
+        messages.append({"role": "system", "content": body.system})
+    user_content = body.user
+    if body.context.strip():
+        # Retrieved context goes ahead of the question, clearly delimited.
+        user_content = f"Context:\n{body.context}\n\n{body.user}"
+    messages.append({"role": "user", "content": user_content})
+
+    start = _time.time()
+    try:
+        resp = litellm.completion(
+            model=body.model, messages=messages, temperature=body.temperature,
+        )
+    except Exception as e:
+        # Surface provider/auth errors clearly to the dashboard.
+        raise HTTPException(status_code=502, detail=f"Model call failed: {e}")
+    latency_ms = round((_time.time() - start) * 1000)
+
+    try:
+        text = resp.choices[0].message.content or ""
+    except Exception:
+        text = ""
+    usage = getattr(resp, "usage", None)
+    tokens_in = int(getattr(usage, "prompt_tokens", 0) or 0)
+    tokens_out = int(getattr(usage, "completion_tokens", 0) or 0)
+
+    cost = 0.0
+    try:
+        from promptry.pricing import calculate_cost
+        cost = calculate_cost(body.model, tokens_in=tokens_in, tokens_out=tokens_out) or 0.0
+    except Exception:
+        pass
+
+    return {
+        "response": text,
+        "latency_ms": latency_ms,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "cost": cost,
+    }
+
 
 @app.post("/api/playground/eval")
 async def playground_eval(request: Request):

@@ -11,6 +11,7 @@ import type {
   CostResponse,
   PlaygroundAssertionDef,
   PlaygroundEvalResponse,
+  PromptContent,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -85,6 +86,30 @@ export function getPromptDiff(
   );
 }
 
+export function getPromptContent(
+  name: string,
+  version?: number
+): Promise<PromptContent> {
+  const q = version != null ? `?v=${version}` : "";
+  return fetchJson(`/api/prompts/${encodeURIComponent(name)}/content${q}`);
+}
+
+export async function savePromptContent(
+  name: string,
+  content: string
+): Promise<{ ok: boolean; version: number; hash: string }> {
+  const res = await fetch(
+    `${BASE}/api/prompts/${encodeURIComponent(name)}/content`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    }
+  );
+  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
 // ---- Models ----
 
 export function getModelVersions(
@@ -115,6 +140,32 @@ export async function runPlaygroundEval(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ response, assertions }),
+  });
+  if (!res.ok) {
+    throw new Error(`API error ${res.status}: ${await res.text()}`);
+  }
+  return res.json();
+}
+
+export interface PlaygroundModelRunResponse {
+  response: string;
+  latency_ms: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost: number;
+}
+
+export async function runPlaygroundModel(req: {
+  model: string;
+  system: string;
+  user: string;
+  context: string;
+  temperature: number;
+}): Promise<PlaygroundModelRunResponse> {
+  const res = await fetch(`${BASE}/api/playground/model`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
   });
   if (!res.ok) {
     throw new Error(`API error ${res.status}: ${await res.text()}`);

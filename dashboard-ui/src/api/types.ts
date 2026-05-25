@@ -50,6 +50,15 @@ export interface PromptVersion {
   tags: string[];
 }
 
+export interface PromptContent {
+  name: string;
+  version: number;
+  content: string;
+  hash: string;
+  created_at: string;
+  tags: string[];
+}
+
 export interface DiffLine {
   type: "unchanged" | "added" | "deleted";
   old_num: number | null;
@@ -105,6 +114,33 @@ export interface PlaygroundAssertionDef {
   type: "contains" | "not_contains" | "json_valid" | "matches";
   value?: string | string[];
   options?: Record<string, unknown>;
+}
+
+// Used by the in-browser assertion runner in the Playground (client-side).
+// Server-side evaluation only supports the subset defined by PlaygroundAssertionDef.
+export type PlaygroundRuleType =
+  | "contains"
+  | "not_contains"
+  | "json_valid"
+  | "json_path_eq"
+  | "matches"
+  | "max_tokens"
+  | "similarity";
+
+export interface PlaygroundModelRunRequest {
+  model: string;
+  system: string;
+  user: string;
+  context?: string;
+  temperature?: number;
+}
+
+export interface PlaygroundModelRunResponse {
+  response: string;
+  latency_ms: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost: number;
 }
 
 export interface PlaygroundAssertionResult {
