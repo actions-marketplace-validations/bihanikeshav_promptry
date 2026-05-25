@@ -425,6 +425,16 @@ def prompt_stats(name: str, days: int = Query(default=30, ge=1)):
     return storage.get_invocation_stats(name, days=days)
 
 
+@app.get("/api/prompts/{name}/online-drift")
+def prompt_online_drift(name: str, days: int = Query(default=30, ge=1)):
+    """Distribution shift in a prompt's live telemetry over the window:
+    rating, cost, latency, and token counts, recent-half vs older-half."""
+    from promptry.drift import online_drift
+
+    storage = get_storage()
+    return online_drift(storage, name, days=days)
+
+
 class _PromoteReq(BaseModel):
     version: int
     env: str = "prod"

@@ -234,6 +234,119 @@ def _mann_whitney_u_pvalue(group1: list[float], group2: list[float]) -> float | 
 
 
 # ---------------------------------------------------------------------------
+# Online drift — distribution shift in live production telemetry
+# ---------------------------------------------------------------------------
+#
+# The DriftMonitor above watches *eval scores* run-over-run. But most prompts
+# spend their life in production with no eval attached, so quality regressions
+# show up first as a shift in the telemetry the ledger already records: output
+# length creeping up, cost or latency climbing, or — the strongest signal —
+# end-user feedback ratings sliding down.
+#
+# online_drift() splits a prompt's recent invocations chronologically into an
+# older "baseline" half and a "recent" half, then for each metric reports the
+# mean shift, OLS slope, and a Mann-Whitney U p-value (same machinery as eval
+# drift). A metric is flagged only when it moves toward its *bad* direction.
+
+# metric -> (human label, the direction that counts as a regression)
+_ONLINE_METRICS: dict[str, tuple[str, str]] = {
+    "rating": ("feedback rating", "down"),
+    "cost": ("cost / call", "up"),
+    "latency_ms": ("latency", "up"),
+    "tokens_out": ("output tokens", "up"),
+    "tokens_in": ("input tokens", "up"),
+}
+
+
+def _analyze_online_metric(metric: str, values: list[float], min_per_group: int) -> dict:
+    """Compare the recent half of a metric series against the older half."""
+    label, bad_dir = _ONLINE_METRICS[metric]
+    n = len(values)
+    half = n // 2
+    baseline, recent = values[:half], values[half:]
+    base_mean, recent_mean = mean_score_of(baseline), mean_score_of(recent)
+
+    # relative change; guard against a zero baseline (e.g. ~free models)
+    if base_mean != 0:
+        pct = (recent_mean - base_mean) / abs(base_mean)
+    else:
+        pct = None if recent_mean != 0 else 0.0
+
+    slope = _linear_slope(values)
+    p_value = _mann_whitney_u_pvalue(recent, baseline)
+    direction = "up" if recent_mean > base_mean else "down" if recent_mean < base_mean else "flat"
+    toward_bad = direction == bad_dir
+
+    # Require a meaningful *effect size*, not just statistical significance —
+    # with hundreds of calls even a trivial 3% shift comes out "significant",
+    # which would spam false alarms. Floor the change at 10% before flagging.
+    significant = p_value is not None and p_value < 0.05
+    meaningful = pct is not None and abs(pct) >= 0.10
+    big = pct is not None and abs(pct) >= 0.25
+
+    if toward_bad and meaningful and significant and big:
+        drifting, severity = True, "high"
+    elif toward_bad and meaningful and (significant or big):
+        # A real move, but either modest in size or unconfirmed by the test.
+        drifting, severity = True, "medium"
+    else:
+        drifting, severity = False, "none"
+
+    arrow = {"up": "↑", "down": "↓", "flat": "→"}[direction]
+    pct_txt = "n/a" if pct is None else f"{pct:+.0%}"
+    if p_value is not None:
+        msg = f"{label} {arrow} {pct_txt} (p={p_value:.3f})"
+    else:
+        msg = f"{label} {arrow} {pct_txt} (need {2 * min_per_group}+ calls for significance)"
+
+    return {
+        "metric": metric,
+        "label": label,
+        "count": n,
+        "baseline_mean": base_mean,
+        "recent_mean": recent_mean,
+        "pct_change": pct,
+        "slope": slope,
+        "p_value": p_value,
+        "direction": direction,
+        "bad_direction": bad_dir,
+        "drifting": drifting,
+        "severity": severity,
+        "message": msg,
+    }
+
+
+def online_drift(storage, name: str, days: int = 30, limit: int = 2000,
+                 min_per_group: int = _MWU_MIN_PER_GROUP) -> dict:
+    """Detect distribution shift in a prompt's live invocation telemetry.
+
+    Pulls recent invocations from the ledger (newest-first), reverses to
+    chronological order, and analyses each available metric. Needs at least
+    4 samples of a metric to report it at all, and 8 per half to attach a
+    significance test. Backend-agnostic: only uses storage.list_invocations.
+    """
+    rows = storage.list_invocations(name=name, days=days, limit=limit, order="recent")
+    rows = list(reversed(rows))  # chronological (oldest -> newest)
+
+    metrics: list[dict] = []
+    for metric in _ONLINE_METRICS:
+        vals = [float(r[metric]) for r in rows if r.get(metric) is not None]
+        if len(vals) >= 4:
+            metrics.append(_analyze_online_metric(metric, vals, min_per_group))
+
+    drifting = [m for m in metrics if m["drifting"]]
+    status = "drifting" if drifting else ("stable" if metrics else "insufficient")
+    return {
+        "name": name,
+        "days": days,
+        "total_calls": len(rows),
+        "metrics": metrics,
+        "drifting_count": len(drifting),
+        "status": status,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Formatting
 # ---------------------------------------------------------------------------
 
