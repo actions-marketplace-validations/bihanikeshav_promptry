@@ -7,10 +7,11 @@ import {
   getPromptDiff,
   getPromptContent,
   savePromptContent,
+  getPromptStats,
 } from "../api/client";
-import type { PromptVersion, DiffResponse } from "../api/types";
+import type { PromptVersion, DiffResponse, PromptStats } from "../api/types";
 
-type View = "current" | "diff" | "edit";
+type View = "current" | "diff" | "edit" | "stats";
 
 export default function PromptDetail() {
   const { name = "" } = useParams();
@@ -23,13 +24,16 @@ export default function PromptDetail() {
   const [draft, setDraft] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [stats, setStats] = useState<PromptStats | null>(null);
 
   function reloadVersions(selectLatest = false) {
     return getPromptVersions(promptName)
       .then((r) => {
-        setVersions(r.versions);
-        if ((selectLatest || selected == null) && r.versions.length > 0) {
-          setSelected(r.versions[0].version);
+        // Newest first, so versions[0] is the latest (the API returns asc).
+        const sorted = [...r.versions].sort((a, b) => b.version - a.version);
+        setVersions(sorted);
+        if ((selectLatest || selected == null) && sorted.length > 0) {
+          setSelected(sorted[0].version);
         }
       })
       .catch(() => setVersions([]));
@@ -62,6 +66,12 @@ export default function PromptDetail() {
     }
     getPromptDiff(promptName, prev.version, selected).then(setDiff).catch(() => setDiff(null));
   }, [promptName, selected, versions]);
+
+  // Per-call distribution stats (loaded when the Stats tab opens).
+  useEffect(() => {
+    if (view !== "stats" || stats) return;
+    getPromptStats(promptName, 30).then(setStats).catch(() => setStats(null));
+  }, [view, promptName, stats]);
 
   const isLatest = versions.length > 0 && selected === versions[0].version;
 
@@ -172,6 +182,7 @@ export default function PromptDetail() {
               {tab("current", selected != null ? `Current · v${selected}` : "Current")}
               {tab("diff", "Diff", !diff)}
               {tab("edit", "Edit")}
+              {tab("stats", "Stats")}
             </div>
             {view === "diff" && diff && (
               <div style={{ display: "flex", gap: 6 }}>
@@ -308,7 +319,102 @@ export default function PromptDetail() {
               </div>
             </div>
           )}
+
+          {/* STATS — per-call distribution over the last 30 days */}
+          {view === "stats" && <StatsPanel stats={stats} />}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------- per-call distribution panel -------- */
+function StatsPanel({ stats }: { stats: PromptStats | null }) {
+  if (!stats) return <div style={{ padding: 24, color: "var(--muted)", fontSize: 12 }}>Loading…</div>;
+  if (stats.count === 0)
+    return (
+      <div style={{ padding: 24, color: "var(--muted)", fontSize: 12, textAlign: "center" }}>
+        No invocations recorded in the last {stats.days} days.
+      </div>
+    );
+
+  const m = stats.metrics;
+  const fmtTok = (n: number) => Math.round(n).toLocaleString();
+  const fmtCost = (n: number) => "$" + n.toFixed(n < 0.01 ? 5 : 4);
+  const fmtMs = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1) + "s" : Math.round(n) + "ms");
+
+  const cards = [
+    { label: "calls (30d)", value: stats.count.toLocaleString() },
+    { label: "avg cost / call", value: fmtCost(m.cost.avg) },
+    { label: "total cost", value: fmtCost(m.cost.sum) },
+    { label: "avg input tok", value: fmtTok(m.tokens_in.avg) },
+    { label: "avg output tok", value: fmtTok(m.tokens_out.avg) },
+    { label: "avg latency", value: fmtMs(m.latency_ms.avg) },
+  ];
+
+  const rows: { k: string; s: typeof m.tokens_in; f: (n: number) => string }[] = [
+    { k: "Input tokens (sent, incl. payload)", s: m.tokens_in, f: fmtTok },
+    { k: "Output tokens (response)", s: m.tokens_out, f: fmtTok },
+    { k: "Cost", s: m.cost, f: fmtCost },
+    { k: "Latency", s: m.latency_ms, f: fmtMs },
+  ];
+
+  const maxBar = Math.max(1, ...stats.histogram.map((h) => h.count));
+
+  return (
+    <div style={{ padding: 16 }}>
+      {/* summary cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginBottom: 18 }}>
+        {cards.map((c) => (
+          <div key={c.label} style={{ padding: "10px 12px", background: "var(--bg-elev)", border: "1px solid var(--border)", borderRadius: 8 }}>
+            <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "var(--font-mono)" }}>{c.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", marginTop: 3 }}>{c.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* percentile table */}
+      <table className="pr" style={{ marginBottom: 18 }}>
+        <thead>
+          <tr>
+            <th>Metric</th><th className="r">min</th><th className="r">p50</th>
+            <th className="r">avg</th><th className="r">p95</th><th className="r">max</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.k}>
+              <td style={{ fontSize: 12.5, color: "var(--text-dim)" }}>{r.k}</td>
+              <td className="r mono" style={{ fontSize: 12 }}>{r.f(r.s.min)}</td>
+              <td className="r mono" style={{ fontSize: 12 }}>{r.f(r.s.p50)}</td>
+              <td className="r mono" style={{ fontSize: 12, color: "var(--text)" }}>{r.f(r.s.avg)}</td>
+              <td className="r mono" style={{ fontSize: 12 }}>{r.f(r.s.p95)}</td>
+              <td className="r mono" style={{ fontSize: 12 }}>{r.f(r.s.max)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* input-size distribution curve */}
+      <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "var(--font-mono)", marginBottom: 8 }}>
+        Input size distribution (tokens / call)
+      </div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 120 }}>
+        {stats.histogram.map((h, i) => (
+          <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }} title={`${h.start}–${h.end} tok: ${h.count} calls`}>
+            <div
+              style={{
+                width: "100%",
+                height: `${(h.count / maxBar) * 96}px`,
+                minHeight: h.count > 0 ? 2 : 0,
+                background: "var(--accent)",
+                borderRadius: "3px 3px 0 0",
+                opacity: 0.85,
+              }}
+            />
+            <span style={{ fontSize: 8.5, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>{h.start}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

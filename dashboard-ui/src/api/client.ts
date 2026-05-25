@@ -12,6 +12,7 @@ import type {
   PlaygroundAssertionDef,
   PlaygroundEvalResponse,
   PromptContent,
+  PromptStats,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -92,6 +93,10 @@ export function getPromptContent(
 ): Promise<PromptContent> {
   const q = version != null ? `?v=${version}` : "";
   return fetchJson(`/api/prompts/${encodeURIComponent(name)}/content${q}`);
+}
+
+export function getPromptStats(name: string, days = 30): Promise<PromptStats> {
+  return fetchJson(`/api/prompts/${encodeURIComponent(name)}/stats?days=${days}`);
 }
 
 export async function savePromptContent(

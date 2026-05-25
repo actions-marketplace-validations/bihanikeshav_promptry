@@ -28,6 +28,22 @@ export default function Cost() {
     cache_savings: 0,
   }));
 
+  // Roll prompts up into modules (the name segment before the first dot).
+  const byModule = (() => {
+    const m = new Map<string, { module: string; calls: number; tokens_in: number; tokens_out: number; cost: number }>();
+    for (const b of data.by_name) {
+      const mod = b.name.includes(".") ? b.name.split(".")[0] : "other";
+      const e = m.get(mod) || { module: mod, calls: 0, tokens_in: 0, tokens_out: 0, cost: 0 };
+      e.calls += b.calls;
+      e.tokens_in += b.tokens_in;
+      e.tokens_out += b.tokens_out;
+      e.cost += b.cost;
+      m.set(mod, e);
+    }
+    return [...m.values()].sort((a, b) => b.cost - a.cost);
+  })();
+  const moduleMaxCost = Math.max(1e-9, ...byModule.map((r) => r.cost));
+
   return (
     <div>
       <PageHeader
@@ -96,6 +112,44 @@ export default function Cost() {
           height={220}
           format={(v) => "$" + v.toFixed(2)}
         />
+      </div>
+
+      {/* By module — cost rolled up per functional module */}
+      <div className="card" style={{ overflow: "hidden", marginBottom: 20 }}>
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>By module</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+            Spend grouped by the prompt-name prefix (agent, chunking, summary…).
+          </div>
+        </div>
+        <table className="pr">
+          <thead>
+            <tr>
+              <th>Module</th>
+              <th className="r">Calls</th>
+              <th className="r">Tokens in</th>
+              <th className="r">Tokens out</th>
+              <th>Share</th>
+              <th className="r">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {byModule.map((r) => (
+              <tr key={r.module}>
+                <td style={{ fontWeight: 700, fontFamily: "var(--font-mono)", fontSize: 13 }}>{r.module}</td>
+                <td className="r mono" style={{ color: "var(--text-dim)" }}>{r.calls.toLocaleString()}</td>
+                <td className="r mono" style={{ color: "var(--text-dim)" }}>{formatTokens(r.tokens_in)}</td>
+                <td className="r mono" style={{ color: "var(--text-dim)" }}>{formatTokens(r.tokens_out)}</td>
+                <td>
+                  <div style={{ width: 90, height: 5, background: "var(--bg-elev)", borderRadius: 3, overflow: "hidden", border: "1px solid var(--border)" }}>
+                    <div style={{ width: (r.cost / moduleMaxCost) * 100 + "%", height: "100%", background: "var(--accent)", opacity: 0.85 }} />
+                  </div>
+                </td>
+                <td className="r mono" style={{ color: "var(--accent)", fontWeight: 600 }}>${r.cost.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="card" style={{ overflow: "hidden" }}>

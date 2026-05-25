@@ -151,6 +151,9 @@ class AsyncWriter(BaseStorage):
     def prune_prompt_versions(self, name, keep_last=1):
         return self._storage.prune_prompt_versions(name, keep_last=keep_last)
 
+    def get_invocation_stats(self, name, days=30):
+        return self._storage.get_invocation_stats(name, days=days)
+
     def get_tags(self, prompt_id):
         return self._storage.get_tags(prompt_id)
 

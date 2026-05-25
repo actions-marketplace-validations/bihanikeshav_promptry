@@ -389,6 +389,14 @@ def update_prompt_content(name: str, body: _PromptEdit):
     return {"ok": True, "name": name, "version": record.version, "hash": record.hash}
 
 
+@app.get("/api/prompts/{name}/stats")
+def prompt_stats(name: str, days: int = Query(default=30, ge=1)):
+    """Per-call distribution stats for a prompt (input/output tokens, cost,
+    latency) over the window, plus an input-size histogram."""
+    storage = get_storage()
+    return storage.get_invocation_stats(name, days=days)
+
+
 @app.post("/api/prompts/{name}/prune")
 def prune_prompt(name: str, keep: int = Query(default=1, ge=1)):
     """Collapse a prompt's version history to the newest *keep* versions.

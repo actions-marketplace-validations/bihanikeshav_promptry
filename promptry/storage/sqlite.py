@@ -318,6 +318,79 @@ class SQLiteStorage(BaseStorage):
                 })
             return out
 
+    def get_invocation_stats(self, name: str, days: int = 30) -> dict:
+        """Per-call distribution for one prompt over the window: count plus
+        min/avg/p50/p95/max for input tokens, output tokens, cost and
+        latency, and a histogram of input-token size for a distribution
+        curve. All derived from the invocations ledger."""
+        import json as _json
+
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT metadata FROM invocations
+                   WHERE prompt_name = ? AND created_at >= datetime('now', ? || ' days')""",
+                (name, f"-{days}"),
+            )
+            rows = cur.fetchall()
+
+        series = {"tokens_in": [], "tokens_out": [], "cost": [], "latency_ms": []}
+        for r in rows:
+            meta = _json.loads(r["metadata"]) if r["metadata"] else {}
+            ti = meta.get("tokens_in", meta.get("prompt_tokens"))
+            to = meta.get("tokens_out", meta.get("completion_tokens"))
+            if ti is not None:
+                series["tokens_in"].append(float(ti))
+            if to is not None:
+                series["tokens_out"].append(float(to))
+            if meta.get("cost") is not None:
+                series["cost"].append(float(meta["cost"]))
+            if meta.get("latency_ms") is not None:
+                series["latency_ms"].append(float(meta["latency_ms"]))
+
+        def _pct(sorted_vals, p):
+            if not sorted_vals:
+                return 0.0
+            k = (len(sorted_vals) - 1) * p
+            lo = int(k)
+            hi = min(lo + 1, len(sorted_vals) - 1)
+            return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (k - lo)
+
+        def _summary(vals):
+            if not vals:
+                return {"min": 0, "avg": 0, "p50": 0, "p95": 0, "max": 0, "sum": 0}
+            s = sorted(vals)
+            return {
+                "min": s[0],
+                "avg": sum(s) / len(s),
+                "p50": _pct(s, 0.50),
+                "p95": _pct(s, 0.95),
+                "max": s[-1],
+                "sum": sum(s),
+            }
+
+        metrics = {k: _summary(v) for k, v in series.items()}
+
+        # Histogram of input-token size (distribution curve), 12 even bins.
+        hist = []
+        ti_vals = sorted(series["tokens_in"])
+        if ti_vals:
+            lo, hi = ti_vals[0], ti_vals[-1]
+            nbins = 12
+            if hi <= lo:
+                hist = [{"start": lo, "end": hi, "count": len(ti_vals)}]
+            else:
+                width = (hi - lo) / nbins
+                counts = [0] * nbins
+                for v in ti_vals:
+                    idx = min(int((v - lo) / width), nbins - 1)
+                    counts[idx] += 1
+                hist = [
+                    {"start": round(lo + i * width), "end": round(lo + (i + 1) * width), "count": c}
+                    for i, c in enumerate(counts)
+                ]
+
+        return {"name": name, "days": days, "count": len(rows), "metrics": metrics, "histogram": hist}
+
     def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
         """Delete all but the newest *keep_last* versions of a prompt.
 

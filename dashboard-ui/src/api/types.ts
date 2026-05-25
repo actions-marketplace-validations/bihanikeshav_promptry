@@ -59,6 +59,28 @@ export interface PromptContent {
   tags: string[];
 }
 
+export interface MetricSummary {
+  min: number;
+  avg: number;
+  p50: number;
+  p95: number;
+  max: number;
+  sum: number;
+}
+
+export interface PromptStats {
+  name: string;
+  days: number;
+  count: number;
+  metrics: {
+    tokens_in: MetricSummary;
+    tokens_out: MetricSummary;
+    cost: MetricSummary;
+    latency_ms: MetricSummary;
+  };
+  histogram: { start: number; end: number; count: number }[];
+}
+
 export interface DiffLine {
   type: "unchanged" | "added" | "deleted";
   old_num: number | null;

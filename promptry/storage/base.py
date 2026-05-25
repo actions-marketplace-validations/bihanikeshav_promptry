@@ -127,6 +127,12 @@ class BaseStorage(ABC):
         the number deleted. For collapsing legacy baked-prompt churn."""
         ...
 
+    @abstractmethod
+    def get_invocation_stats(self, name: str, days: int = 30) -> dict:
+        """Per-call distribution stats for a prompt from the invocations
+        ledger (count, min/avg/p50/p95/max per metric, input-size histogram)."""
+        ...
+
     # ---- invocations ----
 
     @abstractmethod
