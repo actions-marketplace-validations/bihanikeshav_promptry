@@ -96,9 +96,9 @@ class AsyncWriter(BaseStorage):
 
     # ---- write methods ----
 
-    def save_prompt(self, name, content, content_hash, metadata=None):
+    def save_prompt(self, name, content, content_hash, metadata=None, force=False):
         # synchronous -- callers need the returned PromptRecord
-        return self._storage.save_prompt(name, content, content_hash, metadata)
+        return self._storage.save_prompt(name, content, content_hash, metadata, force=force)
 
     def save_eval_run(self, **kwargs):
         # synchronous -- callers need the returned run_id

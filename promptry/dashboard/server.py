@@ -382,8 +382,10 @@ def update_prompt_content(name: str, body: _PromptEdit):
         raise HTTPException(status_code=400, detail="Prompt content cannot be empty")
     storage = get_storage()
     h = PromptRegistry.content_hash(content)
+    # force=True: an explicit edit always becomes the latest version (so a
+    # revert to older content sticks), no-op only if identical to current latest.
     record = storage.save_prompt(name=name, content=content, content_hash=h,
-                                 metadata={"source": "dashboard_edit"})
+                                 metadata={"source": "dashboard_edit"}, force=True)
     return {"ok": True, "name": name, "version": record.version, "hash": record.hash}
 
 

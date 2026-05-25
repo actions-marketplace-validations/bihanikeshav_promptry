@@ -169,20 +169,42 @@ class SQLiteStorage(BaseStorage):
 
     # ---- prompts ----
 
-    def save_prompt(self, name, content, content_hash, metadata=None) -> PromptRecord:
+    def save_prompt(self, name, content, content_hash, metadata=None, force=False) -> PromptRecord:
         with self._lock:
             cur = self._conn.cursor()
 
-            # dedup: same name + same hash means same content, skip
-            cur.execute(
-                "SELECT * FROM prompts WHERE name = ? AND hash = ?",
-                (name, content_hash),
-            )
-            row = cur.fetchone()
-            if row:
-                record = self._row_to_prompt(row)
-                record.tags = self._get_tags_unlocked(cur, record.id)
-                return record
+            if force:
+                # Explicit edit (e.g. dashboard): always become the latest
+                # version, even if the content matches an OLDER version
+                # (reverts must stick). Only no-op when identical to the
+                # CURRENT latest, to avoid pointless duplicate versions.
+                cur.execute(
+                    "SELECT * FROM prompts WHERE name = ? ORDER BY version DESC LIMIT 1",
+                    (name,),
+                )
+                latest = cur.fetchone()
+                if latest and latest["hash"] == content_hash:
+                    record = self._row_to_prompt(latest)
+                    record.tags = self._get_tags_unlocked(cur, record.id)
+                    return record
+                # The UNIQUE(name, hash) constraint forbids two versions with
+                # identical content. To re-promote older content (a revert),
+                # drop that stale row first, then insert it as the new latest.
+                cur.execute(
+                    "DELETE FROM prompts WHERE name = ? AND hash = ?",
+                    (name, content_hash),
+                )
+            else:
+                # dedup: same name + same hash means same content, skip
+                cur.execute(
+                    "SELECT * FROM prompts WHERE name = ? AND hash = ?",
+                    (name, content_hash),
+                )
+                row = cur.fetchone()
+                if row:
+                    record = self._row_to_prompt(row)
+                    record.tags = self._get_tags_unlocked(cur, record.id)
+                    return record
 
             # atomic version increment + insert in one statement
             meta_json = json.dumps(metadata) if metadata else None

@@ -15,7 +15,7 @@ class BaseStorage(ABC):
     # ---- prompts ----
 
     @abstractmethod
-    def save_prompt(self, name, content, content_hash, metadata=None) -> PromptRecord:
+    def save_prompt(self, name, content, content_hash, metadata=None, force=False) -> PromptRecord:
         ...
 
     @abstractmethod
