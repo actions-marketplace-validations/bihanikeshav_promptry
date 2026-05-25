@@ -11,6 +11,7 @@ import Models from "./pages/Models";
 import Cost from "./pages/Cost";
 import Invocation from "./pages/Invocation";
 import Playground from "./pages/Playground";
+import Settings from "./pages/Settings";
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/cost" element={<Cost />} />
         <Route path="/invocations/:id" element={<Invocation />} />
         <Route path="/playground" element={<Playground />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>
   );
