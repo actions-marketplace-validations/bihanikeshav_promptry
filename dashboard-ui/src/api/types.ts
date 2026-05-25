@@ -136,6 +136,18 @@ export interface BisectResult {
   model_changed?: boolean;
 }
 
+export interface NearDuplicatePair {
+  a: string;
+  b: string;
+  similarity: number;
+}
+
+export interface NearDuplicates {
+  mode: "semantic" | "lexical" | "none";
+  threshold: number;
+  pairs: NearDuplicatePair[];
+}
+
 export interface PiiFinding {
   type: string;
   category: "secret" | "pii";

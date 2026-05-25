@@ -336,6 +336,26 @@ def list_prompts(offset: int = Query(default=0), limit: int = Query(default=200)
     return result
 
 
+# NOTE: these two static paths MUST be declared before /api/prompts/{name},
+# or FastAPI matches "search"/"near-duplicates" as a {name} and shadows them.
+@app.get("/api/prompts/search")
+def prompts_search(q: str = Query(...), top_k: int = Query(default=10, ge=1, le=50)):
+    """Rank prompts by relevance to a free-text query (semantic if embeddings
+    are installed, else keyword overlap)."""
+    from promptry.prompt_search import search_prompts
+
+    return search_prompts(get_storage(), q, top_k=top_k)
+
+
+@app.get("/api/prompts/near-duplicates")
+def prompts_near_duplicates(threshold: float = Query(default=0.85, ge=0.0, le=1.0)):
+    """Pairs of prompts whose latest content is near-identical — likely forks
+    that should have been versions, or candidates to merge."""
+    from promptry.prompt_search import near_duplicates
+
+    return near_duplicates(get_storage(), threshold=threshold)
+
+
 @app.get("/api/prompts/{name}")
 def prompt_versions(name: str):
     storage = get_storage()

@@ -1,12 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { PageHeader } from "../components/ui";
+import { getNearDuplicates } from "../api/client";
 import type { LayoutContext } from "../components/Layout";
+import type { NearDuplicates } from "../api/types";
 
 export default function Prompts() {
   const { prompts } = useOutletContext<LayoutContext>();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
+  const [dupes, setDupes] = useState<NearDuplicates | null>(null);
+
+  useEffect(() => {
+    getNearDuplicates().then(setDupes).catch(() => setDupes(null));
+  }, []);
 
   const filtered = prompts.filter(
     (p) => !q || p.name.toLowerCase().includes(q.toLowerCase())
@@ -44,6 +51,30 @@ export default function Prompts() {
       {filtered.length === 0 && (
         <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
           No prompts found.
+        </div>
+      )}
+
+      {dupes && dupes.pairs.length > 0 && (
+        <div className="card" style={{ padding: "12px 16px", marginBottom: 18, borderColor: "var(--warning)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--warning)" }} />
+            <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+              {dupes.pairs.length} near-duplicate{dupes.pairs.length > 1 ? "s" : ""}
+            </span>
+            <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }}>
+              {dupes.mode} · ≥{Math.round(dupes.threshold * 100)}% similar — likely forks to consolidate
+            </span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 10 }}>
+            {dupes.pairs.slice(0, 8).map((p) => (
+              <div key={p.a + "|" + p.b} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <span className="mono" style={{ color: "var(--warning)", width: 44 }}>{Math.round(p.similarity * 100)}%</span>
+                <span onClick={() => navigate(`/prompts/${encodeURIComponent(p.a)}`)} style={{ cursor: "pointer", color: "var(--text-dim)" }}>{p.a}</span>
+                <span style={{ color: "var(--muted)" }}>≈</span>
+                <span onClick={() => navigate(`/prompts/${encodeURIComponent(p.b)}`)} style={{ cursor: "pointer", color: "var(--text-dim)" }}>{p.b}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

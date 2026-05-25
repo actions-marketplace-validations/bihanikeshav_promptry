@@ -23,6 +23,7 @@ import type {
   ProjectConfig,
   OnlineDrift,
   PiiScan,
+  NearDuplicates,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -124,6 +125,10 @@ export function getPromptRuns(name: string): Promise<{ runs: PromptRun[] }> {
 
 export function getOnlineDrift(name: string, days = 30): Promise<OnlineDrift> {
   return fetchJson(`/api/prompts/${encodeURIComponent(name)}/online-drift?days=${days}`);
+}
+
+export function getNearDuplicates(threshold = 0.85): Promise<NearDuplicates> {
+  return fetchJson(`/api/prompts/near-duplicates?threshold=${threshold}`);
 }
 
 export function getCostCoverage(days = 30): Promise<CostCoverage> {
