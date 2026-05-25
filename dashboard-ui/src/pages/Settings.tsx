@@ -59,7 +59,7 @@ export default function Settings() {
       </div>
 
       {/* Models */}
-      <div className="card" style={{ overflow: "hidden", marginBottom: 18 }}>
+      <div className="card" style={{ marginBottom: 18 }}>
         <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Models</div>
           <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2 }}>

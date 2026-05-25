@@ -568,17 +568,20 @@ export function Select<T extends string | number>({
   onChange,
   options,
   minWidth = 150,
+  searchable = false,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { value: T; label: string }[];
   minWidth?: number;
+  searchable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) { setQuery(""); return; }
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
@@ -592,6 +595,9 @@ export function Select<T extends string | number>({
   }, [open]);
 
   const current = options.find((o) => o.value === value);
+  const shown = searchable && query
+    ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
+    : options;
 
   return (
     <div ref={ref} style={{ position: "relative", minWidth }}>
@@ -642,39 +648,67 @@ export function Select<T extends string | number>({
             boxShadow: "0 8px 28px -6px rgba(0,0,0,0.6)",
           }}
         >
-          {options.map((o) => {
-            const active = o.value === value;
-            return (
-              <button
-                key={String(o.value)}
-                type="button"
-                onClick={() => {
-                  onChange(o.value);
-                  setOpen(false);
-                }}
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "7px 10px",
-                  fontSize: 12.5,
-                  fontFamily: "var(--font-mono)",
-                  color: active ? "var(--bg)" : "var(--text-dim)",
-                  background: active ? "var(--accent)" : "transparent",
-                  border: "none",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                }}
-                onMouseEnter={(e) => {
-                  if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.05)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!active) e.currentTarget.style.background = "transparent";
-                }}
-              >
-                {o.label}
-              </button>
-            );
-          })}
+          {searchable && (
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search…"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "6px 9px",
+                marginBottom: 4,
+                fontSize: 12,
+                fontFamily: "var(--font-mono)",
+                color: "var(--text)",
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                outline: "none",
+              }}
+            />
+          )}
+          <div style={{ maxHeight: 260, overflowY: "auto" }}>
+            {shown.length === 0 && (
+              <div style={{ padding: "8px 10px", fontSize: 11.5, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                no matches
+              </div>
+            )}
+            {shown.map((o) => {
+              const active = o.value === value;
+              return (
+                <button
+                  key={String(o.value)}
+                  type="button"
+                  onClick={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                  }}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "7px 10px",
+                    fontSize: 12.5,
+                    fontFamily: "var(--font-mono)",
+                    color: active ? "var(--bg)" : "var(--text-dim)",
+                    background: active ? "var(--accent)" : "transparent",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.05)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active) e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  {o.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

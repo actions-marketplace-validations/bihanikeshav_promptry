@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Breadcrumbs, PageHeader } from "../components/ui";
-import { cls, relTime } from "../utils";
+import { cls, relTime, splitTemplate } from "../utils";
 import {
   getPromptVersions,
   getPromptDiff,
@@ -294,7 +294,13 @@ export default function PromptDetail() {
                 wordBreak: "break-word",
               }}
             >
-              {content || "Loading…"}
+              {content
+                ? splitTemplate(content).map((seg, i) =>
+                    seg.isVar
+                      ? <span key={i} className="varpill">{seg.text}</span>
+                      : <span key={i}>{seg.text}</span>
+                  )
+                : "Loading…"}
             </pre>
           )}
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader, Select } from "../components/ui";
 import { runPlaygroundModel, getConfig, getPrompts, getPromptContent } from "../api/client";
+import { templateVars } from "../utils";
 import type { PlaygroundRuleType } from "../api/types";
 
 interface Rule {
@@ -116,7 +117,13 @@ function evalRule(r: Rule, response: string, golden: string): RuleResult {
 }
 
 function interpolate(tmpl: string, vars: Record<string, string>): string {
-  return tmpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => vars[k] ?? `{{${k}}}`);
+  // Preferred {{name}} plus legacy $name / ${name}; unknowns left intact.
+  return tmpl
+    .replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => vars[k] ?? `{{${k}}}`)
+    .replace(/\$\{(\w+)\}|\$(\w+)/g, (m, a, b) => {
+      const k = a ?? b;
+      return vars[k] != null ? vars[k] : m;
+    });
 }
 
 /* -------- per-model run record -------- */
@@ -220,9 +227,10 @@ export default function Playground() {
   };
 
   const resolvedUser = interpolate(user, vars);
+  // Variables referenced by EITHER the system or user prompt ({{}} or legacy $).
   const varKeys = useMemo(
-    () => [...user.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((m) => m[1]),
-    [user]
+    () => templateVars(sys + "\n" + user),
+    [sys, user]
   );
 
   const addRule = () =>
@@ -239,7 +247,7 @@ export default function Playground() {
       try {
         const resp = await runPlaygroundModel({
           model: mId,
-          system: sys,
+          system: interpolate(sys, vars),
           user: resolvedUser,
           context,
           temperature: temp,
@@ -350,32 +358,60 @@ export default function Playground() {
         }
       />
 
-      {/* Prompt source — load a real tracked prompt into the editor */}
+      {/* Control bar: prompt source (left) + models to compare (right) */}
       <div
         className="card"
-        style={{ padding: 10, marginBottom: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}
+        style={{ padding: "8px 12px", marginBottom: 12, display: "flex", gap: 16, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}
       >
-        <span
-          style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-mono)" }}
-        >
-          Prompt
-        </span>
-        {registry.length > 0 ? (
-          <Select
-            value={loadedPrompt ?? ""}
-            onChange={(v) => loadFromRegistry(v)}
-            minWidth={240}
-            options={registry.map((n) => ({ value: n, label: n }))}
-          />
-        ) : (
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>
-            No tracked prompts yet — type below, or wrap one with <span className="mono">track()</span>.
+        <div style={{ display: "flex", gap: 9, alignItems: "center" }}>
+          <span style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-mono)" }}>
+            Prompt
           </span>
-        )}
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
-          {loadedPrompt ? <>editing <span className="mono" style={{ color: "var(--accent)" }}>{loadedPrompt}</span></> : "scratch prompt"}
-        </span>
+          {registry.length > 0 ? (
+            <Select
+              value={loadedPrompt ?? ""}
+              onChange={(v) => loadFromRegistry(v)}
+              minWidth={230}
+              searchable
+              options={registry.map((n) => ({ value: n, label: n }))}
+            />
+          ) : (
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>
+              none tracked — type below or wrap one with <span className="mono">track()</span>
+            </span>
+          )}
+        </div>
+
+        {/* Models to compare — toggle pills */}
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-mono)" }}>
+            Models
+          </span>
+          {modelMetas.map((m) => {
+            const on = models.includes(m.id);
+            return (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => toggleModel(m.id)}
+                title={`$${m.inCost.toFixed(2)}/M in · $${m.outCost.toFixed(2)}/M out`}
+                className="mono"
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 7,
+                  padding: "5px 11px", borderRadius: 999, fontSize: 11.5, lineHeight: 1,
+                  cursor: "pointer", whiteSpace: "nowrap",
+                  border: "1px solid " + (on ? "var(--accent-line)" : "var(--border)"),
+                  background: on ? "var(--accent-soft)" : "var(--bg-elev)",
+                  color: on ? "var(--accent)" : "var(--text-dim)",
+                  transition: "border-color .12s, color .12s, background .12s",
+                }}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: 999, background: on ? "var(--accent)" : "var(--border)" }} />
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {variantA && Object.keys(results).length > 0 && (
@@ -658,67 +694,6 @@ export default function Playground() {
             )}
           </div>
 
-          {/* Models selector */}
-          <div className="card" style={{ padding: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div
-                style={{
-                  fontSize: 10,
-                  color: "var(--muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.06em",
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
-                Models ({models.length})
-              </div>
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>Select 1–5 to compare</span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {modelMetas.map((m) => {
-                const on = models.includes(m.id);
-                return (
-                  <label
-                    key={m.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "7px 10px",
-                      borderRadius: 6,
-                      border: "1px solid " + (on ? "var(--accent-line)" : "var(--border)"),
-                      background: on ? "var(--accent-soft)" : "var(--bg-elev)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={on}
-                      onChange={() => toggleModel(m.id)}
-                      style={{ accentColor: "var(--accent)" }}
-                    />
-                    <span
-                      className="mono"
-                      style={{
-                        fontSize: 12.5,
-                        color: on ? "var(--text)" : "var(--text-dim)",
-                        fontWeight: 600,
-                        flex: 1,
-                      }}
-                    >
-                      {m.label}
-                    </span>
-                    <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }}>
-                      ${m.inCost.toFixed(2)}/M in
-                    </span>
-                    <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }}>
-                      ${m.outCost.toFixed(2)}/M out
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
         </div>
 
         {/* RIGHT: runs */}

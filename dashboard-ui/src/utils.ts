@@ -39,6 +39,37 @@ export function formatTokens(n: number | null | undefined): string {
   return String(n);
 }
 
+// Template variables: preferred {{name}} plus legacy $name / ${name}.
+// Global flag for use with matchAll / split; build fresh instances where a
+// stateful lastIndex would bite.
+export const VAR_RE = /\{\{\s*([A-Za-z_]\w*)\s*\}\}|\$\{[A-Za-z_]\w*\}|\$[A-Za-z_]\w*/g;
+
+/** The distinct variable names a template references, in first-seen order. */
+export function templateVars(text: string): string[] {
+  const seen: string[] = [];
+  for (const m of text.matchAll(VAR_RE)) {
+    const tok = m[0];
+    const name = m[1] ?? (tok.startsWith("${") ? tok.slice(2, -1) : tok.slice(1));
+    if (!seen.includes(name)) seen.push(name);
+  }
+  return seen;
+}
+
+/** Split a template into literal/variable segments for highlighted rendering. */
+export function splitTemplate(text: string): { text: string; isVar: boolean }[] {
+  const out: { text: string; isVar: boolean }[] = [];
+  let last = 0;
+  const re = new RegExp(VAR_RE.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push({ text: text.slice(last, m.index), isVar: false });
+    out.push({ text: m[0], isVar: true });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last), isVar: false });
+  return out;
+}
+
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleString([], {
     month: "short",
