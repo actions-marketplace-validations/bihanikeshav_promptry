@@ -19,6 +19,7 @@ import type {
   InvocationRow,
   InvocationDetail,
   BisectResult,
+  BudgetStatus,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -111,6 +112,20 @@ export function getPromptRuns(name: string): Promise<{ runs: PromptRun[] }> {
 
 export function getCostCoverage(days = 30): Promise<CostCoverage> {
   return fetchJson(`/api/cost/coverage?days=${days}`);
+}
+
+export function listBudgets(): Promise<{ budgets: BudgetStatus[] }> {
+  return fetchJson(`/api/budgets`);
+}
+export async function createBudget(b: { scope: string; target?: string | null; period: string; limit_usd: number }) {
+  const res = await fetch(`${BASE}/api/budgets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+export async function deleteBudget(id: number) {
+  const res = await fetch(`${BASE}/api/budgets/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
 }
 
 export function listInvocations(params: { name?: string; days?: number; limit?: number; capturedOnly?: boolean; order?: "recent" | "cost"; minRating?: number } = {}): Promise<{ invocations: InvocationRow[] }> {

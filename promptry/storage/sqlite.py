@@ -136,6 +136,16 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "CREATE INDEX IF NOT EXISTS idx_feedback_request ON feedback(request_id)",
         "CREATE INDEX IF NOT EXISTS idx_feedback_prompt ON feedback(prompt_name)",
     ]),
+    (6, "add budgets table", [
+        """CREATE TABLE IF NOT EXISTS budgets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,            -- global | module | prompt
+            target TEXT,                    -- module/prompt name (null for global)
+            period TEXT NOT NULL,           -- daily | monthly
+            limit_usd REAL NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+    ]),
 ]
 
 
@@ -614,6 +624,74 @@ class SQLiteStorage(BaseStorage):
             prev = r
         return {"found": False, "suite": suite_name,
                 "reason": "No passing→failing transition found." if runs else "No runs."}
+
+    # ---- budgets ----
+
+    def save_budget(self, scope: str, period: str, limit_usd: float, target: str | None = None) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO budgets (scope, target, period, limit_usd) VALUES (?, ?, ?, ?)",
+                (scope, target, period, limit_usd),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def delete_budget(self, budget_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM budgets WHERE id = ?", (budget_id,))
+            self._conn.commit()
+
+    def list_budgets(self) -> list[dict]:
+        with self._lock:
+            cur = self._conn.execute("SELECT * FROM budgets ORDER BY id")
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_budget_status(self) -> list[dict]:
+        """Each budget with its current-period spend, % used, and breach flag.
+        Spend is summed from the invocations ledger over the period window."""
+        import json as _json
+        budgets = self.list_budgets()
+        if not budgets:
+            return []
+        # Pull invocations for the longest needed window (monthly = 30d).
+        need_days = 30 if any(b["period"] == "monthly" for b in budgets) else 1
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT prompt_name, metadata, created_at FROM invocations
+                   WHERE created_at >= datetime('now', ? || ' days')""",
+                (f"-{need_days}",),
+            )
+            rows = [(r["prompt_name"], _json.loads(r["metadata"]) if r["metadata"] else {}, r["created_at"]) for r in cur.fetchall()]
+
+        import datetime as _dt
+        now = _dt.datetime.utcnow()
+        day_start = now.strftime("%Y-%m-%d")
+        month_start = now.strftime("%Y-%m")
+
+        def in_period(created_at: str, period: str) -> bool:
+            return created_at.startswith(day_start) if period == "daily" else created_at.startswith(month_start)
+
+        def matches(name: str, scope: str, target: str | None) -> bool:
+            if scope == "global":
+                return True
+            mod = name.split(".")[0] if "." in name else name
+            return (scope == "module" and mod == target) or (scope == "prompt" and name == target)
+
+        out = []
+        for b in budgets:
+            spend = 0.0
+            for name, meta, created in rows:
+                if in_period(created, b["period"]) and matches(name, b["scope"], b["target"]):
+                    spend += float(meta.get("cost") or 0)
+            limit = b["limit_usd"] or 0
+            pct = (spend / limit * 100) if limit > 0 else 0
+            out.append({
+                **b,
+                "spend": round(spend, 6),
+                "pct": round(pct, 1),
+                "breached": spend > limit and limit > 0,
+            })
+        return out
 
     def get_invocation_models(self, days: int = 30) -> list[dict]:
         """Distinct models seen in the invocations ledger over the window,

@@ -136,6 +136,17 @@ export interface BisectResult {
   model_changed?: boolean;
 }
 
+export interface BudgetStatus {
+  id: number;
+  scope: string;
+  target: string | null;
+  period: string;
+  limit_usd: number;
+  spend: number;
+  pct: number;
+  breached: boolean;
+}
+
 export interface CostCoverage {
   days: number;
   models_seen: number;

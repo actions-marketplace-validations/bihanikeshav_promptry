@@ -691,6 +691,35 @@ def cost_coverage(days: int = Query(default=30, ge=1)):
     }
 
 
+@app.get("/api/budgets")
+def list_budgets():
+    """Budgets with current-period spend, % used, and breach flag."""
+    storage = get_storage()
+    if not hasattr(storage, "get_budget_status"):
+        return {"budgets": []}
+    return {"budgets": storage.get_budget_status()}
+
+
+class _BudgetIn(BaseModel):
+    scope: str = "global"          # global | module | prompt
+    target: Optional[str] = None
+    period: str = "monthly"        # daily | monthly
+    limit_usd: float
+
+
+@app.post("/api/budgets")
+def create_budget(body: _BudgetIn):
+    storage = get_storage()
+    bid = storage.save_budget(body.scope, body.period, body.limit_usd, target=body.target)
+    return {"ok": True, "id": bid}
+
+
+@app.delete("/api/budgets/{budget_id}")
+def delete_budget(budget_id: int):
+    get_storage().delete_budget(budget_id)
+    return {"ok": True}
+
+
 @app.post("/api/cost/refresh-rates")
 def cost_refresh_rates():
     """Pull current rates from litellm's model_cost into the rate table."""

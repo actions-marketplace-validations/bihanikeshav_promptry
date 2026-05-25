@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { BarChart, KPI, PageHeader, Select, Breadcrumbs } from "../components/ui";
 import { InvocationsPanel } from "../components/InvocationsPanel";
 import { formatTokens, pct, usd } from "../utils";
-import { getCostData, getCostCoverage, getPromptStats } from "../api/client";
-import { useCached } from "../lib/cache";
-import type { PromptStats } from "../api/types";
+import { getCostData, getCostCoverage, getPromptStats, listBudgets, createBudget, deleteBudget } from "../api/client";
+import { useCached, invalidateCache } from "../lib/cache";
+import type { PromptStats, BudgetStatus } from "../api/types";
 
 export default function Cost() {
   const [days, setDays] = useState(14);
@@ -74,6 +74,80 @@ export default function Cost() {
   );
 }
 
+/* ---- budgets: burn-down + add/remove ---- */
+function BudgetsPanel() {
+  const [budgets, setBudgets] = useState<BudgetStatus[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ scope: "global", target: "", period: "monthly", limit_usd: "" });
+
+  const reload = () => listBudgets().then((r) => setBudgets(r.budgets)).catch(() => setBudgets([]));
+  useEffect(() => { reload(); }, []);
+
+  async function add() {
+    const lim = parseFloat(form.limit_usd);
+    if (!lim || lim <= 0) return;
+    await createBudget({ scope: form.scope, target: form.scope === "global" ? null : form.target.trim() || null, period: form.period, limit_usd: lim });
+    invalidateCache("cost"); setForm({ scope: "global", target: "", period: "monthly", limit_usd: "" }); setAdding(false); reload();
+  }
+  async function remove(id: number) { await deleteBudget(id); reload(); }
+
+  return (
+    <div className="card" style={{ overflow: "hidden", marginBottom: 20 }}>
+      <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Budgets</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>Spend caps per period — breaches highlight in red.</div>
+        </div>
+        <button className="btn" onClick={() => setAdding((a) => !a)}>{adding ? "Cancel" : "+ Budget"}</button>
+      </div>
+
+      {adding && (
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Select value={form.scope} onChange={(v: string) => setForm({ ...form, scope: v })} minWidth={110}
+            options={[{ value: "global", label: "Global" }, { value: "module", label: "Module" }, { value: "prompt", label: "Prompt" }]} />
+          {form.scope !== "global" && (
+            <input className="inp" placeholder={form.scope === "module" ? "module name" : "prompt name"} value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })} style={{ width: 180 }} />
+          )}
+          <Select value={form.period} onChange={(v: string) => setForm({ ...form, period: v })} minWidth={110}
+            options={[{ value: "daily", label: "Daily" }, { value: "monthly", label: "Monthly" }]} />
+          <input className="inp" placeholder="limit $" value={form.limit_usd} onChange={(e) => setForm({ ...form, limit_usd: e.target.value })} style={{ width: 90 }} />
+          <button className="btn" onClick={add} style={{ background: "var(--accent)", color: "var(--bg)" }}>Add</button>
+        </div>
+      )}
+
+      {budgets.length === 0 ? (
+        <div style={{ padding: 20, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>
+          No budgets yet. Add one to track spend against a cap.
+        </div>
+      ) : (
+        <div style={{ padding: "8px 16px 12px" }}>
+          {budgets.map((b) => {
+            const label = b.scope === "global" ? "All prompts" : `${b.scope}: ${b.target}`;
+            const barColor = b.breached ? "var(--error)" : b.pct >= 80 ? "var(--warning)" : "var(--accent)";
+            return (
+              <div key={b.id} style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12.5 }}>
+                  <span><span style={{ fontWeight: 600 }}>{label}</span> <span style={{ color: "var(--muted)", fontSize: 11 }}>· {b.period}</span></span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span className="mono" style={{ color: b.breached ? "var(--error)" : "var(--text-dim)" }}>
+                      ${b.spend.toFixed(2)} / ${b.limit_usd.toFixed(2)} ({b.pct.toFixed(0)}%)
+                    </span>
+                    <span onClick={() => remove(b.id)} role="button" style={{ cursor: "pointer", color: "var(--muted)", fontSize: 12 }} title="remove">✕</span>
+                  </span>
+                </div>
+                <div style={{ height: 6, background: "var(--bg-elev)", borderRadius: 3, overflow: "hidden", border: "1px solid var(--border)" }}>
+                  <div style={{ width: Math.min(100, b.pct) + "%", height: "100%", background: barColor }} />
+                </div>
+                {b.breached && <div style={{ fontSize: 11, color: "var(--error)", marginTop: 3 }}>Over budget by ${(b.spend - b.limit_usd).toFixed(2)}.</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* Shared sortable-table helper for the cost tables. */
 function useSort<T extends Record<string, unknown>>(rows: T[], defaultKey: string) {
   const [key, setKey] = useState<string>(defaultKey);
@@ -123,6 +197,8 @@ function OverviewLevel({ s, data, coverage, modules, moduleMax, onModule }: any)
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Daily spend</div>
         <BarChart data={byDate} valueKey="cost" labelKey="date" height={200} format={(v: number) => "$" + v.toFixed(2)} />
       </div>
+      <BudgetsPanel />
+
       <div className="card" style={{ overflow: "hidden" }}>
         <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>By module</div>
