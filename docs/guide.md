@@ -7,6 +7,8 @@ Full documentation for promptry. For a quick overview, see the [README](../READM
 - [Track your prompts](#track-your-prompts)
 - [Track retrieval context](#track-retrieval-context)
 - [Write eval suites](#write-eval-suites)
+- [Live prompt CMS](#live-prompt-cms)
+  - [Environment promotion](#environment-promotion)
 - [Assertions](#assertions)
   - [Semantic similarity](#semantic-similarity)
   - [LLM-as-judge](#llm-as-judge)
@@ -16,9 +18,13 @@ Full documentation for promptry. For a quick overview, see the [README](../READM
   - [Chain with check_all](#chain-assertions-with-check_all)
 - [Multi-turn conversation evals](#multi-turn-conversation-evals)
 - [Cost tracking](#track-token-usage-and-cost)
+  - [Cost drill-down](#cost-drill-down)
+  - [Budgets & coverage](#budgets-and-coverage)
+  - [Traces & feedback](#traces-and-feedback)
 - [Model comparison](#compare-models-with-historical-data)
 - [Baseline comparison](#compare-against-a-baseline)
 - [Drift detection](#detect-drift)
+- [Regression bisect](#regression-bisect)
 - [Background monitoring](#background-monitoring)
 - [Safety templates](#safety-templates)
 - [Notifications](#notifications)
@@ -28,6 +34,7 @@ Full documentation for promptry. For a quick overview, see the [README](../READM
 - [MCP server](#mcp-server-llm-agent-integration)
 - [Dashboard](#dashboard)
 - [Config](#config)
+- [Project config (.promptry/config.toml)](#project-config)
 - [Custom storage backend](#custom-storage-backend)
 - [Examples](#examples)
 
@@ -102,6 +109,52 @@ $ promptry run rag-regression --module my_evals
 
   Overall: PASS  score: 0.891
 ```
+
+## Live prompt CMS
+
+`track()` records what your code *used*. The prompt CMS lets the dashboard *change* what your code uses — edit a prompt in the browser and your app picks it up on the next call, with no redeploy. It's entirely opt-in: wrap only the prompts you want editable with `render_prompt`, and leave everything else on `track()`.
+
+Two functions:
+
+- `seed_prompt(name, default)` registers your in-code default as the first version — but only if the prompt doesn't exist yet, so a dashboard edit is never clobbered. Idempotent; call it at startup.
+- `render_prompt(name, default, **vars)` fetches the latest managed version (cached briefly, falling back to `default` on any miss) and substitutes `$placeholders`.
+
+```python
+from promptry import seed_prompt, render_prompt
+
+DEFAULT = "Answer using only this context:\n$context\n\nQuestion: $question"
+
+# once at startup — registers v1 if the prompt is new
+seed_prompt("rag.qa", DEFAULT)
+
+# per request — serves the live template, falls back to DEFAULT on any miss
+system = render_prompt("rag.qa", DEFAULT, context=ctx, question=q)
+response = llm.chat(system=system, user=q)
+```
+
+Substitution uses `string.Template`, not `str.format`, so literal braces in a prompt body (JSON examples, etc.) never break substitution and an unknown `$placeholder` is left intact rather than raising. A malformed dashboard edit can't crash a request — `render_prompt` falls back to the in-code default cleanly. Edits go live within the cache TTL (default 60s); override per call with `ttl=`.
+
+In the dashboard, a prompt's detail page shows the live `$`-template with variable pills, a lint panel (warns about stray `$`, missing output-format guidance), a git-diff between any two versions, and per-call distribution stats. Saving an edit appends a new version — history is never overwritten.
+
+### Environment promotion
+
+Editing shouldn't mean going live instantly. Tag a specific version with an environment — `dev`, `staging`, `prod` — and serve it explicitly:
+
+```python
+# serve the version tagged 'prod', not just the latest
+system = render_prompt("rag.qa", DEFAULT, env="prod", context=ctx, question=q)
+```
+
+Promoting moves the env tag onto one version (and off whichever held it before), so each environment points at exactly one. Promote from the dashboard's prompt page (**Promote v4 → prod**) or via the API:
+
+```
+POST /api/prompts/rag.qa/promote
+{ "version": 4, "env": "prod" }
+```
+
+If an env tag isn't set yet, `render_prompt(env=...)` falls back to the latest version. The flow: edit on `dev` → check it in the playground → promote to `prod` when ready → roll back by promoting an older version (a revert always sticks, even to byte-identical older content).
+
+> Migrating a legacy prompt that gained hundreds of baked versions (template + interpolated data)? Move the template to `render_prompt` and the per-call data to `track_invocation` (see [Cost tracking](#track-token-usage-and-cost)), then collapse the old churn from the dashboard (`POST /api/prompts/{name}/prune`). See [PROMPT_CMS_MIGRATION.md](PROMPT_CMS_MIGRATION.md).
 
 ## Assertions
 
@@ -457,18 +510,23 @@ Run it the same way as any other suite: `promptry eval-run chatbot-flow`.
 
 ## Track token usage and cost
 
-Pass token/cost metadata when calling `track()`:
+Cost lives on the **invocations ledger** — a per-call table, separate from prompt versioning. Use `track_invocation()` once per LLM call. Every call lands as its own row, even when the rendered prompt is byte-identical to a previous one — which is exactly what a cost dashboard needs. (`track()` dedups by content hash and would silently drop the repeat, so it's the wrong shape for telemetry.)
 
 ```python
+from promptry import track_invocation
+
 response = llm.chat(system=prompt, ...)
 
-track(prompt, "pricing-extract", metadata={
+track_invocation("pricing.extract", metadata={
+    "model": "gpt-4o",
     "tokens_in": response.usage.prompt_tokens,
     "tokens_out": response.usage.completion_tokens,
-    "model": "gpt-4o",
-    "cost": 0.003,
+    "cached_tokens": response.usage.prompt_tokens_details.cached_tokens,
+    "latency_ms": elapsed_ms,
 })
 ```
+
+You don't pass `cost` — promptry computes it from its rate table when `metadata` includes a `model` plus token counts. It accepts the three spellings seen in the wild: `tokens_in`/`tokens_out` (promptry), `input_tokens`/`output_tokens` (Anthropic SDK), and `prompt_tokens`/`completion_tokens` (OpenAI SDK). Naming a prompt `module.name` (e.g. `pricing.extract`) groups it under a module in the cost views.
 
 Then see aggregated reports:
 
@@ -481,14 +539,70 @@ Cost report (last 30 days)
 ┌──────────────────┬───────┬───────────┬────────────┬─────────┬─────────┐
 │ Prompt           │ Calls │ Tokens In │ Tokens Out │ Cost    │ Models  │
 ├──────────────────┼───────┼───────────┼────────────┼─────────┼─────────┤
-│ pricing-extract  │   847 │   423,500 │    84,700  │ $2.5410 │ gpt-4o  │
-│ doc-classify     │ 1,203 │   120,300 │     1,203  │ $0.1203 │ gpt-4o… │
+│ pricing.extract  │   847 │   423,500 │    84,700  │ $2.5410 │ gpt-4o  │
+│ doc.classify     │ 1,203 │   120,300 │     1,203  │ $0.1203 │ gpt-4o… │
 ├──────────────────┼───────┼───────────┼────────────┼─────────┼─────────┤
 │ Total            │ 2,050 │   543,800 │    85,903  │ $2.6613 │         │
 └──────────────────┴───────┴───────────┴────────────┴─────────┴─────────┘
 
-$ promptry cost-report --name pricing-extract --model gpt-4o
+$ promptry cost-report --name pricing.extract --model gpt-4o
 ```
+
+### Cost drill-down
+
+The dashboard's Cost page drills **module → prompt → call**. Start at spend per module, click into a module to rank its prompts by spend, click a prompt to see its per-call distribution (avg, p95, max $/call) and the most expensive individual calls. Click a call to open its invocation page, where the input cost is split into **fixed template overhead vs the variable payload** you fed in:
+
+```
+Where the input cost went              · estimated (~4 chars/token)
+Template (fixed)   1,240 tok  $0.0031
+Payload (variable) 6,800 tok  $0.0170
+Response             512 tok  $0.0051
+```
+
+The split is only shown when the prompt is a real `$`-template (managed via `render_prompt`). For a baked snapshot there's nothing to separate, so the page says so and points you at the CMS instead.
+
+### Budgets and coverage
+
+Set spend caps per period. Scope a budget `global`, to a `module`, or to a single `prompt`; pick `daily` or `monthly`. Current-period spend is summed from the invocations ledger on read, and a breach highlights in red on the Cost page.
+
+```
+POST /api/budgets
+{ "scope": "module", "target": "pricing", "period": "monthly", "limit_usd": 50 }
+```
+
+**Coverage check.** A model with no entry in the rate table silently costs $0, so spend gets undercounted. The coverage report (`GET /api/cost/coverage`) lists every model seen in the ledger that has no rate, plus how many calls it covers:
+
+```
+2 model(s) with no pricing — 1,840 calls counted as $0.
+Missing: llama-3.3-70b, mixtral-8x7b
+```
+
+Fix it by adding a `[pricing.*]` override in [`.promptry/config.toml`](#project-config), or pull current rates from litellm with `POST /api/cost/refresh-rates`.
+
+### Traces and feedback
+
+By default the invocations ledger stays lean — just metadata. Pass `capture=True` to also persist a truncated copy of the request/response text for a trace viewer. Sample it so high-traffic prompts don't bloat the database, and redact before passing — promptry stores exactly what it's given.
+
+```python
+track_invocation(
+    "rag.qa",
+    metadata={"model": "gpt-4o", "tokens_in": ti, "tokens_out": to},
+    input_text=prompt, output_text=response,
+    capture=True, sample_rate=0.1,   # keep 10% of traces
+    request_id=req_id,               # correlate end-user feedback later
+)
+```
+
+**Feedback ingest.** Give a call a `request_id` and your app can POST an end-user rating back to it later, correlated to the exact invocation that produced the response — so a thumbs-down in production links straight to the trace, prompt version, and cost of the call that earned it.
+
+```
+POST /api/feedback
+{ "request_id": "req_8f2a", "rating": 1, "comment": "missed the refund window", "source": "thumbs" }
+```
+
+The invocation list can then filter to low-rated calls (`min_rating`) or sort by cost, so you find the expensive *and* the disliked calls first. Each row carries its latest rating; the invocation page shows the full feedback thread.
+
+> For an offline workflow — record real production (input, output) triples to an append-only JSONL file and replay them through your current pipeline in CI — see `promptry.capture` (`get_recorder()` / `replay_captures()`). It's separate from the SQLite ledger and never touches the network.
 
 ## Compare models with historical data
 
@@ -616,6 +730,23 @@ The binary `is_drifting` / exit code 1 is based on slope alone (backward-compati
 - **No multiple-comparison correction across suites.** If you run drift on 50 suites and use `p < 0.05`, you'll get ~2.5 false positives by chance. Apply Bonferroni (`p < 0.05 / num_suites`) manually if that matters.
 - **Ties in scores aren't corrected** in the U statistic. With continuous LLM scores this rarely matters.
 - **Small samples are flagged.** With fewer than 16 runs the p-value is `None` because the normal approximation needs ~8 per group.
+
+## Regression bisect
+
+When a suite has been green for a while and then breaks, bisect walks its run history to the first **passing → failing** boundary — a `git bisect` for evals — and reports the prompt and model deltas at exactly that transition.
+
+```
+GET /api/suite/rag-regression/bisect
+{
+  "found": true,
+  "last_good": { "run_id": 141, "prompt_version": 3, "score": 0.91 },
+  "first_bad": { "run_id": 142, "prompt_version": 4, "score": 0.72 },
+  "prompt_changed": true,
+  "model_changed": false
+}
+```
+
+Here the suite broke between runs 141 and 142, and the only thing that changed was the prompt (v3 → v4) — so that's where to look. Available from the dashboard's suite view and the API.
 
 ## Background monitoring
 
@@ -1080,12 +1211,15 @@ This starts a local web server on `http://localhost:8420` and opens your browser
 
 | Page | What it shows |
 |------|---------------|
-| **Overview** | All eval suites with pass/fail status, sparklines, drift detection |
-| **Suite Detail** | Score history chart, assertion breakdown, root cause hints ("prompt changed v4->v5") |
+| **Overview** | Eval health and spend at a glance — suites needing attention, spend by module |
+| **Suite Detail** | Score history chart, assertion breakdown, root cause hints, regression bisect |
 | **Run Detail** | Per-assertion results with expandable details and grounding claim breakdowns |
-| **Prompts** | Version history with git-diff style comparison (red/green lines, line numbers) |
+| **Prompts / Prompt Detail** | Registry grouped by module; version history, git-diff, live `$`-template editing, env promotion, per-call stats |
 | **Models** | Statistical model comparison with cost efficiency analysis and SWITCH/KEEP verdict |
-| **Cost** | Token usage and cost charts over time, by prompt name |
+| **Cost** | Module → prompt → call drill-down, daily spend, budgets, and a coverage check for un-priced models |
+| **Invocation** | A single call's trace (request/response), feedback, and the template-vs-payload cost split |
+| **Playground** | Render a prompt across multiple models and preview assertion results before promoting to a suite |
+| **Settings** | Project config — model list, judge, dashboard prefs, pricing overrides (see below) |
 
 ```bash
 promptry dashboard                # start on :8420, open hosted dashboard
@@ -1120,6 +1254,32 @@ window = 30
 ```
 
 You can also override with env vars: `PROMPTRY_DB`, `PROMPTRY_STORAGE_MODE`, `PROMPTRY_EMBEDDING_MODEL`, `PROMPTRY_SEMANTIC_THRESHOLD`, `PROMPTRY_WEBHOOK_URL`, `PROMPTRY_SMTP_PASSWORD`.
+
+## Project config
+
+`promptry.toml` (above) configures the runtime — storage, sampling, thresholds. `.promptry/config.toml` is a separate, committable file for *team* settings the dashboard reads and writes: the model list shown in the Playground, the judge model, dashboard preferences, and pricing overrides. It's meant to travel through git so a team shares one setup.
+
+```toml
+# .promptry/config.toml
+[dashboard]
+default_days = 14
+
+[judge]
+model = "gpt-4o-mini"
+
+[[models]]
+id = "gpt-4o-mini"
+provider = "openai"
+label = "GPT-4o mini"
+
+[pricing.my-custom-model]   # $ per 1M tokens — fills a coverage gap
+in = 1.0
+cached = 0.5
+cache_write = 1.0
+out = 2.0
+```
+
+**API keys never go in this file.** They live in your environment (read by litellm); the Settings page only reports *which* providers have a key present (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `AZURE_OPENAI_API_KEY`), never the values. Edit it from the dashboard's **Settings** page (`GET`/`POST /api/config`) or by hand — pricing overrides are merged into the live rate table on save.
 
 ## Custom storage backend
 

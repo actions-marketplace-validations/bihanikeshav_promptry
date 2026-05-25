@@ -81,6 +81,12 @@
       <li><a href="#suites">Write eval suites</a></li>
     </ul>
 
+    <h5>Prompt CMS</h5>
+    <ul>
+      <li><a href="#cms">Live prompt CMS</a></li>
+      <li><a href="#promote">Environment promotion</a></li>
+    </ul>
+
     <h5>Assertions</h5>
     <ul>
       <li><a href="#assertions">Overview</a></li>
@@ -94,12 +100,21 @@
       <li><a href="#checkall">check_all</a></li>
     </ul>
 
-    <h5>Analysis</h5>
+    <h5>Cost &amp; calls</h5>
     <ul>
       <li><a href="#cost">Cost tracking</a></li>
+      <li><a href="#drilldown">Cost drill-down</a></li>
+      <li><a href="#budgets">Budgets &amp; coverage</a></li>
+      <li><a href="#cache">Cache awareness</a></li>
+      <li><a href="#traces">Traces &amp; feedback</a></li>
+    </ul>
+
+    <h5>Analysis</h5>
+    <ul>
       <li><a href="#models">Model comparison</a></li>
       <li><a href="#baseline">Baseline comparison</a></li>
       <li><a href="#drift">Drift detection</a></li>
+      <li><a href="#bisect">Regression bisect</a></li>
     </ul>
 
     <h5>Operations</h5>
@@ -122,6 +137,7 @@
     <ul>
       <li><a href="#cli">CLI reference</a></li>
       <li><a href="#config">Config</a></li>
+      <li><a href="#projectconfig">Project config</a></li>
       <li><a href="#examples">Examples</a></li>
     </ul>
     </div>
@@ -200,6 +216,41 @@ context_sample_rate = 0.1</code></pre>
     semantic (0.891) ok
 
   Overall: <span style="color: var(--ok)">PASS</span>  score: 0.891</code></pre>
+
+    <h1 id="cms" style="margin-top: 72px;">Live prompt CMS</h1>
+    <p><code>track()</code> records what your code <em>used</em>. The prompt CMS lets the dashboard <em>change</em> what your code uses &mdash; edit a prompt in the browser and your app picks it up on the next call, no redeploy. It's entirely opt-in: wrap only the prompts you want editable, leave everything else on <code>track()</code>.</p>
+
+    <p>Two functions. <code>seed_prompt()</code> registers your in-code default as the first version (only if the prompt doesn't exist yet &mdash; a dashboard edit is never clobbered). <code>render_prompt()</code> fetches the latest managed version and substitutes <code>$placeholders</code>:</p>
+
+<pre><code><span style="color: var(--accent-3)">from</span> promptry <span style="color: var(--accent-3)">import</span> seed_prompt, render_prompt
+
+DEFAULT = <span style="color: var(--accent-2)">"Answer using only this context:\n$context\n\nQuestion: $question"</span>
+
+<span style="color: var(--ink-3)"># once at startup — registers v1 if the prompt is new</span>
+seed_prompt(<span style="color: var(--accent-2)">"rag.qa"</span>, DEFAULT)
+
+<span style="color: var(--ink-3)"># per request — serves the live template, falls back to DEFAULT on any miss</span>
+system = render_prompt(<span style="color: var(--accent-2)">"rag.qa"</span>, DEFAULT, context=ctx, question=q)
+response = llm.chat(system=system, user=q)</code></pre>
+
+    <p>Substitution uses <code>string.Template</code>, not <code>str.format</code>, so literal braces in your prompt (JSON examples, etc.) never break it, and an unknown placeholder is left intact rather than raising. A malformed dashboard edit can't crash a request &mdash; <code>render_prompt</code> falls back to the in-code default cleanly. Edits go live within the cache TTL (default 60s); tune it per call with <code>ttl=</code>.</p>
+
+    <p>In the dashboard, the prompt's detail page shows the live <code>$</code>-template with variable pills, a lint panel that warns about footguns (stray <code>$</code>, missing output-format guidance), and a git-diff between any two versions. Saving an edit appends a new version &mdash; history is never overwritten.</p>
+
+    <h2 id="promote">Environment promotion</h2>
+    <p>Editing shouldn't mean going live instantly. Tag a specific version with an environment &mdash; <code>dev</code>, <code>staging</code>, <code>prod</code> &mdash; and serve it explicitly:</p>
+
+<pre><code><span style="color: var(--ink-3)"># serve the version tagged 'prod', not just the latest</span>
+system = render_prompt(<span style="color: var(--accent-2)">"rag.qa"</span>, DEFAULT, env=<span style="color: var(--accent-2)">"prod"</span>, context=ctx, question=q)</code></pre>
+
+    <p>Promoting moves the tag onto one version (and off whichever held it before), so each environment points at exactly one. Promote from the dashboard's prompt page (<strong>Promote v4 → prod</strong>) or via the API:</p>
+
+<pre><code><span style="color: var(--ink-3)"># POST /api/prompts/rag.qa/promote</span>
+{ <span style="color: var(--accent-2)">"version"</span>: <span style="color: var(--accent)">4</span>, <span style="color: var(--accent-2)">"env"</span>: <span style="color: var(--accent-2)">"prod"</span> }</code></pre>
+
+    <p>If an env tag isn't set yet, <code>render_prompt(env=…)</code> falls back to the latest version. The flow: edit on <code>dev</code> → check it in the playground → promote to <code>prod</code> when it's ready → roll back by promoting an older version (a revert always sticks, even to byte-identical older content).</p>
+
+    <p class="dim" style="font-size: 12.5px;">Migrating a legacy prompt that gained hundreds of baked versions (template + interpolated data)? Move the template to <code>render_prompt</code> and the per-call data to <code>track_invocation</code> (below), then collapse the old churn from the dashboard (<code>POST /api/prompts/{name}/prune</code>). See the <a href="https://github.com/bihanikeshav/promptry/blob/main/docs/PROMPT_CMS_MIGRATION.md">migration guide</a>.</p>
 
     <h1 id="assertions" style="margin-top: 72px;">Assertions</h1>
     <p>Promptry ships a family of assertion primitives. Each one records its score, pass/fail, and details into <code>eval_results</code>, so the dashboard and the comparison engine see every check &mdash; not just the first failure.</p>
@@ -365,17 +416,21 @@ assert_no_repetition(conv, similarity_threshold=<span style="color: var(--accent
     <p>If 2 out of 4 fail, you get one error with everything &mdash; and the runner still sees every check for drift and comparison purposes.</p>
 
     <h1 id="cost" style="margin-top: 72px;">Cost tracking</h1>
-    <p>Pass token and cost metadata to <code>track()</code>. Promptry rolls it up by prompt name, model, and day.</p>
+    <p>Cost lives on the <strong>invocations ledger</strong> &mdash; a per-call table, separate from prompt versioning. Use <code>track_invocation()</code> once per LLM call: every call lands as its own row, even when the rendered prompt is byte-identical to a previous one (which is exactly what a cost dashboard needs &mdash; <code>track()</code> dedups by content hash and would drop the repeat).</p>
 
-<pre><code>response = llm.chat(system=prompt, ...)
+<pre><code><span style="color: var(--accent-3)">from</span> promptry <span style="color: var(--accent-3)">import</span> track_invocation
 
-track(prompt, <span style="color: var(--accent-2)">"pricing-extract"</span>, metadata={
+response = llm.chat(system=prompt, ...)
+
+track_invocation(<span style="color: var(--accent-2)">"pricing.extract"</span>, metadata={
+    <span style="color: var(--accent-2)">"model"</span>: <span style="color: var(--accent-2)">"gpt-4o"</span>,
     <span style="color: var(--accent-2)">"tokens_in"</span>: response.usage.prompt_tokens,
     <span style="color: var(--accent-2)">"tokens_out"</span>: response.usage.completion_tokens,
     <span style="color: var(--accent-2)">"cached_tokens"</span>: response.usage.prompt_tokens_details.cached_tokens,
-    <span style="color: var(--accent-2)">"model"</span>: <span style="color: var(--accent-2)">"gpt-4o"</span>,
-    <span style="color: var(--accent-2)">"cost"</span>: <span style="color: var(--accent)">0.003</span>,
+    <span style="color: var(--accent-2)">"latency_ms"</span>: elapsed_ms,
 })</code></pre>
+
+    <p>You don't pass <code>cost</code> &mdash; promptry computes it from its rate table when <code>metadata</code> has a <code>model</code> plus token counts. It accepts the three spellings seen in the wild: <code>tokens_in</code>/<code>tokens_out</code> (promptry), <code>input_tokens</code>/<code>output_tokens</code> (Anthropic), and <code>prompt_tokens</code>/<code>completion_tokens</code> (OpenAI). Naming a prompt <code>module.name</code> (e.g. <code>pricing.extract</code>) groups it under a module in the cost views.</p>
 
 <pre><code><span style="color: var(--ink-3)">$</span> promptry cost-report --days 30
 
@@ -383,11 +438,36 @@ Cost report (last 30 days)
 ┌──────────────────┬───────┬───────────┬────────────┬─────────┐
 │ Prompt           │ Calls │ Tokens In │ Tokens Out │ Cost    │
 ├──────────────────┼───────┼───────────┼────────────┼─────────┤
-│ pricing-extract  │   847 │   423,500 │     84,700 │ $2.5410 │
-│ doc-classify     │ 1,203 │   120,300 │      1,203 │ $0.1203 │
+│ pricing.extract  │   847 │   423,500 │     84,700 │ $2.5410 │
+│ doc.classify     │ 1,203 │   120,300 │      1,203 │ $0.1203 │
 ├──────────────────┼───────┼───────────┼────────────┼─────────┤
 │ Total            │ 2,050 │   543,800 │     85,903 │ $2.6613 │
 └──────────────────┴───────┴───────────┴────────────┴─────────┘</code></pre>
+
+    <h2 id="drilldown">Cost drill-down</h2>
+    <p>The dashboard's Cost page drills <strong>module → prompt → call</strong>. Start at spend per module, click into a module to rank its prompts, click a prompt to see its per-call distribution (avg, p95, max $/call) and the most expensive individual calls. Click a call to open its invocation page, where the input cost is split into <strong>fixed template overhead vs the variable payload</strong> you fed in:</p>
+
+<pre><code>Where the input cost went              · estimated (~4 chars/token)
+█████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+Template (fixed)   1,240 tok  $0.0031
+Payload (variable) 6,800 tok  $0.0170
+Response             512 tok  $0.0051</code></pre>
+
+    <p>The split is only shown when the prompt is a real <code>$</code>-template (managed via <code>render_prompt</code>). For a baked snapshot there's nothing to separate, so the page says so and points you at the CMS instead.</p>
+
+    <h1 id="budgets" style="margin-top: 72px;">Budgets &amp; coverage</h1>
+    <p>Set spend caps per period. Scope a budget <code>global</code>, to a <code>module</code>, or to a single <code>prompt</code>; pick <code>daily</code> or <code>monthly</code>. Current-period spend is summed from the invocations ledger on read, and a breach highlights in red on the Cost page.</p>
+
+<pre><code><span style="color: var(--ink-3)"># POST /api/budgets — or add one from the Cost page</span>
+{ <span style="color: var(--accent-2)">"scope"</span>: <span style="color: var(--accent-2)">"module"</span>, <span style="color: var(--accent-2)">"target"</span>: <span style="color: var(--accent-2)">"pricing"</span>, <span style="color: var(--accent-2)">"period"</span>: <span style="color: var(--accent-2)">"monthly"</span>, <span style="color: var(--accent-2)">"limit_usd"</span>: <span style="color: var(--accent)">50</span> }</code></pre>
+
+    <p><strong>Coverage check.</strong> A model with no entry in the rate table silently costs $0, so spend gets undercounted. The coverage report lists every model seen in the ledger that has no rate, plus how many calls it covers, so a banner can warn you:</p>
+
+<pre><code><span style="color: var(--ink-3)"># GET /api/cost/coverage</span>
+2 model(s) with no pricing — 1,840 calls counted as $0.
+Missing: <span style="color: var(--danger)">llama-3.3-70b, mixtral-8x7b</span></code></pre>
+
+    <p>Fix it by adding a <code>[pricing.*]</code> override in <a href="#projectconfig"><code>.promptry/config.toml</code></a>, or pull current rates from litellm with <code>POST /api/cost/refresh-rates</code>.</p>
 
     <h2 id="cache">Cache awareness</h2>
     <p>LLM providers each expose prompt caching differently. Promptry reads the cache usage fields that each provider reports, calculates the right cost, and shows the hit rate in <code>promptry cost-report</code> and the dashboard.</p>
@@ -400,6 +480,26 @@ Cost report (last 30 days)
     </ul>
 
     <p><strong>Optimization tip.</strong> Put static content (system prompt, long docs) at the <em>beginning</em> of the prompt. Prefix matching means earlier content is reused across queries. Monitor cache hit rate via <code>promptry cost-report</code> &mdash; if &lt; 30% for a frequently called prompt, there's room to restructure.</p>
+
+    <h1 id="traces" style="margin-top: 72px;">Traces &amp; feedback</h1>
+    <p>By default the invocations ledger stays lean &mdash; just metadata. Pass <code>capture=True</code> to also persist a truncated copy of the request/response text for a trace viewer. Sample it so high-traffic prompts don't bloat the database, and redact before passing &mdash; promptry stores exactly what it's given.</p>
+
+<pre><code>track_invocation(
+    <span style="color: var(--accent-2)">"rag.qa"</span>,
+    metadata={<span style="color: var(--accent-2)">"model"</span>: <span style="color: var(--accent-2)">"gpt-4o"</span>, <span style="color: var(--accent-2)">"tokens_in"</span>: ti, <span style="color: var(--accent-2)">"tokens_out"</span>: to},
+    input_text=prompt, output_text=response,
+    capture=<span style="color: var(--accent-3)">True</span>, sample_rate=<span style="color: var(--accent)">0.1</span>,   <span style="color: var(--ink-3)"># keep 10% of traces</span>
+    request_id=req_id,                <span style="color: var(--ink-3)"># correlate end-user feedback later</span>
+)</code></pre>
+
+    <p><strong>Feedback ingest.</strong> Give a call a <code>request_id</code> and your app can POST an end-user rating back to it later. The feedback is correlated to the exact invocation that produced the response &mdash; so a thumbs-down in production links straight to the trace, prompt version, and cost of the call that earned it.</p>
+
+<pre><code><span style="color: var(--ink-3)"># POST /api/feedback</span>
+{ <span style="color: var(--accent-2)">"request_id"</span>: <span style="color: var(--accent-2)">"req_8f2a"</span>, <span style="color: var(--accent-2)">"rating"</span>: <span style="color: var(--accent)">1</span>, <span style="color: var(--accent-2)">"comment"</span>: <span style="color: var(--accent-2)">"missed the refund window"</span>, <span style="color: var(--accent-2)">"source"</span>: <span style="color: var(--accent-2)">"thumbs"</span> }</code></pre>
+
+    <p>The invocation list can then filter to low-rated calls (<code>min_rating</code>) or sort by cost, so you can find the expensive <em>and</em> the disliked ones first. Each row carries its latest rating; the invocation page shows the full feedback thread.</p>
+
+    <p class="dim" style="font-size: 12.5px;">For an offline workflow &mdash; record real production (input, output) triples to an append-only JSONL file and replay them through your current pipeline in CI &mdash; see <code>promptry.capture</code> (<code>get_recorder()</code> / <code>replay_captures()</code>). It's separate from the SQLite ledger and never touches the network.</p>
 
     <h1 id="models" style="margin-top: 72px;">Model comparison</h1>
     <p>When you're evaluating a model upgrade, promptry compares the candidate against the full statistical distribution of your baseline model's history, not a single snapshot.</p>
@@ -490,6 +590,20 @@ Tagged rag-qa v3 as prod
     </ul>
 
     <p><strong>What it doesn't do.</strong> It's not a change-point detector (use CUSUM or Bayesian online CPD for that). It doesn't correct for multiple comparisons across suites &mdash; if you run drift on 50 suites with <code>p &lt; 0.05</code> you'll see ~2.5 false positives by chance, so apply Bonferroni (<code>p &lt; 0.05 / num_suites</code>) manually if that matters. Ties in scores aren't corrected in the U statistic; with continuous LLM scores this rarely matters. Small samples are flagged &mdash; fewer than 16 runs returns <code>p = None</code> because the normal approximation needs ~8 per group.</p>
+
+    <h1 id="bisect" style="margin-top: 72px;">Regression bisect</h1>
+    <p>When a suite has been green for a while and then breaks, bisect walks its run history to the first <strong>passing → failing</strong> boundary &mdash; a <code>git bisect</code> for evals &mdash; and reports the prompt and model deltas at exactly that transition.</p>
+
+<pre><code><span style="color: var(--ink-3)"># GET /api/suite/rag-regression/bisect</span>
+{
+  <span style="color: var(--accent-2)">"found"</span>: <span style="color: var(--accent-3)">true</span>,
+  <span style="color: var(--accent-2)">"last_good"</span>:  { <span style="color: var(--accent-2)">"run_id"</span>: <span style="color: var(--accent)">141</span>, <span style="color: var(--accent-2)">"prompt_version"</span>: <span style="color: var(--accent)">3</span>, <span style="color: var(--accent-2)">"score"</span>: <span style="color: var(--accent)">0.91</span> },
+  <span style="color: var(--accent-2)">"first_bad"</span>:  { <span style="color: var(--accent-2)">"run_id"</span>: <span style="color: var(--accent)">142</span>, <span style="color: var(--accent-2)">"prompt_version"</span>: <span style="color: var(--accent)">4</span>, <span style="color: var(--accent-2)">"score"</span>: <span style="color: var(--accent)">0.72</span> },
+  <span style="color: var(--accent-2)">"prompt_changed"</span>: <span style="color: var(--accent-3)">true</span>,
+  <span style="color: var(--accent-2)">"model_changed"</span>:  <span style="color: var(--accent-3)">false</span>
+}</code></pre>
+
+    <p>Here the suite broke between runs 141 and 142, and the only thing that changed was the prompt (v3 → v4) &mdash; so that's where to look. It's available from the dashboard's suite view and the API.</p>
 
     <h1 id="monitor" style="margin-top: 72px;">Background monitor</h1>
     <p>Runs your evals on a schedule in a detached process. Dev-only convenience &mdash; for production use cron or a CI schedule instead.</p>
@@ -583,7 +697,7 @@ promptry watch --debounce 300</code></pre>
 <span style="color: var(--ink-3)">$</span> promptry dashboard --local        <span style="color: var(--ink-3)"># open localhost instead</span>
 <span style="color: var(--ink-3)">$</span> promptry dashboard --port 9000    <span style="color: var(--ink-3)"># custom port</span></code></pre>
 
-    <p>Pages: <strong>Overview</strong> (all suites with pass/fail, sparklines, drift), <strong>Suite Detail</strong> (score history, assertion breakdown, root cause), <strong>Run Detail</strong> (per-assertion results with grounding claim breakdowns), <strong>Prompts</strong> (version history with git-diff style comparison), <strong>Models</strong> (statistical comparison + SWITCH/KEEP verdict), <strong>Cost</strong> (token + cost over time), and the <strong>Playground</strong> for live prompt iteration.</p>
+    <p>Pages: <strong>Overview</strong> (eval health + spend at a glance), <strong>Evals</strong> &amp; <strong>Suite Detail</strong> (score history, assertion breakdown, root cause, bisect), <strong>Run Detail</strong> (per-assertion results with grounding claim breakdowns), <strong>Prompts</strong> &amp; <strong>Prompt Detail</strong> (version history, git-diff, live <code>$</code>-template editing, env promotion, per-call stats), <strong>Models</strong> (statistical comparison + SWITCH/KEEP verdict), <strong>Cost</strong> (module → prompt → call drill-down, budgets, coverage), <strong>Invocation</strong> (a single call's trace, feedback, and template-vs-payload split), <strong>Playground</strong> (render a prompt and compare it across models), and <strong>Settings</strong> (project config — see below).</p>
 
     <h1 id="mcp" style="margin-top: 72px;">MCP server</h1>
     <p>Promptry includes a built-in <a href="https://modelcontextprotocol.io/">MCP</a> server so any LLM agent can manage prompts, run evals, compare models, check drift, and run safety audits through tool calls.</p>
@@ -698,6 +812,29 @@ email = <span style="color: var(--accent-2)">"alerts@example.com"</span></code><
 
     <p>Override with env vars: <code>PROMPTRY_DB</code>, <code>PROMPTRY_STORAGE_MODE</code>, <code>PROMPTRY_EMBEDDING_MODEL</code>, <code>PROMPTRY_SEMANTIC_THRESHOLD</code>, <code>PROMPTRY_WEBHOOK_URL</code>, <code>PROMPTRY_SMTP_PASSWORD</code>.</p>
 
+    <h1 id="projectconfig" style="margin-top: 72px;">Project config</h1>
+    <p><code>promptry.toml</code> (above) configures the runtime &mdash; storage, sampling, thresholds. <code>.promptry/config.toml</code> is a separate, committable file for <em>team</em> settings the dashboard reads and writes: the model list shown in the Playground, the judge model, dashboard preferences, and pricing overrides. It's meant to travel through git so a team shares one setup.</p>
+
+<pre><code><span style="color: var(--ink-3)"># .promptry/config.toml</span>
+[dashboard]
+default_days = <span style="color: var(--accent)">14</span>
+
+[judge]
+model = <span style="color: var(--accent-2)">"gpt-4o-mini"</span>
+
+[[models]]
+id = <span style="color: var(--accent-2)">"gpt-4o-mini"</span>
+provider = <span style="color: var(--accent-2)">"openai"</span>
+label = <span style="color: var(--accent-2)">"GPT-4o mini"</span>
+
+[pricing.my-custom-model]   <span style="color: var(--ink-3)"># $ per 1M tokens — fills a coverage gap</span>
+in = <span style="color: var(--accent)">1.0</span>
+cached = <span style="color: var(--accent)">0.5</span>
+cache_write = <span style="color: var(--accent)">1.0</span>
+out = <span style="color: var(--accent)">2.0</span></code></pre>
+
+    <p><strong>API keys never go in this file.</strong> They live in your environment (read by litellm); the Settings page only reports <em>which</em> providers have a key present, never the values. Edit it from the dashboard's <strong>Settings</strong> page (<code>GET</code>/<code>POST /api/config</code>) or by hand &mdash; pricing overrides are merged into the live rate table on save.</p>
+
     <h1 id="examples" style="margin-top: 72px;">Examples</h1>
     <p>Check the <a href="https://github.com/bihanikeshav/promptry/tree/main/examples"><code>examples/</code></a> directory for working demos:</p>
 
@@ -723,15 +860,18 @@ promptry run doc-classify --module examples.assertion_pipeline</code></pre>
     <ul>
       <li><a href="#install">Installation</a></li>
       <li><a href="#track">Track your prompts</a></li>
-      <li><a href="#suites">Write eval suites</a></li>
+      <li><a href="#cms">Live prompt CMS</a></li>
       <li><a href="#assertions">Assertions</a></li>
       <li><a href="#cost">Cost tracking</a></li>
+      <li><a href="#budgets">Budgets &amp; coverage</a></li>
+      <li><a href="#traces">Traces &amp; feedback</a></li>
       <li><a href="#drift">Drift detection</a></li>
+      <li><a href="#bisect">Regression bisect</a></li>
       <li><a href="#ci">CI + GitHub Action</a></li>
       <li><a href="#dashboard">Dashboard</a></li>
       <li><a href="#mcp">MCP server</a></li>
       <li><a href="#cli">CLI reference</a></li>
-      <li><a href="#config">Config</a></li>
+      <li><a href="#projectconfig">Project config</a></li>
     </ul>
   </aside>
 

@@ -61,9 +61,10 @@
     <h1 class="h1" style="font-size: clamp(36px, 5vw, 56px); margin: 16px 0 16px; max-width: 22ch;">
       One binary, one SQLite file, <em>zero</em> services.
     </h1>
-    <p class="hero-sub" style="max-width: 60ch;">
-      Promptry is a library with a CLI, a dashboard, and an MCP server stapled to the same local store.
-      Every component reads and writes the same SQLite database &mdash; no queues, no daemons, no cloud.
+    <p class="hero-sub" style="max-width: 62ch;">
+      Promptry is a library with a CLI, a FastAPI dashboard, a GitHub Action, and an MCP server stapled to the same local store.
+      Your code calls <span class="mono">track()</span> and <span class="mono">track_invocation()</span>; everything else &mdash; evals, cost
+      drill-down, the live prompt CMS, budgets, traces &mdash; reads and writes the same SQLite file. No queues, no daemons, no cloud.
     </p>
   </div>
 </section>
@@ -74,7 +75,7 @@
     <div class="sec-head">
       <div class="sec-kicker">~/system</div>
       <h2 class="sec-title">The whole stack on <em>one</em> page.</h2>
-      <p class="sec-lede">Your code talks to the SDK. The SDK talks to SQLite. Everything else reads from SQLite.</p>
+      <p class="sec-lede">Your code talks to the SDK. The SDK writes two ledgers to SQLite &mdash; versioned prompt templates and per-call invocations. Everything else reads from SQLite.</p>
     </div>
 
     <div class="diagram-wrap">
@@ -88,8 +89,8 @@
   <div class="shell">
     <div class="sec-head">
       <div class="sec-kicker">~/data-model</div>
-      <h2 class="sec-title">Six tables. That's it.</h2>
-      <p class="sec-lede">The entire product is a thin layer over this schema. Open the database with <span class="mono">sqlite3</span> and every read the dashboard makes is reproducible on the command line.</p>
+      <h2 class="sec-title">Nine tables. That's it.</h2>
+      <p class="sec-lede">The entire product is a thin layer over this schema, applied through numbered migrations on a <span class="mono">schema_version</span> table. Open the database with <span class="mono">sqlite3</span> and every read the dashboard makes is reproducible on the command line.</p>
     </div>
     <div class="schema-grid">
 
@@ -114,7 +115,7 @@
           <li><span class="k">prompt_id</span><span class="t">fk &rarr; prompts</span></li>
           <li><span class="k">tag</span><span class="t">text</span></li>
         </ul>
-        <p class="dim" style="font-size: 12px; margin: 12px 0 0;">Named labels like <span class="mono">prod</span>, <span class="mono">canary</span>. Any version can be compared against a tag.</p>
+        <p class="dim" style="font-size: 12px; margin: 12px 0 0;">Named labels like <span class="mono">prod</span>, <span class="mono">staging</span>, <span class="mono">dev</span>. Promotion moves an env tag to one version, so <span class="mono">render_prompt(env=…)</span> serves exactly that one.</p>
       </div>
 
       <div class="schema-card">
@@ -175,6 +176,48 @@
         <p class="dim" style="font-size: 12px; margin: 12px 0 0;">Versioned test data. Pin a suite to a dataset version for reproducible runs.</p>
       </div>
 
+      <div class="schema-card">
+        <h4>TABLE · invocations</h4>
+        <ul>
+          <li><span class="k">id</span><span class="t">integer pk</span></li>
+          <li><span class="k">prompt_name</span><span class="t">text</span></li>
+          <li><span class="k">prompt_version</span><span class="t">integer</span></li>
+          <li><span class="k">metadata</span><span class="t">json</span></li>
+          <li><span class="k">input_text</span><span class="t">text · opt</span></li>
+          <li><span class="k">output_text</span><span class="t">text · opt</span></li>
+          <li><span class="k">request_id</span><span class="t">text</span></li>
+          <li><span class="k">created_at</span><span class="t">text</span></li>
+        </ul>
+        <p class="dim" style="font-size: 12px; margin: 12px 0 0;">The per-call ledger written by <span class="mono">track_invocation()</span>. One row per LLM call &mdash; no dedup. Tokens, cost, latency and model live in <span class="mono">metadata</span>; request/response text is captured only when you opt in.</p>
+      </div>
+
+      <div class="schema-card">
+        <h4>TABLE · feedback</h4>
+        <ul>
+          <li><span class="k">id</span><span class="t">integer pk</span></li>
+          <li><span class="k">request_id</span><span class="t">text</span></li>
+          <li><span class="k">prompt_name</span><span class="t">text</span></li>
+          <li><span class="k">rating</span><span class="t">real</span></li>
+          <li><span class="k">comment</span><span class="t">text</span></li>
+          <li><span class="k">source</span><span class="t">text</span></li>
+          <li><span class="k">created_at</span><span class="t">text</span></li>
+        </ul>
+        <p class="dim" style="font-size: 12px; margin: 12px 0 0;">End-user ratings ingested via <span class="mono">POST /api/feedback</span>, correlated to the exact invocation by <span class="mono">request_id</span>. Joins back to a call's trace.</p>
+      </div>
+
+      <div class="schema-card">
+        <h4>TABLE · budgets</h4>
+        <ul>
+          <li><span class="k">id</span><span class="t">integer pk</span></li>
+          <li><span class="k">scope</span><span class="t">global·module·prompt</span></li>
+          <li><span class="k">target</span><span class="t">text</span></li>
+          <li><span class="k">period</span><span class="t">daily·monthly</span></li>
+          <li><span class="k">limit_usd</span><span class="t">real</span></li>
+          <li><span class="k">created_at</span><span class="t">text</span></li>
+        </ul>
+        <p class="dim" style="font-size: 12px; margin: 12px 0 0;">Spend caps. Current-period spend is summed from the invocations ledger on read; breaches surface in the dashboard.</p>
+      </div>
+
     </div>
   </div>
 </section>
@@ -184,8 +227,8 @@
   <div class="shell">
     <div class="sec-head">
       <div class="sec-kicker">~/lifecycle</div>
-      <h2 class="sec-title">What happens when you run one suite.</h2>
-      <p class="sec-lede">End-to-end on a typical pipeline. Promptry's own overhead is dwarfed by the LLM calls themselves.</p>
+      <h2 class="sec-title">What happens around one call &amp; one suite.</h2>
+      <p class="sec-lede">End-to-end on a typical pipeline. Promptry's own overhead is dwarfed by the LLM calls themselves, and it never sits in the request's critical path.</p>
     </div>
     <div class="timeline">
       <div class="tl-step">
@@ -197,6 +240,11 @@
         <div class="tl-num">+2ms · pipeline</div>
         <div class="tl-title">Your LLM call runs</div>
         <div class="tl-body">The prompt string flows through your pipeline unchanged. Promptry is out of the hot path.</div>
+      </div>
+      <div class="tl-step">
+        <div class="tl-num">after · track_invocation()</div>
+        <div class="tl-title">Per-call row appended</div>
+        <div class="tl-body">One row lands in <span class="mono">invocations</span> with tokens, model, latency. Cost is auto-computed from the rate table. No dedup &mdash; every call counts.</div>
       </div>
       <div class="tl-step">
         <div class="tl-num">run · suite starts</div>
@@ -224,9 +272,24 @@
         <div class="tl-body"><span class="mono">0</span> on pass, <span class="mono">1</span> on regression. The GitHub Action turns that into a blocking PR status + comment.</div>
       </div>
       <div class="tl-step">
+        <div class="tl-num">prod · feedback</div>
+        <div class="tl-title">Ratings flow back</div>
+        <div class="tl-body">Your app POSTs an end-user rating to <span class="mono">/api/feedback</span> with the call's <span class="mono">request_id</span>; it lands in <span class="mono">feedback</span>, tied to that invocation.</div>
+      </div>
+      <div class="tl-step">
+        <div class="tl-num">budget · spend</div>
+        <div class="tl-title">Caps &amp; coverage</div>
+        <div class="tl-body">Budget status sums spend from the ledger per period; the coverage check flags any model with no rate (silently $0).</div>
+      </div>
+      <div class="tl-step">
+        <div class="tl-num">debug · bisect</div>
+        <div class="tl-title">Regression bisect</div>
+        <div class="tl-body">Walk a suite's run history to the first passing&rarr;failing boundary, with the prompt/model delta that broke it.</div>
+      </div>
+      <div class="tl-step">
         <div class="tl-num">read · consumers</div>
         <div class="tl-title">Everything else reads</div>
-        <div class="tl-body">Dashboard, MCP server, vote inbox &mdash; all read the same <span class="mono">store.db</span>. No second source of truth.</div>
+        <div class="tl-body">Dashboard, CLI, MCP server, the GitHub Action &mdash; all read the same <span class="mono">store.db</span>. No second source of truth.</div>
       </div>
     </div>
   </div>
@@ -250,6 +313,14 @@
         <div class="qa-a">A prompt is its content. Two callers using the same system prompt should share a single history. Automatic dedup means you never have to remember to bump a version &mdash; edit the string, save the file, <span class="mono">track()</span> does the rest.</div>
       </div>
       <div class="qa-item">
+        <div class="qa-q">Why two ledgers instead of one?</div>
+        <div class="qa-a"><span class="mono">track()</span> versions a prompt's <em>content</em> and dedups by hash &mdash; the right shape for a registry. But a cost dashboard needs every call, even byte-identical ones, so <span class="mono">track_invocation()</span> appends to a separate <span class="mono">invocations</span> table with no dedup. Mixing the two would either double-count templates or silently drop repeat calls. The CMS template lives in <span class="mono">prompts</span>; the per-call payload and telemetry live in <span class="mono">invocations</span>.</div>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">Why a live prompt CMS?</div>
+        <div class="qa-a"><span class="mono">render_prompt()</span> serves a dashboard-edited <span class="mono">$placeholder</span> template (cached ~60s), falling back to the in-code default on any miss &mdash; a bad edit can't crash a request. Environment tags gate the rollout: edit freely, then promote a version to <span class="mono">prod</span> when it's ready. <span class="mono">string.Template</span> is used over <span class="mono">str.format</span> so literal braces in JSON examples never break substitution.</div>
+      </div>
+      <div class="qa-item">
         <div class="qa-q">Why local-first?</div>
         <div class="qa-a">Prompts leak business logic. Suites leak user data. Shipping any of it to a third-party vendor is a legal review you shouldn't have to ask for. Remote mode is opt-in and dual-writes, so local is still the source of truth.</div>
       </div>
@@ -263,7 +334,7 @@
       </div>
       <div class="qa-item">
         <div class="qa-q">Why React for the dashboard?</div>
-        <div class="qa-a">The dashboard is a React + Vite SPA served as static files. It connects to a tiny local FastAPI server that just proxies SQLite reads. No backend state, no session, no secrets &mdash; the whole UI is built once and deployed alongside the Python package.</div>
+        <div class="qa-a">The dashboard is a React + Vite SPA served as static files by the same local FastAPI server that backs the JSON API. Reads (evals, cost, traces) are GETs; the writes are scoped and local &mdash; saving a prompt edit, promoting a version, setting a budget, ingesting feedback, or running the playground against a live model. No backend session, no account, no secrets in the database; API keys stay in your environment.</div>
       </div>
     </div>
   </div>
