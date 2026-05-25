@@ -12,6 +12,10 @@ Layout::
       [judge]
       model = "gpt-4o-mini"
 
+      [slo]                  # CI fails the run if a budget is breached
+      max_latency_ms = 8000  # no single test slower than this
+      p95_latency_ms = 5000  # 95th-percentile test latency
+
       [[models]]
       id = "gpt-4o-mini"
       provider = "openai"
@@ -72,6 +76,7 @@ def load_project_config() -> dict:
     if not data.get("models"):
         data["models"] = list(_DEFAULT_MODELS)
     data.setdefault("pricing", {})
+    data.setdefault("slo", {})
     return data
 
 
@@ -100,6 +105,12 @@ def _dump_toml(data: dict) -> str:
         lines.append("[judge]")
         for k, v in judge.items():
             lines.append(f'{k} = "{_toml_escape(v)}"')
+        lines.append("")
+    slo = data.get("slo", {})
+    if slo:
+        lines.append("[slo]")
+        for k, v in slo.items():
+            lines.append(f"{k} = {_val(v)}")
         lines.append("")
     for m in data.get("models", []):
         lines.append("[[models]]")

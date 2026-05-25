@@ -428,6 +428,19 @@ def run_cmd(
         f"  score: {result.overall_score:.3f}"
     )
 
+    # Latency SLO gates — performance budgets from .promptry/config.toml [slo],
+    # checked independently of the score so a "passing" suite can still fail CI
+    # if it got too slow.
+    from promptry.projectconfig import load_project_config
+    from promptry.slo import check_slos, format_slo_breaches
+
+    slo_cfg = load_project_config().get("slo", {})
+    slo_breaches = check_slos(result, slo_cfg) if slo_cfg else []
+    if slo_cfg:
+        console.print()
+        console.print("SLOs:")
+        console.print(format_slo_breaches(slo_breaches))
+
     if compare:
         console.print()
         console.print(f"Comparing against [bold]{compare}[/bold] baseline:")
@@ -474,7 +487,7 @@ def run_cmd(
         markdown.write_text(md_content, encoding="utf-8")
         console.print(f"[green]Markdown summary written to[/green] {markdown}")
 
-    if not result.overall_pass:
+    if not result.overall_pass or slo_breaches:
         raise typer.Exit(1)
 
 
