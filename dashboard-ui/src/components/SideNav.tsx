@@ -1,6 +1,36 @@
 import { NavLink, useLocation } from "react-router-dom";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Wordmark } from "./ui";
+import { backendHost } from "../api/client";
+
+/** Footer status: pings /api/health and shows the real host + connection. */
+function ConnectionStatus() {
+  const [state, setState] = useState<"checking" | "connected" | "offline">("checking");
+  const [version, setVersion] = useState<string>("");
+  useEffect(() => {
+    let alive = true;
+    const ping = () =>
+      fetch("/api/health")
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then((d) => { if (alive) { setState("connected"); setVersion(d.version || ""); } })
+        .catch(() => { if (alive) setState("offline"); });
+    ping();
+    const t = setInterval(ping, 15000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  const color = state === "connected" ? "var(--success)" : state === "offline" ? "var(--error)" : "var(--muted)";
+  return (
+    <div style={{ marginTop: "auto", padding: "8px 10px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ width: 7, height: 7, borderRadius: 999, background: color, boxShadow: `0 0 0 3px color-mix(in oklch, ${color} 18%, transparent)` }} />
+      <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {state === "offline" ? "disconnected" : backendHost()}
+      </span>
+      {state === "connected" && version && (
+        <span className="mono" style={{ fontSize: 10, color: "var(--muted)", marginLeft: "auto" }}>v{version}</span>
+      )}
+    </div>
+  );
+}
 
 interface NavItem {
   to: string;
@@ -258,21 +288,7 @@ export function SideNav({
         </div>
       </div>
 
-      <div
-        style={{
-          marginTop: "auto",
-          padding: "8px 10px",
-          borderTop: "1px solid var(--border)",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-        }}
-      >
-        <span className="live-dot" />
-        <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
-          localhost:{new URLSearchParams(window.location.search).get("port") || "8420"}
-        </span>
-      </div>
+      <ConnectionStatus />
     </aside>
   );
 }

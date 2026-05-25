@@ -35,6 +35,15 @@ function getBaseUrl(): string {
 
 const BASE = getBaseUrl();
 
+/** The backend host the dashboard talks to. Same-origin today (BASE=""),
+ *  but if BASE is ever a remote URL (hosted-frontend model), shows that. */
+export function backendHost(): string {
+  if (BASE) {
+    try { return new URL(BASE, window.location.origin).host; } catch { return BASE; }
+  }
+  return window.location.host;
+}
+
 async function fetchJson<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
   if (!res.ok) {
