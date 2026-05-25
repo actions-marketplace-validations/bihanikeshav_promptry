@@ -53,13 +53,24 @@ export default function Cost() {
     ]} />
   );
 
+  const applyView = (v: SavedView) => {
+    setDays(v.days);
+    setParams(v.module ? (v.prompt ? { module: v.module, prompt: v.prompt } : { module: v.module }) : {});
+  };
+  const headerActions = (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <SavedViews current={{ days, module, prompt }} onApply={applyView} />
+      {daysSelect}
+    </div>
+  );
+
   return (
     <div>
       {/* Breadcrumb always topmost, above the title (consistent with Prompts). */}
       {level !== "overview" && <Breadcrumbs items={crumbs} />}
 
       <PageHeader eyebrow="~/promptry · cost" title="Cost & Tokens"
-        description="Follow the money: module spend → prompt → the priciest individual calls." actions={daysSelect} />
+        description="Follow the money: module spend → prompt → the priciest individual calls." actions={headerActions} />
 
       {level === "overview" && (
         <OverviewLevel s={s} data={data} coverage={coverage} modules={modules} moduleMax={moduleMax} onModule={goModule} />
@@ -75,6 +86,58 @@ export default function Cost() {
 }
 
 /* ---- budgets: burn-down + add/remove ---- */
+/* -------- saved views (localStorage filter presets) -------- */
+interface SavedView { name: string; days: number; module: string | null; prompt: string | null }
+const VIEWS_KEY = "promptry.cost.views";
+function loadViews(): SavedView[] {
+  try { const v = JSON.parse(localStorage.getItem(VIEWS_KEY) || "[]"); return Array.isArray(v) ? v : []; }
+  catch { return []; }
+}
+function storeViews(v: SavedView[]) { try { localStorage.setItem(VIEWS_KEY, JSON.stringify(v)); } catch { /* quota */ } }
+
+function SavedViews({ current, onApply }: { current: { days: number; module: string | null; prompt: string | null }; onApply: (v: SavedView) => void }) {
+  const [views, setViews] = useState<SavedView[]>(() => loadViews());
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  const sh = (p: string) => p.slice(p.indexOf(".") + 1);
+
+  const defaultName = () =>
+    current.prompt ? sh(current.prompt) : current.module ? current.module : `all · ${current.days}d`;
+
+  const save = () => {
+    const v: SavedView = { name: (name.trim() || defaultName()), days: current.days, module: current.module, prompt: current.prompt };
+    const next = [...views.filter((x) => x.name !== v.name), v];
+    setViews(next); storeViews(next); setNaming(false); setName("");
+  };
+  const remove = (n: string) => { const next = views.filter((x) => x.name !== n); setViews(next); storeViews(next); };
+
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      {views.length > 0 && (
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          {views.map((v) => (
+            <span key={v.name} className="chip mono" style={{ fontSize: 10.5, display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+              <span onClick={() => onApply(v)} title={`${v.days}d${v.module ? " · " + v.module : ""}${v.prompt ? " · " + sh(v.prompt) : ""}`}>{v.name}</span>
+              <span onClick={() => remove(v.name)} style={{ color: "var(--muted)" }} title="remove">×</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {naming ? (
+        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+          <input className="inp" autoFocus placeholder={defaultName()} value={name}
+            onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setNaming(false); }}
+            style={{ width: 130, height: 26, fontSize: 11.5 }} />
+          <button className="btn" onClick={save} style={{ height: 26, padding: "0 8px", fontSize: 11 }}>Save</button>
+        </span>
+      ) : (
+        <button className="btn" onClick={() => setNaming(true)} title="Save current filters as a view"
+          style={{ height: 26, padding: "0 8px", fontSize: 11 }}>★ Save view</button>
+      )}
+    </div>
+  );
+}
+
 function BudgetsPanel() {
   const [budgets, setBudgets] = useState<BudgetStatus[]>([]);
   const [adding, setAdding] = useState(false);
