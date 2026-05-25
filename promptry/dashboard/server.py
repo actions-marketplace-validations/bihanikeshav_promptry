@@ -620,11 +620,42 @@ def submit_feedback(body: _FeedbackIn):
 
 @app.get("/api/invocations/{invocation_id}")
 def get_invocation(invocation_id: int):
-    """A single invocation with captured input/output text."""
+    """A single invocation with captured text, feedback, and an estimated
+    split of input cost into fixed template overhead vs variable payload."""
     storage = get_storage()
     rec = storage.get_invocation(invocation_id) if hasattr(storage, "get_invocation") else None
     if rec is None:
         raise HTTPException(status_code=404, detail="Invocation not found")
+
+    # Template-vs-data breakdown: estimate how much of this call's input was
+    # the (fixed) prompt template vs the (variable) interpolated payload.
+    try:
+        from promptry.pricing import estimate_tokens, calculate_cost
+        meta = rec.get("metadata") or {}
+        model = meta.get("model")
+        tokens_in = int(meta.get("tokens_in", meta.get("prompt_tokens", 0)) or 0)
+        tokens_out = int(meta.get("tokens_out", meta.get("completion_tokens", 0)) or 0)
+        tmpl = storage.get_prompt(rec["prompt_name"])
+        tmpl_tokens = estimate_tokens(tmpl.content) if tmpl else 0
+        tmpl_tokens = min(tmpl_tokens, tokens_in) if tokens_in else tmpl_tokens
+        data_tokens = max(0, tokens_in - tmpl_tokens)
+
+        def _in_cost(t):
+            c = calculate_cost(model, tokens_in=t, tokens_out=0) if model else None
+            return c
+        rec["breakdown"] = {
+            "model": model,
+            "template_tokens": tmpl_tokens,
+            "data_tokens": data_tokens,
+            "tokens_out": tokens_out,
+            "template_cost": _in_cost(tmpl_tokens),
+            "data_cost": _in_cost(data_tokens),
+            "output_cost": (calculate_cost(model, tokens_in=0, tokens_out=tokens_out) if model else None),
+            "total_cost": meta.get("cost"),
+            "estimated": True,
+        }
+    except Exception:
+        rec["breakdown"] = None
     return rec
 
 

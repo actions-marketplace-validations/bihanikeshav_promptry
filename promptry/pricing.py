@@ -82,6 +82,14 @@ def _lookup_rates(model: str) -> dict | None:
     return None
 
 
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate (~4 chars/token). Good enough for a
+    template-vs-payload breakdown without a tokenizer dependency."""
+    if not text:
+        return 0
+    return max(1, round(len(text) / 4))
+
+
 def is_known_model(model: str) -> bool:
     """True if we have a rate for this model (exact or prefix match).
     Unknown models silently cost $0, so callers can warn on False."""

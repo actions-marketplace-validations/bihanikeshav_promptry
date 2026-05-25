@@ -31,6 +31,7 @@ export default function PromptDetail() {
   const [stats, setStats] = useState<PromptStats | null>(null);
   const [runs, setRuns] = useState<PromptRun[] | null>(null);
   const [variables, setVariables] = useState<string[]>([]);
+  const [savedVars, setSavedVars] = useState<string[]>([]);
   const [lint, setLint] = useState<LintFinding[]>([]);
 
   function reloadVersions(selectLatest = false) {
@@ -58,6 +59,7 @@ export default function PromptDetail() {
       .then((r) => {
         setContent(r.content);
         setDraft(r.content);
+        setSavedVars(r.variables ?? []);
       })
       .catch(() => setContent(""));
   }, [promptName, selected]);
@@ -342,17 +344,51 @@ export default function PromptDetail() {
                 }}
               />
 
-              {/* Template variables + lint findings */}
-              {variables.length > 0 && (
-                <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>variables:</span>
-                  {variables.map((v) => (
-                    <span key={v} className="chip mono" style={{ fontSize: 10.5, color: "var(--accent)", borderColor: "var(--accent-line)", background: "var(--accent-soft)" }}>
-                      ${v}
-                    </span>
-                  ))}
-                </div>
-              )}
+              {/* Template variables — color-coded against the saved set.
+                  The app supplies a FIXED set of variables, so adding/removing
+                  one here breaks rendering until the code is updated. */}
+              {(() => {
+                const added = variables.filter((v) => !savedVars.includes(v));
+                const removed = savedVars.filter((v) => !variables.includes(v));
+                const changed = added.length > 0 || removed.length > 0;
+                return (
+                  <>
+                    {(variables.length > 0 || removed.length > 0) && (
+                      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>variables:</span>
+                        {variables.map((v) => {
+                          const isNew = added.includes(v);
+                          return (
+                            <span key={v} className="chip mono" style={{
+                              fontSize: 10.5,
+                              color: isNew ? "var(--warning)" : "var(--accent)",
+                              borderColor: isNew ? "var(--warning)" : "var(--accent-line)",
+                              background: isNew ? "transparent" : "var(--accent-soft)",
+                            }}>
+                              ${v}{isNew ? " (new)" : ""}
+                            </span>
+                          );
+                        })}
+                        {removed.map((v) => (
+                          <span key={v} className="chip mono" style={{ fontSize: 10.5, color: "var(--error)", borderColor: "var(--error)", textDecoration: "line-through" }}>
+                            ${v}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {changed && (
+                      <div style={{ marginTop: 10, padding: "9px 12px", borderRadius: 7, border: "1px solid var(--warning)", background: "color-mix(in oklch, var(--warning) 12%, transparent)", fontSize: 11.5, color: "var(--text-dim)" }}>
+                        <span style={{ color: "var(--warning)", fontWeight: 600 }}>Variable set changed.</span>{" "}
+                        The app fills a fixed set of variables in code, so
+                        {added.length > 0 && <> adding <span className="mono">{added.map((v) => "$" + v).join(", ")}</span></>}
+                        {added.length > 0 && removed.length > 0 && " and"}
+                        {removed.length > 0 && <> removing <span className="mono">{removed.map((v) => "$" + v).join(", ")}</span></>}
+                        {" "}won't take effect (and may break rendering) until the calling code is updated to match. Edit the wording freely — just keep the same <span className="mono">$variables</span>.
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               {lint.length > 0 && (
                 <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
                   {lint.map((f, i) => {

@@ -99,6 +99,18 @@ export interface FeedbackEntry {
   created_at: string;
 }
 
+export interface InvocationBreakdown {
+  model: string | null;
+  template_tokens: number;
+  data_tokens: number;
+  tokens_out: number;
+  template_cost: number | null;
+  data_cost: number | null;
+  output_cost: number | null;
+  total_cost: number | null;
+  estimated: boolean;
+}
+
 export interface InvocationDetail {
   id: number;
   prompt_name: string;
@@ -109,6 +121,7 @@ export interface InvocationDetail {
   input_text: string | null;
   output_text: string | null;
   feedback: FeedbackEntry[];
+  breakdown: InvocationBreakdown | null;
 }
 
 export interface BisectResult {
