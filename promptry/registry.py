@@ -99,6 +99,35 @@ def reset_registry():
     _track_cache.clear()
 
 
+# Past this many versions, a prompt is almost certainly being fed
+# template+data (baked prompts) rather than genuine template revisions.
+_VERSION_EXPLOSION_THRESHOLD = 50
+_version_warned: set[str] = set()
+
+
+def _warn_if_version_explosion(name: str, record) -> None:
+    """Nudge callers off the baked-prompt anti-pattern. If a prompt keeps
+    gaining versions, the content probably includes interpolated data — which
+    belongs in track_invocation() (telemetry) with the TEMPLATE served via
+    render_prompt(). Warns once per name per process."""
+    try:
+        version = int(getattr(record, "version", 0) or 0)
+    except Exception:
+        return
+    if version < _VERSION_EXPLOSION_THRESHOLD or name in _version_warned:
+        return
+    _version_warned.add(name)
+    import logging
+    logging.getLogger("promptry").warning(
+        "prompt %r now has %d versions. If these differ only by interpolated "
+        "data, you're tracking baked prompts. Track the TEMPLATE via "
+        "promptry.render_prompt() and per-call data via "
+        "promptry.track_invocation() to keep versions as clean template "
+        "variations. See docs/PROMPT_CMS_MIGRATION.md.",
+        name, version,
+    )
+
+
 def track(content: str, name: str, tag=None, metadata=None) -> str:
     """Track a prompt version. Returns the content string unchanged.
 
@@ -157,7 +186,8 @@ def track(content: str, name: str, tag=None, metadata=None) -> str:
 
     try:
         registry = _get_registry()
-        registry.save(name=name, content=content, tag=tag, metadata=metadata)
+        record = registry.save(name=name, content=content, tag=tag, metadata=metadata)
+        _warn_if_version_explosion(name, record)
     except Exception:
         import logging
         logging.getLogger("promptry").warning("track() storage write failed", exc_info=True)

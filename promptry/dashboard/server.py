@@ -389,6 +389,18 @@ def update_prompt_content(name: str, body: _PromptEdit):
     return {"ok": True, "name": name, "version": record.version, "hash": record.hash}
 
 
+@app.post("/api/prompts/{name}/prune")
+def prune_prompt(name: str, keep: int = Query(default=1, ge=1)):
+    """Collapse a prompt's version history to the newest *keep* versions.
+
+    Use on legacy prompts polluted with baked template+data versions."""
+    storage = get_storage()
+    if not hasattr(storage, "prune_prompt_versions"):
+        raise HTTPException(status_code=501, detail="pruning not supported by this storage backend")
+    deleted = storage.prune_prompt_versions(name, keep_last=keep)
+    return {"ok": True, "name": name, "deleted": deleted, "kept": keep}
+
+
 @app.get("/api/prompts/{name}/diff")
 def prompt_diff(name: str, v1: int = Query(...), v2: int = Query(...)):
     storage = get_storage()

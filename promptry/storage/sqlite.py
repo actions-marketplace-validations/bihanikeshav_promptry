@@ -318,6 +318,34 @@ class SQLiteStorage(BaseStorage):
                 })
             return out
 
+    def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
+        """Delete all but the newest *keep_last* versions of a prompt.
+
+        For collapsing legacy baked-prompt churn (hundreds of versions that
+        differ only by interpolated data) down to a representative few.
+        Returns the number of versions deleted."""
+        keep_last = max(1, int(keep_last))
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT version FROM prompts WHERE name = ? ORDER BY version DESC LIMIT ?",
+                (name, keep_last),
+            )
+            kept = [r["version"] for r in cur.fetchall()]
+            if not kept:
+                return 0
+            cutoff = min(kept)
+            cur.execute(
+                "DELETE FROM prompts WHERE name = ? AND version < ?", (name, cutoff)
+            )
+            deleted = cur.rowcount
+            # Drop tags orphaned by the delete.
+            cur.execute(
+                "DELETE FROM prompt_tags WHERE prompt_id NOT IN (SELECT id FROM prompts)"
+            )
+            self._conn.commit()
+            return deleted
+
     def tag_prompt(self, prompt_id, tag):
         with self._lock:
             self._conn.execute(

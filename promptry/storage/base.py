@@ -121,6 +121,12 @@ class BaseStorage(ABC):
         registry list view (so heavily-versioned prompts don't hide others)."""
         ...
 
+    @abstractmethod
+    def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
+        """Delete all but the newest keep_last versions of a prompt. Returns
+        the number deleted. For collapsing legacy baked-prompt churn."""
+        ...
+
     # ---- invocations ----
 
     @abstractmethod
