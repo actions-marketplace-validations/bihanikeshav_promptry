@@ -14,14 +14,26 @@ from string import Template
 _VALID = re.compile(r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)")
 # Any $ occurrence (to find ones that AREN'T valid placeholders or $$).
 _ANY_DOLLAR = re.compile(r"\$")
+# Preferred syntax: {{name}}.
+_BRACE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
 
 def extract_variables(template: str) -> list[str]:
-    """Distinct ``$placeholder`` names a template expects, in first-seen order."""
+    """Distinct placeholder names a template expects, in first-seen order.
+
+    Recognizes the preferred ``{{name}}`` syntax and legacy ``$name`` /
+    ``${name}``, scanning left-to-right so order matches the source.
+    """
     seen: list[str] = []
-    for m in _VALID.finditer(template or ""):
+    combined = re.compile(_BRACE.pattern + "|" + _VALID.pattern)
+    for m in combined.finditer(template or ""):
         tok = m.group(0)
-        name = tok[2:-1] if tok.startswith("${") else tok[1:]
+        if tok.startswith("{{"):
+            name = m.group(1)
+        elif tok.startswith("${"):
+            name = tok[2:-1]
+        else:
+            name = tok[1:]
         if name not in seen:
             seen.append(name)
     return seen

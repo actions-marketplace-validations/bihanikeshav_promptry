@@ -19,12 +19,29 @@ placeholders are left intact rather than raising.
 """
 from __future__ import annotations
 
+import re
 import time
 import logging
 import threading
 from string import Template
 
 logger = logging.getLogger("promptry.prompts")
+
+# Preferred variable syntax is ``{{name}}`` — unambiguous and doesn't collide
+# with literal ``$`` in prompts (prices, shell, regex). Legacy ``$name`` /
+# ``${name}`` is still rendered via string.Template for backward compatibility
+# with prompts authored before the switch.
+_BRACE_VAR = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+
+def _substitute(template_str: str, variables: dict) -> str:
+    """Fill {{name}} then legacy $name, leaving unknown placeholders intact."""
+    def _brace(m: "re.Match") -> str:
+        name = m.group(1)
+        return str(variables[name]) if name in variables else m.group(0)
+
+    rendered = _BRACE_VAR.sub(_brace, template_str)
+    return Template(rendered).safe_substitute(**variables)
 
 _cache: dict[str, tuple[str, float]] = {}
 _lock = threading.Lock()
@@ -82,7 +99,8 @@ def get_prompt_template(name: str, default_content: str, ttl: float = DEFAULT_TT
 
 def render_prompt(name: str, default_content: str, *, ttl: float = DEFAULT_TTL,
                   env: str | None = None, **variables) -> str:
-    """Fetch the managed template for *name* and substitute ``$placeholders``.
+    """Fetch the managed template for *name* and substitute ``{{placeholders}}``
+    (and legacy ``$placeholders``).
 
     Falls back to *default_content* cleanly; substitution never raises, so a
     malformed dashboard edit can't crash a request. Pass ``env`` to serve a
@@ -90,10 +108,10 @@ def render_prompt(name: str, default_content: str, *, ttl: float = DEFAULT_TTL,
     """
     template_str = get_prompt_template(name, default_content, ttl=ttl, env=env)
     try:
-        return Template(template_str).safe_substitute(**variables)
+        return _substitute(template_str, variables)
     except Exception:
         logger.warning("render_prompt substitution failed for %s; using default", name, exc_info=True)
-        return Template(default_content).safe_substitute(**variables)
+        return _substitute(default_content, variables)
 
 
 def clear_cache() -> None:
