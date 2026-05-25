@@ -209,6 +209,11 @@ def track_invocation(
     name: str,
     metadata: dict | None = None,
     prompt_version: int | None = None,
+    input_text: str | None = None,
+    output_text: str | None = None,
+    capture: bool = False,
+    sample_rate: float = 1.0,
+    max_capture_chars: int = 8000,
 ) -> None:
     """Record one LLM invocation, separate from prompt-template versioning.
 
@@ -221,6 +226,10 @@ def track_invocation(
     Cost is auto-computed when ``metadata`` includes ``model`` plus token
     counts (any of ``tokens_in``/``prompt_tokens``/``input_tokens`` and the
     output equivalents).
+
+    Pass ``capture=True`` (optionally with ``sample_rate`` < 1.0) to persist
+    a truncated copy of ``input_text``/``output_text`` for the trace viewer.
+    Redact before passing — promptry stores what it's given.
     """
     from promptry.config import get_config
 
@@ -229,6 +238,17 @@ def track_invocation(
         return
 
     meta = dict(metadata) if metadata else {}
+
+    # Decide whether to keep the captured text on this row.
+    cap_in = cap_out = None
+    if capture and (input_text is not None or output_text is not None):
+        import random
+        if sample_rate >= 1.0 or random.random() < sample_rate:
+            if input_text is not None:
+                cap_in = input_text[:max_capture_chars]
+            if output_text is not None:
+                cap_out = output_text[:max_capture_chars]
+            meta["captured"] = True
 
     # Auto-cost: same logic as track(), inlined to avoid coupling the
     # two paths so changes to one don't silently break the other.
@@ -268,6 +288,7 @@ def track_invocation(
         registry = _get_registry()
         registry.storage.record_invocation(
             prompt_name=name, metadata=meta, prompt_version=prompt_version,
+            input_text=cap_in, output_text=cap_out,
         )
     except Exception:
         import logging

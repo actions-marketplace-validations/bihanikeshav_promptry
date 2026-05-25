@@ -16,6 +16,8 @@ import type {
   PromptRun,
   CostCoverage,
   LintFinding,
+  InvocationRow,
+  InvocationDetail,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -108,6 +110,19 @@ export function getPromptRuns(name: string): Promise<{ runs: PromptRun[] }> {
 
 export function getCostCoverage(days = 30): Promise<CostCoverage> {
   return fetchJson(`/api/cost/coverage?days=${days}`);
+}
+
+export function listInvocations(params: { name?: string; days?: number; limit?: number; capturedOnly?: boolean } = {}): Promise<{ invocations: InvocationRow[] }> {
+  const q = new URLSearchParams();
+  if (params.name) q.set("name", params.name);
+  q.set("days", String(params.days ?? 7));
+  q.set("limit", String(params.limit ?? 100));
+  if (params.capturedOnly) q.set("captured_only", "true");
+  return fetchJson(`/api/invocations?${q.toString()}`);
+}
+
+export function getInvocation(id: number): Promise<InvocationDetail> {
+  return fetchJson(`/api/invocations/${id}`);
 }
 
 export async function lintPromptText(content: string): Promise<{ variables: string[]; lint: LintFinding[] }> {

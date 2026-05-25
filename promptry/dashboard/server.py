@@ -553,6 +553,30 @@ def cost_data(
 
 # ---- Votes ----
 
+@app.get("/api/invocations")
+def list_invocations(
+    name: Optional[str] = Query(default=None),
+    days: int = Query(default=7, ge=1),
+    limit: int = Query(default=100, ge=1),
+    captured_only: bool = Query(default=False),
+):
+    """Recent per-call invocations for the Traces view."""
+    storage = get_storage()
+    if not hasattr(storage, "list_invocations"):
+        return {"invocations": []}
+    return {"invocations": storage.list_invocations(name=name, days=days, limit=limit, captured_only=captured_only)}
+
+
+@app.get("/api/invocations/{invocation_id}")
+def get_invocation(invocation_id: int):
+    """A single invocation with captured input/output text."""
+    storage = get_storage()
+    rec = storage.get_invocation(invocation_id) if hasattr(storage, "get_invocation") else None
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Invocation not found")
+    return rec
+
+
 @app.get("/api/cost/coverage")
 def cost_coverage(days: int = Query(default=30, ge=1)):
     """Models seen in the ledger that have NO pricing entry — their cost

@@ -112,6 +112,13 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "CREATE INDEX IF NOT EXISTS idx_invocations_name ON invocations(prompt_name)",
         "CREATE INDEX IF NOT EXISTS idx_invocations_created ON invocations(created_at)",
     ]),
+    (4, "add captured input/output text to invocations", [
+        # Optional, sampled full request/response text for a trace viewer.
+        # Only populated when the caller opts in (capture=True), so the
+        # ledger stays lean by default.
+        "ALTER TABLE invocations ADD COLUMN input_text TEXT",
+        "ALTER TABLE invocations ADD COLUMN output_text TEXT",
+    ]),
 ]
 
 
@@ -415,6 +422,67 @@ class SQLiteStorage(BaseStorage):
                 }
                 for r in cur.fetchall()
             ]
+
+    def list_invocations(self, name: str | None = None, days: int = 7, limit: int = 100,
+                         captured_only: bool = False) -> list[dict]:
+        """Recent invocations (newest first) for the trace list. Includes a
+        short preview of captured text when present."""
+        import json as _json
+        clauses = ["created_at >= datetime('now', ? || ' days')"]
+        params: list = [f"-{days}"]
+        if name:
+            clauses.append("prompt_name = ?")
+            params.append(name)
+        if captured_only:
+            clauses.append("(input_text IS NOT NULL OR output_text IS NOT NULL)")
+        params.append(limit)
+        with self._lock:
+            cur = self._conn.execute(
+                f"""SELECT id, prompt_name, prompt_version, metadata, created_at,
+                           input_text, output_text
+                    FROM invocations WHERE {' AND '.join(clauses)}
+                    ORDER BY id DESC LIMIT ?""",
+                params,
+            )
+            out = []
+            for r in cur.fetchall():
+                meta = _json.loads(r["metadata"]) if r["metadata"] else {}
+                out.append({
+                    "id": r["id"],
+                    "prompt_name": r["prompt_name"],
+                    "prompt_version": r["prompt_version"],
+                    "created_at": r["created_at"],
+                    "model": meta.get("model"),
+                    "tokens_in": meta.get("tokens_in", meta.get("prompt_tokens")),
+                    "tokens_out": meta.get("tokens_out", meta.get("completion_tokens")),
+                    "cost": meta.get("cost"),
+                    "latency_ms": meta.get("latency_ms"),
+                    "has_capture": bool(r["input_text"] or r["output_text"]),
+                    "output_preview": (r["output_text"] or "")[:160],
+                })
+            return out
+
+    def get_invocation(self, invocation_id: int) -> dict | None:
+        """Full invocation incl. captured input/output text for the trace view."""
+        import json as _json
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT id, prompt_name, prompt_version, metadata, created_at,
+                          input_text, output_text FROM invocations WHERE id = ?""",
+                (invocation_id,),
+            )
+            r = cur.fetchone()
+        if not r:
+            return None
+        return {
+            "id": r["id"],
+            "prompt_name": r["prompt_name"],
+            "prompt_version": r["prompt_version"],
+            "created_at": r["created_at"],
+            "metadata": _json.loads(r["metadata"]) if r["metadata"] else {},
+            "input_text": r["input_text"],
+            "output_text": r["output_text"],
+        }
 
     def get_invocation_models(self, days: int = 30) -> list[dict]:
         """Distinct models seen in the invocations ledger over the window,
@@ -882,19 +950,23 @@ class SQLiteStorage(BaseStorage):
 
     # ---- invocations ----
 
-    def record_invocation(self, prompt_name: str, metadata: dict | None = None, prompt_version: int | None = None) -> int:
+    def record_invocation(self, prompt_name: str, metadata: dict | None = None, prompt_version: int | None = None,
+                          input_text: str | None = None, output_text: str | None = None) -> int:
         """Append one row to the invocations ledger.
 
         Unlike save_prompt(), there is no dedup by content/hash — every
         call lands as its own row. This is the right shape for cost and
         latency dashboards where each LLM invocation is a discrete event.
+
+        input_text/output_text are optional captured request/response text
+        (the caller decides whether/how often to capture and redacts first).
         """
         with self._lock:
             meta_json = json.dumps(metadata) if metadata else None
             cur = self._conn.execute(
-                """INSERT INTO invocations (prompt_name, prompt_version, metadata)
-                   VALUES (?, ?, ?)""",
-                (prompt_name, prompt_version, meta_json),
+                """INSERT INTO invocations (prompt_name, prompt_version, metadata, input_text, output_text)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (prompt_name, prompt_version, meta_json, input_text, output_text),
             )
             self._conn.commit()
             return cur.lastrowid

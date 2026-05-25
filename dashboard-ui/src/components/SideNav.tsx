@@ -67,6 +67,15 @@ const BASE_ITEMS: NavItem[] = [
     ),
   },
   {
+    to: "/traces",
+    label: "Traces",
+    icon: (
+      <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round">
+        <path d="M2 4h12M2 8h12M2 12h7" />
+      </g>
+    ),
+  },
+  {
     to: "/playground",
     label: "Playground",
     icon: (

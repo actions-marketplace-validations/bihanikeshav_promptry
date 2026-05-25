@@ -76,6 +76,30 @@ export interface LintFinding {
   message: string;
 }
 
+export interface InvocationRow {
+  id: number;
+  prompt_name: string;
+  prompt_version: number | null;
+  created_at: string;
+  model: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  cost: number | null;
+  latency_ms: number | null;
+  has_capture: boolean;
+  output_preview: string;
+}
+
+export interface InvocationDetail {
+  id: number;
+  prompt_name: string;
+  prompt_version: number | null;
+  created_at: string;
+  metadata: Record<string, unknown>;
+  input_text: string | null;
+  output_text: string | null;
+}
+
 export interface CostCoverage {
   days: number;
   models_seen: number;

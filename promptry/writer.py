@@ -124,14 +124,17 @@ class AsyncWriter(BaseStorage):
         # synchronous -- callers need the returned vote_id
         return self._storage.save_vote(prompt_name, response, score, prompt_version, message, metadata)
 
-    def record_invocation(self, prompt_name, metadata=None, prompt_version=None) -> int:
+    def record_invocation(self, prompt_name, metadata=None, prompt_version=None,
+                          input_text=None, output_text=None) -> int:
         # Append-only ledger row. Run via the async queue so per-call
         # tracking doesn't block the LLM caller. The caller doesn't need
         # the row id back -- this is fire-and-forget telemetry.
         self._enqueue("record_invocation",
                       prompt_name=prompt_name,
                       metadata=metadata,
-                      prompt_version=prompt_version)
+                      prompt_version=prompt_version,
+                      input_text=input_text,
+                      output_text=output_text)
         return 0
 
     def save_dataset(self, name, items, metadata=None) -> int:
