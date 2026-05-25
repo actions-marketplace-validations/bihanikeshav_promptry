@@ -88,6 +88,15 @@ export interface InvocationRow {
   latency_ms: number | null;
   has_capture: boolean;
   output_preview: string;
+  rating: number | null;
+  comment: string | null;
+}
+
+export interface FeedbackEntry {
+  rating: number | null;
+  comment: string | null;
+  source: string | null;
+  created_at: string;
 }
 
 export interface InvocationDetail {
@@ -95,9 +104,11 @@ export interface InvocationDetail {
   prompt_name: string;
   prompt_version: number | null;
   created_at: string;
+  request_id: string | null;
   metadata: Record<string, unknown>;
   input_text: string | null;
   output_text: string | null;
+  feedback: FeedbackEntry[];
 }
 
 export interface BisectResult {

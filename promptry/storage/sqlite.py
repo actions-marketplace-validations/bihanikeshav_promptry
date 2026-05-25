@@ -119,6 +119,23 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "ALTER TABLE invocations ADD COLUMN input_text TEXT",
         "ALTER TABLE invocations ADD COLUMN output_text TEXT",
     ]),
+    (5, "add request_id to invocations + feedback table", [
+        # Host-app-supplied correlation id so end-user ratings/feedback can
+        # be tied back to the exact invocation that produced a response.
+        "ALTER TABLE invocations ADD COLUMN request_id TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_invocations_request ON invocations(request_id)",
+        """CREATE TABLE IF NOT EXISTS feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT,
+            prompt_name TEXT,
+            rating REAL,
+            comment TEXT,
+            source TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_feedback_request ON feedback(request_id)",
+        "CREATE INDEX IF NOT EXISTS idx_feedback_prompt ON feedback(prompt_name)",
+    ]),
 ]
 
 
@@ -449,9 +466,11 @@ class SQLiteStorage(BaseStorage):
             ]
 
     def list_invocations(self, name: str | None = None, days: int = 7, limit: int = 100,
-                         captured_only: bool = False) -> list[dict]:
-        """Recent invocations (newest first) for the trace list. Includes a
-        short preview of captured text when present."""
+                         captured_only: bool = False, order: str = "recent",
+                         min_rating: float | None = None) -> list[dict]:
+        """Invocations for the trace/cost lists. order='recent' (newest) or
+        'cost' (most expensive first). Joins the latest feedback rating per
+        request_id so lists can show how a call was rated."""
         import json as _json
         clauses = ["created_at >= datetime('now', ? || ' days')"]
         params: list = [f"-{days}"]
@@ -460,54 +479,106 @@ class SQLiteStorage(BaseStorage):
             params.append(name)
         if captured_only:
             clauses.append("(input_text IS NOT NULL OR output_text IS NOT NULL)")
+        order_sql = (
+            "ORDER BY CAST(json_extract(metadata,'$.cost') AS REAL) DESC, id DESC"
+            if order == "cost" else "ORDER BY id DESC"
+        )
         params.append(limit)
         with self._lock:
             cur = self._conn.execute(
                 f"""SELECT id, prompt_name, prompt_version, metadata, created_at,
-                           input_text, output_text
+                           input_text, output_text, request_id
                     FROM invocations WHERE {' AND '.join(clauses)}
-                    ORDER BY id DESC LIMIT ?""",
+                    {order_sql} LIMIT ?""",
                 params,
             )
-            out = []
-            for r in cur.fetchall():
-                meta = _json.loads(r["metadata"]) if r["metadata"] else {}
-                out.append({
-                    "id": r["id"],
-                    "prompt_name": r["prompt_name"],
-                    "prompt_version": r["prompt_version"],
-                    "created_at": r["created_at"],
-                    "model": meta.get("model"),
-                    "tokens_in": meta.get("tokens_in", meta.get("prompt_tokens")),
-                    "tokens_out": meta.get("tokens_out", meta.get("completion_tokens")),
-                    "cost": meta.get("cost"),
-                    "latency_ms": meta.get("latency_ms"),
-                    "has_capture": bool(r["input_text"] or r["output_text"]),
-                    "output_preview": (r["output_text"] or "")[:160],
-                })
-            return out
+            rows = cur.fetchall()
+            # Latest feedback rating/comment per request_id seen.
+            req_ids = [r["request_id"] for r in rows if r["request_id"]]
+            fb: dict[str, dict] = {}
+            if req_ids:
+                qmarks = ",".join("?" * len(req_ids))
+                fcur = self._conn.execute(
+                    f"""SELECT request_id, rating, comment FROM feedback
+                        WHERE request_id IN ({qmarks}) ORDER BY id ASC""",
+                    req_ids,
+                )
+                for fr in fcur.fetchall():
+                    fb[fr["request_id"]] = {"rating": fr["rating"], "comment": fr["comment"]}
+        out = []
+        for r in rows:
+            meta = _json.loads(r["metadata"]) if r["metadata"] else {}
+            f = fb.get(r["request_id"]) if r["request_id"] else None
+            row = {
+                "id": r["id"],
+                "prompt_name": r["prompt_name"],
+                "prompt_version": r["prompt_version"],
+                "created_at": r["created_at"],
+                "model": meta.get("model"),
+                "tokens_in": meta.get("tokens_in", meta.get("prompt_tokens")),
+                "tokens_out": meta.get("tokens_out", meta.get("completion_tokens")),
+                "cost": meta.get("cost"),
+                "latency_ms": meta.get("latency_ms"),
+                "has_capture": bool(r["input_text"] or r["output_text"]),
+                "output_preview": (r["output_text"] or "")[:160],
+                "rating": f["rating"] if f else None,
+                "comment": f["comment"] if f else None,
+            }
+            if min_rating is None or (row["rating"] is not None and row["rating"] <= min_rating):
+                out.append(row)
+        return out
 
     def get_invocation(self, invocation_id: int) -> dict | None:
-        """Full invocation incl. captured input/output text for the trace view."""
+        """Full invocation incl. captured text and all feedback for the trace view."""
         import json as _json
         with self._lock:
             cur = self._conn.execute(
                 """SELECT id, prompt_name, prompt_version, metadata, created_at,
-                          input_text, output_text FROM invocations WHERE id = ?""",
+                          input_text, output_text, request_id FROM invocations WHERE id = ?""",
                 (invocation_id,),
             )
             r = cur.fetchone()
-        if not r:
-            return None
+            if not r:
+                return None
+            feedback = []
+            if r["request_id"]:
+                fcur = self._conn.execute(
+                    "SELECT rating, comment, source, created_at FROM feedback WHERE request_id = ? ORDER BY id DESC",
+                    (r["request_id"],),
+                )
+                feedback = [dict(fr) for fr in fcur.fetchall()]
         return {
             "id": r["id"],
             "prompt_name": r["prompt_name"],
             "prompt_version": r["prompt_version"],
             "created_at": r["created_at"],
+            "request_id": r["request_id"],
             "metadata": _json.loads(r["metadata"]) if r["metadata"] else {},
             "input_text": r["input_text"],
             "output_text": r["output_text"],
+            "feedback": feedback,
         }
+
+    def save_feedback(self, request_id: str, rating: float | None = None,
+                      comment: str | None = None, source: str | None = None) -> int:
+        """Store an end-user rating/comment, correlated to an invocation by
+        request_id. Backfills prompt_name from the matching invocation."""
+        with self._lock:
+            prompt_name = None
+            if request_id:
+                cur = self._conn.execute(
+                    "SELECT prompt_name FROM invocations WHERE request_id = ? ORDER BY id DESC LIMIT 1",
+                    (request_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    prompt_name = row["prompt_name"]
+            cur = self._conn.execute(
+                "INSERT INTO feedback (request_id, prompt_name, rating, comment, source) VALUES (?, ?, ?, ?, ?)",
+                (request_id, prompt_name, rating, comment, source),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def bisect_regression(self, suite_name: str) -> dict:
         """Find the first eval run where the suite went from passing to
@@ -1011,7 +1082,8 @@ class SQLiteStorage(BaseStorage):
     # ---- invocations ----
 
     def record_invocation(self, prompt_name: str, metadata: dict | None = None, prompt_version: int | None = None,
-                          input_text: str | None = None, output_text: str | None = None) -> int:
+                          input_text: str | None = None, output_text: str | None = None,
+                          request_id: str | None = None) -> int:
         """Append one row to the invocations ledger.
 
         Unlike save_prompt(), there is no dedup by content/hash — every
@@ -1024,9 +1096,9 @@ class SQLiteStorage(BaseStorage):
         with self._lock:
             meta_json = json.dumps(metadata) if metadata else None
             cur = self._conn.execute(
-                """INSERT INTO invocations (prompt_name, prompt_version, metadata, input_text, output_text)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (prompt_name, prompt_version, meta_json, input_text, output_text),
+                """INSERT INTO invocations (prompt_name, prompt_version, metadata, input_text, output_text, request_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (prompt_name, prompt_version, meta_json, input_text, output_text, request_id),
             )
             self._conn.commit()
             return cur.lastrowid

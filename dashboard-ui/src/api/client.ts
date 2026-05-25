@@ -113,12 +113,14 @@ export function getCostCoverage(days = 30): Promise<CostCoverage> {
   return fetchJson(`/api/cost/coverage?days=${days}`);
 }
 
-export function listInvocations(params: { name?: string; days?: number; limit?: number; capturedOnly?: boolean } = {}): Promise<{ invocations: InvocationRow[] }> {
+export function listInvocations(params: { name?: string; days?: number; limit?: number; capturedOnly?: boolean; order?: "recent" | "cost"; minRating?: number } = {}): Promise<{ invocations: InvocationRow[] }> {
   const q = new URLSearchParams();
   if (params.name) q.set("name", params.name);
   q.set("days", String(params.days ?? 7));
   q.set("limit", String(params.limit ?? 100));
   if (params.capturedOnly) q.set("captured_only", "true");
+  if (params.order) q.set("order", params.order);
+  if (params.minRating != null) q.set("min_rating", String(params.minRating));
   return fetchJson(`/api/invocations?${q.toString()}`);
 }
 

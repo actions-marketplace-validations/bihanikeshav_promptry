@@ -13,8 +13,9 @@ import {
   promotePrompt,
 } from "../api/client";
 import type { PromptVersion, DiffResponse, PromptStats, PromptRun, LintFinding } from "../api/types";
+import { InvocationsPanel } from "../components/InvocationsPanel";
 
-type View = "current" | "diff" | "edit" | "stats" | "evals";
+type View = "current" | "diff" | "edit" | "stats" | "evals" | "calls";
 
 export default function PromptDetail() {
   const { name = "" } = useParams();
@@ -225,6 +226,7 @@ export default function PromptDetail() {
               {tab("diff", "Diff", !diff)}
               {tab("edit", "Edit")}
               {tab("stats", "Stats")}
+              {tab("calls", "Invocations")}
               {tab("evals", "Evals")}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -409,6 +411,14 @@ export default function PromptDetail() {
 
           {/* EVALS — which eval runs exercised this prompt */}
           {view === "evals" && <EvalsPanel runs={runs} />}
+
+          {/* INVOCATIONS — this prompt's calls (recent), with ratings → trace */}
+          {view === "calls" && (
+            <div style={{ padding: 16 }}>
+              <InvocationsPanel name={promptName} order="recent" days={30}
+                emptyHint="No invocations for this prompt in the last 30 days." />
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -586,12 +586,36 @@ def list_invocations(
     days: int = Query(default=7, ge=1),
     limit: int = Query(default=100, ge=1),
     captured_only: bool = Query(default=False),
+    order: str = Query(default="recent"),
+    min_rating: Optional[float] = Query(default=None),
 ):
-    """Recent per-call invocations for the Traces view."""
+    """Per-call invocations. order='recent' or 'cost'; min_rating filters to
+    low-rated calls. Each row carries its latest feedback rating/comment."""
     storage = get_storage()
     if not hasattr(storage, "list_invocations"):
         return {"invocations": []}
-    return {"invocations": storage.list_invocations(name=name, days=days, limit=limit, captured_only=captured_only)}
+    return {"invocations": storage.list_invocations(
+        name=name, days=days, limit=limit, captured_only=captured_only,
+        order=order, min_rating=min_rating,
+    )}
+
+
+class _FeedbackIn(BaseModel):
+    request_id: str
+    rating: Optional[float] = None
+    comment: Optional[str] = None
+    source: Optional[str] = None
+
+
+@app.post("/api/feedback")
+def submit_feedback(body: _FeedbackIn):
+    """Ingest an end-user rating/comment from the host app, correlated to an
+    invocation by request_id (the id the app passed to track_invocation)."""
+    storage = get_storage()
+    if not hasattr(storage, "save_feedback"):
+        raise HTTPException(status_code=501, detail="feedback not supported by this backend")
+    fid = storage.save_feedback(body.request_id, rating=body.rating, comment=body.comment, source=body.source)
+    return {"ok": True, "id": fid}
 
 
 @app.get("/api/invocations/{invocation_id}")

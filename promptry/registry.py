@@ -214,6 +214,7 @@ def track_invocation(
     capture: bool = False,
     sample_rate: float = 1.0,
     max_capture_chars: int = 8000,
+    request_id: str | None = None,
 ) -> None:
     """Record one LLM invocation, separate from prompt-template versioning.
 
@@ -288,7 +289,7 @@ def track_invocation(
         registry = _get_registry()
         registry.storage.record_invocation(
             prompt_name=name, metadata=meta, prompt_version=prompt_version,
-            input_text=cap_in, output_text=cap_out,
+            input_text=cap_in, output_text=cap_out, request_id=request_id,
         )
     except Exception:
         import logging
