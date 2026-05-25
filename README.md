@@ -6,7 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**LLM regression testing that lives in your repo.** Version your prompts, write eval suites in Python, run them in CI. One `pip install`, one SQLite file, zero services — your prompts never leave your laptop.
+**Local-first prompt observability that lives in your repo.** Version your prompts, write eval suites in Python, track the cost of every call, edit prompts live, and catch regressions in CI. One `pip install`, one SQLite file, zero services — your prompts never leave your laptop.
 
 ```python
 from promptry import track, suite, assert_semantic
@@ -58,17 +58,23 @@ Overall: PASS  score: 0.891
 
 | Feature | What it does |
 |---------|--------------|
-| **Prompt versioning** | Content-hashed, automatic dedup. No manual bumps, no YAML, no git dance. |
+| **Prompt versioning** | Content-hashed, automatic dedup, grouped by module. No manual bumps, no YAML, no git dance. |
+| **Live prompt CMS** | `render_prompt()` serves dashboard-edited `$`-placeholder templates with no redeploy. Edit a prompt in the browser, your app picks it up on the next call. |
+| **Environment promotion** | dev → staging → prod tags gate every edit before it reaches users. Promote a version, roll one back. |
 | **Python-native suites** | `@suite` decorators, not YAML. Loops, fixtures, and your IDE's debugger all work. |
 | **Deterministic assertions** | Semantic, schema, JSON, regex, grounding, tool-use. Zero API calls at CI time. |
 | **LLM-as-judge** | Opt-in, not default. You decide when to spend tokens on evaluation. |
 | **Drift detection** | Mann-Whitney U on a rolling window with real p-values, not vibes. |
 | **Regression diff** | Tells you *what* changed — prompt version, model, or data — not just that it broke. |
+| **Regression bisect** | Walks the run history to pinpoint the first run that broke a test. |
 | **Model comparison** | Statistical comparison against the historical baseline, not snapshot-to-snapshot. |
-| **Cost tracking** | Per-token cost per prompt across OpenAI, Anthropic, Gemini, Grok — with cache awareness. |
+| **Invocations ledger** | Every call recorded: tokens, cost, latency, model. Opt-in sampled request/response trace capture; per-call ratings/feedback via `POST /api/feedback`. |
+| **Cost tracking** | Per-model pricing with module → prompt → call drill-down, per-call template-vs-payload split, and a coverage check that flags un-priced models. Cache-aware, across OpenAI, Anthropic, Gemini, Grok. |
+| **Budgets** | Daily and monthly spend caps with breach alerts. |
 | **Safety suite** | 25 jailbreak / injection / PII / encoding templates across 6 categories. Extensible via `templates.toml`. |
 | **MCP server** | First-class: your LLM agent drives the whole test runner. Native, not a plugin. |
-| **Dashboard** | Local web UI for eval history, prompt diffs, model comparison, cost. No account, no cloud. |
+| **Dashboard** | Local web UI for eval history, prompt registry + live editing, cost drill-down, model comparison, invocation traces, and a multi-model playground. No account, no cloud. |
+| **Project config** | Committable `.promptry/config.toml` (models, judge, dashboard prefs, pricing overrides). API keys via env. |
 | **JS/TS client** | Ship prompt events from frontend/Node apps to the same SQLite store. |
 
 ## Dashboard
@@ -78,11 +84,23 @@ pip install promptry[dashboard]
 promptry dashboard
 ```
 
+Eval health and spend at a glance — drill into evals or cost for detail.
 ![Overview](docs/screenshots/dashboard-overview.png)
-![Suite Detail](docs/screenshots/dashboard-suite-detail.png)
+
+The prompt registry, grouped by module. Click any prompt to inspect versions, diffs, and stats.
 ![Prompts](docs/screenshots/dashboard-prompts.png)
-![Models](docs/screenshots/dashboard-models.png)
+
+A prompt detail view: edit the live `$`-placeholder template, with variable pills and promotion tags.
+![Prompt detail](docs/screenshots/dashboard-prompt-detail.png)
+
+Cost, drilled module → prompt → the priciest individual calls.
 ![Cost](docs/screenshots/dashboard-cost.png)
+
+A single call, broken into fixed template overhead vs the variable payload you fed in.
+![Invocation](docs/screenshots/dashboard-invocation.png)
+
+The playground: render a prompt and compare it across models before promoting to a suite.
+![Playground](docs/screenshots/dashboard-playground.png)
 
 ## Why promptry
 
@@ -99,7 +117,9 @@ Three things you won't get elsewhere — together, in one tool:
 | **Account required** | No | No | **Yes** | No (for OSS) | **No, ever** |
 | **CI cost per run** | Mixed | **Per-judge-call** | Trace volume | **Per-judge-call** | **$0 (deterministic)** |
 | **Prompt versioning** | Manual + git | None | Prompt Hub | None | **Automatic content-hash** |
+| **Live prompt editing** | None | None | Prompt Hub (cloud) | None | **Dashboard, no redeploy** |
 | **Drift detection** | None | None | Dashboards only | None | **Mann-Whitney U + p-values** |
+| **Cost budgets + alerts** | None | None | Usage charts only | None | **Daily/monthly caps** |
 | **MCP server** | Plugin | None | None | Partial | **Native** |
 | **Commercial tier** | Promptfoo Enterprise | None | LangSmith (SaaS) | Confident AI | **None planned** |
 
@@ -170,9 +190,11 @@ The [full guide](docs/guide.md) covers all assertions, cost tracking, model comp
 
 ## Scope
 
-Promptry is a test runner, not a tracing product. If you need an always-on observability dashboard for production traffic with team seats and SSO, use LangSmith or Arize — different product category. Promptry is the thing you wire into CI so a bad prompt change never reaches production in the first place.
+Promptry is local-first by design. If you need a hosted, always-on observability product for production traffic with team seats and SSO, use LangSmith or Arize — different product category. Promptry runs against one SQLite file on your machine: wire it into CI so a bad prompt change never reaches production, manage your live prompts from the dashboard, and keep a per-call ledger of cost and traces without sending anything to a vendor.
 
-On the roadmap: agent trajectory analysis, production capture/replay, LLM-powered root cause. Shipped: everything in the feature table above, across Python + JS + CLI + dashboard + MCP + GitHub Action.
+Shipped: everything in the feature table above, across Python + JS + CLI + dashboard + MCP + GitHub Action — including the live prompt CMS with environment promotion, the per-call invocations ledger with opt-in request/response capture and feedback ingest, cost-by-module drill-down with budgets, and regression bisect.
+
+On the roadmap: agent trajectory analysis and LLM-powered root cause.
 
 ## License
 
