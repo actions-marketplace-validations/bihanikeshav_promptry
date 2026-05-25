@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../components/ui";
-import { runPlaygroundModel, getConfig } from "../api/client";
+import { runPlaygroundModel, getConfig, getPrompts, getPromptContent } from "../api/client";
 import type { PlaygroundRuleType } from "../api/types";
 
 /* -------- presets -------- */
@@ -221,6 +221,11 @@ export default function Playground() {
   const [running, setRunning] = useState(false);
   const [tab, setTab] = useState<"prompt" | "context" | "rules">("prompt");
   const [focusedModel, setFocusedModel] = useState<string | null>(null);
+  // Real tracked prompts you can load into the editor (vs the sample presets).
+  const [registry, setRegistry] = useState<string[]>([]);
+  const [loadedPrompt, setLoadedPrompt] = useState<string | null>(null);
+  // A/B: a pinned run to compare the current (edited) prompt against.
+  const [variantA, setVariantA] = useState<{ label: string; results: Record<string, ModelRunRecord> } | null>(null);
   // Model picker is driven by the project config (.promptry/config.toml) so it
   // reflects the models this project actually set up; the hardcoded MODELS list
   // is the fallback (fresh project) and a source of display metadata/pricing.
@@ -250,6 +255,11 @@ export default function Playground() {
       .catch(() => {});
   }, []);
 
+  // List of real tracked prompts to load into the editor.
+  useEffect(() => {
+    getPrompts().then((ps) => setRegistry(ps.map((p) => p.name))).catch(() => setRegistry([]));
+  }, []);
+
   const loadPreset = (p: Preset) => {
     setPreset(p);
     setSys(p.sys);
@@ -260,6 +270,25 @@ export default function Playground() {
     setRules(p.rules);
     setResults({});
     setFocusedModel(null);
+    setLoadedPrompt(null);
+  };
+
+  // Load a real tracked prompt's current content into the system field.
+  const loadFromRegistry = async (name: string) => {
+    if (!name) return;
+    try {
+      const c = await getPromptContent(name);
+      setSys(c.content);
+      setResults({});
+      setFocusedModel(null);
+      setLoadedPrompt(name);
+    } catch { /* ignore */ }
+  };
+
+  // Pin the current results as variant A to compare the next run against.
+  const pinVariantA = () => {
+    if (!Object.keys(results).length) return;
+    setVariantA({ label: loadedPrompt || preset.name, results: { ...results } });
   };
 
   const resolvedUser = interpolate(user, vars);
@@ -348,8 +377,17 @@ export default function Playground() {
         eyebrow="~/promptry · playground"
         title="Prompt Playground"
         description="Iterate on a prompt, try it across models, and preview assertion results before promoting to a suite."
-        tags={[preset.name, `${models.length} model${models.length === 1 ? "" : "s"}`, `${rules.length} assertions`]}
+        tags={[loadedPrompt || preset.name, `${models.length} model${models.length === 1 ? "" : "s"}`, `${rules.length} assertions`]}
         actions={
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {variantA ? (
+              <button className="btn" onClick={() => setVariantA(null)} title="Stop comparing against variant A"
+                style={{ fontSize: 11.5 }}>✕ A/B: {variantA.label}</button>
+            ) : (
+              <button className="btn" onClick={pinVariantA} disabled={!Object.keys(results).length}
+                title="Pin this run as variant A, then edit the prompt and run again to compare"
+                style={{ fontSize: 11.5 }}>⊞ Pin as A</button>
+            )}
           <button
             className="btn btn-primary"
             onClick={runAll}
@@ -380,6 +418,7 @@ export default function Playground() {
               </>
             )}
           </button>
+          </div>
         }
       />
 
@@ -426,9 +465,50 @@ export default function Playground() {
             </button>
           );
         })}
+        {registry.length > 0 && (
+          <select
+            className="inp"
+            value={loadedPrompt ?? ""}
+            onChange={(e) => loadFromRegistry(e.target.value)}
+            title="Load a real tracked prompt into the editor"
+            style={{ height: 28, fontSize: 11.5, maxWidth: 220 }}
+          >
+            <option value="">Load tracked prompt…</option>
+            {registry.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        )}
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{preset.desc}</span>
+        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+          {loadedPrompt ? <>editing <span className="mono" style={{ color: "var(--accent)" }}>{loadedPrompt}</span></> : preset.desc}
+        </span>
       </div>
+
+      {variantA && Object.keys(results).length > 0 && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "var(--font-mono)", marginBottom: 8 }}>
+            A/B · <span style={{ color: "var(--text-dim)" }}>{variantA.label}</span> (A) vs current (B)
+          </div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {models.filter((m) => variantA.results[m] && results[m]).map((m) => {
+              const a = variantA.results[m].overall_score;
+              const b = results[m].overall_score;
+              const d = b - a;
+              const col = Math.abs(d) < 0.005 ? "var(--muted)" : d > 0 ? "var(--success)" : "var(--error)";
+              return (
+                <div key={m} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>{modelMetas.find((x) => x.id === m)?.label ?? m}</span>
+                  <span style={{ fontSize: 13 }}>
+                    <span style={{ color: "var(--muted)" }}>{(a * 100).toFixed(0)}%</span>
+                    <span style={{ color: "var(--muted)", margin: "0 5px" }}>→</span>
+                    <span style={{ fontWeight: 600 }}>{(b * 100).toFixed(0)}%</span>
+                    <span className="mono" style={{ color: col, fontSize: 11.5, marginLeft: 6 }}>{d >= 0 ? "+" : ""}{(d * 100).toFixed(0)}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.2fr)", gap: 14 }}>
         {/* LEFT: editor */}
