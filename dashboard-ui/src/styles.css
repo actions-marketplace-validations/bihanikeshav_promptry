@@ -233,6 +233,8 @@ table.pr tbody tr.regressed { box-shadow: inset 2px 0 0 var(--error); }
 table.pr tbody tr.drifting { box-shadow: inset 2px 0 0 var(--warning); }
 table.pr tbody tr.highlight { box-shadow: inset 2px 0 0 var(--accent); }
 table.pr tbody tr:last-child td { border-bottom: none; }
+table.pr tbody td.r { text-align: right; }
+table.pr tbody td.c { text-align: center; }
 
 .inp {
   background: var(--bg-elev);

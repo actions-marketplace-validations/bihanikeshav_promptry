@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { Breadcrumbs, PageHeader } from "../components/ui";
 import { relTime } from "../utils";
 import { getInvocation } from "../api/client";
+import { useCached } from "../lib/cache";
 import type { InvocationDetail } from "../api/types";
 
 const usd = (n: number | null | undefined) => (n == null ? "—" : "$" + n.toFixed(n < 0.01 ? 6 : 4));
@@ -13,14 +13,8 @@ export default function Invocation() {
   const location = useLocation();
   // The path we drilled down from (Cost or Prompts), passed via nav state.
   const fromCrumbs = (location.state as { from?: { label: string; to?: string }[] } | null)?.from;
-  const [d, setD] = useState<InvocationDetail | null>(null);
-  const [err, setErr] = useState(false);
+  const { data: d } = useCached<InvocationDetail>(`invocation:${id}`, () => getInvocation(Number(id)));
 
-  useEffect(() => {
-    getInvocation(Number(id)).then(setD).catch(() => setErr(true));
-  }, [id]);
-
-  if (err) return <div><PageHeader eyebrow="~/promptry · invocation" title={`#${id}`} description="Not found." /></div>;
   if (!d) return <div><PageHeader eyebrow="~/promptry · invocation" title={`#${id}`} description="Loading…" /></div>;
 
   const m = d.metadata as Record<string, number | string>;

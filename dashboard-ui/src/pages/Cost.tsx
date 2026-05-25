@@ -1,29 +1,25 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { BarChart, KPI, PageHeader, Select, Breadcrumbs } from "../components/ui";
 import { InvocationsPanel } from "../components/InvocationsPanel";
 import { formatTokens, pct, usd } from "../utils";
 import { getCostData, getCostCoverage, getPromptStats } from "../api/client";
-import type { CostResponse, CostCoverage, PromptStats } from "../api/types";
+import { useCached } from "../lib/cache";
+import type { PromptStats } from "../api/types";
 
 export default function Cost() {
   const [days, setDays] = useState(14);
-  const [data, setData] = useState<CostResponse | null>(null);
-  const [coverage, setCoverage] = useState<CostCoverage | null>(null);
+  // Cached so back/forward nav renders instantly instead of reloading.
+  const { data } = useCached(`cost:${days}`, () => getCostData(days));
+  const { data: coverage } = useCached(`cost-cov:${days}`, () => getCostCoverage(days));
   // Drill lives in the URL so breadcrumbs deep-link back to each level.
   const [params, setParams] = useSearchParams();
   const module = params.get("module");
   const prompt = params.get("prompt");
   const level: "overview" | "module" | "prompt" = prompt ? "prompt" : module ? "module" : "overview";
 
-  const goOverview = () => setParams({}, { replace: false });
   const goModule = (m: string) => setParams({ module: m });
   const goPrompt = (m: string, p: string) => setParams({ module: m, prompt: p });
-
-  useEffect(() => {
-    getCostData(days).then(setData).catch(() => setData(null));
-    getCostCoverage(days).then(setCoverage).catch(() => setCoverage(null));
-  }, [days]);
 
   if (!data) {
     return <div><PageHeader eyebrow="~/promptry · cost" title="Cost & Tokens" description="Loading…" /></div>;
@@ -78,8 +74,33 @@ export default function Cost() {
   );
 }
 
+/* Shared sortable-table helper for the cost tables. */
+function useSort<T extends Record<string, unknown>>(rows: T[], defaultKey: string) {
+  const [key, setKey] = useState<string>(defaultKey);
+  const [dir, setDir] = useState<"asc" | "desc">("desc");
+  const sorted = useMemo(() => {
+    const arr = [...rows].sort((a, b) => {
+      const av = a[key], bv = b[key];
+      if (typeof av === "number" && typeof bv === "number") return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return dir === "desc" ? arr.reverse() : arr;
+  }, [rows, key, dir]);
+  const toggle = (k: string) => { if (k === key) setDir((d) => (d === "desc" ? "asc" : "desc")); else { setKey(k); setDir("desc"); } };
+  return { sorted, key, dir, toggle };
+}
+
+function SortTh({ label, k, sort, align = "right" }: { label: string; k: string; sort: { key: string; dir: string; toggle: (k: string) => void }; align?: "left" | "right" }) {
+  return (
+    <th onClick={() => sort.toggle(k)} className={align === "right" ? "r" : ""} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+      {label}<span style={{ marginLeft: 4, fontSize: 9, color: sort.key === k ? "var(--accent)" : "transparent" }}>{sort.key === k ? (sort.dir === "desc" ? "▼" : "▲") : "▼"}</span>
+    </th>
+  );
+}
+
 /* ---- overview ---- */
 function OverviewLevel({ s, data, coverage, modules, moduleMax, onModule }: any) {
+  const sort = useSort(modules, "cost");
   const byDate = data.by_date.map((d: any) => ({ ...d, cache_savings: 0 }));
   return (
     <>
@@ -104,9 +125,16 @@ function OverviewLevel({ s, data, coverage, modules, moduleMax, onModule }: any)
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>Click a module to drill into its prompts.</div>
         </div>
         <table className="pr">
-          <thead><tr><th>Module</th><th className="r">Calls</th><th className="r">Tokens in</th><th>Share</th><th className="r">Cost</th><th className="r"></th></tr></thead>
+          <thead><tr>
+            <SortTh label="Module" k="module" sort={sort} align="left" />
+            <SortTh label="Calls" k="calls" sort={sort} />
+            <SortTh label="Tokens in" k="tokens_in" sort={sort} />
+            <th>Share</th>
+            <SortTh label="Cost" k="cost" sort={sort} />
+            <th className="r"></th>
+          </tr></thead>
           <tbody>
-            {modules.map((r: any) => (
+            {sort.sorted.map((r: any) => (
               <tr key={r.module} onClick={() => onModule(r.module)} style={{ cursor: "pointer" }}>
                 <td style={{ fontWeight: 700, fontFamily: "var(--font-mono)", fontSize: 13 }}>{r.module}</td>
                 <td className="r mono" style={{ color: "var(--text-dim)" }}>{r.calls.toLocaleString()}</td>
@@ -125,7 +153,8 @@ function OverviewLevel({ s, data, coverage, modules, moduleMax, onModule }: any)
 
 /* ---- module: its prompts ranked by spend ---- */
 function ModuleLevel({ module, data, moduleOf, onPrompt }: any) {
-  const prompts = data.by_name.filter((b: any) => moduleOf(b.name) === module).sort((a: any, b: any) => b.cost - a.cost);
+  const prompts = data.by_name.filter((b: any) => moduleOf(b.name) === module);
+  const sort = useSort(prompts, "cost");
   const max = Math.max(1e-9, ...prompts.map((p: any) => p.cost));
   const totals = prompts.reduce((acc: any, p: any) => ({ cost: acc.cost + p.cost, calls: acc.calls + p.calls }), { cost: 0, calls: 0 });
   return (
@@ -138,13 +167,22 @@ function ModuleLevel({ module, data, moduleOf, onPrompt }: any) {
       <div className="card" style={{ overflow: "hidden" }}>
         <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", fontSize: 13, fontWeight: 600 }}>Prompts by spend</div>
         <table className="pr">
-          <thead><tr><th>Prompt</th><th className="r">Calls</th><th className="r">Tokens in/out</th><th>Share</th><th className="r">Cost</th><th className="r"></th></tr></thead>
+          <thead><tr>
+            <SortTh label="Prompt" k="name" sort={sort} align="left" />
+            <SortTh label="Calls" k="calls" sort={sort} />
+            <SortTh label="Tokens in" k="tokens_in" sort={sort} />
+            <SortTh label="Tokens out" k="tokens_out" sort={sort} />
+            <th>Share</th>
+            <SortTh label="Cost" k="cost" sort={sort} />
+            <th className="r"></th>
+          </tr></thead>
           <tbody>
-            {prompts.map((p: any) => (
+            {sort.sorted.map((p: any) => (
               <tr key={p.name} onClick={() => onPrompt(p.name)} style={{ cursor: "pointer" }}>
                 <td style={{ fontWeight: 600, fontSize: 13 }}><span style={{ color: "var(--muted)" }}>{module}.</span>{p.name.slice(p.name.indexOf(".") + 1)}</td>
                 <td className="r mono" style={{ color: "var(--text-dim)" }}>{p.calls.toLocaleString()}</td>
-                <td className="r mono" style={{ color: "var(--text-dim)" }}>{formatTokens(p.tokens_in)}/{formatTokens(p.tokens_out)}</td>
+                <td className="r mono" style={{ color: "var(--text-dim)" }}>{formatTokens(p.tokens_in)}</td>
+                <td className="r mono" style={{ color: "var(--text-dim)" }}>{formatTokens(p.tokens_out)}</td>
                 <td><div style={{ width: 90, height: 5, background: "var(--bg-elev)", borderRadius: 3, overflow: "hidden", border: "1px solid var(--border)" }}><div style={{ width: (p.cost / max) * 100 + "%", height: "100%", background: "var(--accent)", opacity: 0.85 }} /></div></td>
                 <td className="r mono" style={{ color: "var(--accent)", fontWeight: 600 }}>${p.cost.toFixed(2)}</td>
                 <td className="r"><span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)" }}>›</span></td>
@@ -159,8 +197,7 @@ function ModuleLevel({ module, data, moduleOf, onPrompt }: any) {
 
 /* ---- prompt: cost stats + cost-sorted invocations ---- */
 function PromptCostLevel({ prompt, module, days }: { prompt: string; module: string; days: number }) {
-  const [stats, setStats] = useState<PromptStats | null>(null);
-  useEffect(() => { getPromptStats(prompt, days).then(setStats).catch(() => setStats(null)); }, [prompt, days]);
+  const { data: stats } = useCached<PromptStats>(`stats:${prompt}:${days}`, () => getPromptStats(prompt, days));
   const short = prompt.slice(prompt.indexOf(".") + 1);
   // Breadcrumb path to hand to the invocation page so "back" returns here.
   const crumbs = [

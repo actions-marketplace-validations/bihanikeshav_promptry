@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { relTime } from "../utils";
-import { listInvocations } from "../api/client";
+import { listInvocations, getInvocation } from "../api/client";
+import { useCached, prefetch } from "../lib/cache";
 import type { InvocationRow } from "../api/types";
 
 const fmtCost = (n: number | null) => (n == null ? "—" : "$" + n.toFixed(n < 0.01 ? 5 : 4));
@@ -31,18 +32,13 @@ export function InvocationsPanel({
   crumbs?: { label: string; to?: string }[];
 }) {
   const nav = useNavigate();
-  const [rows, setRows] = useState<InvocationRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, loading } = useCached(
+    `inv:${name ?? "*"}:${order}:${days}`,
+    () => listInvocations({ name, order, days, limit: 200 }),
+  );
+  const rows = data?.invocations ?? [];
   const [sortKey, setSortKey] = useState<SortKey>(order === "cost" ? "cost" : "created_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-
-  useEffect(() => {
-    setLoading(true);
-    listInvocations({ name, order, days, limit: 200 })
-      .then((r) => setRows(r.invocations))
-      .catch(() => setRows([]))
-      .finally(() => setLoading(false));
-  }, [name, order, days]);
 
   function toggleSort(k: SortKey) {
     if (k === sortKey) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
@@ -88,7 +84,12 @@ export function InvocationsPanel({
         </thead>
         <tbody>
           {sorted.map((r) => (
-            <tr key={r.id} onClick={() => nav(`/invocations/${r.id}`, { state: { from: crumbs } })} style={{ cursor: "pointer" }}>
+            <tr
+              key={r.id}
+              onMouseEnter={() => prefetch(`invocation:${r.id}`, () => getInvocation(r.id))}
+              onClick={() => { prefetch(`invocation:${r.id}`, () => getInvocation(r.id)); nav(`/invocations/${r.id}`, { state: { from: crumbs } }); }}
+              style={{ cursor: "pointer" }}
+            >
               <td style={{ textAlign: "left" }}>
                 <div style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
                   <span className="mono" style={{ color: "var(--text-dim)" }}>#{r.id}</span>
