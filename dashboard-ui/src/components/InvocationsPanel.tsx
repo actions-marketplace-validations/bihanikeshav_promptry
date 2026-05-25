@@ -62,7 +62,7 @@ export function InvocationsPanel({
       style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
     >
       {label}
-      <span style={{ marginLeft: 4, color: sortKey === k ? "var(--accent)" : "transparent", fontSize: 9 }}>
+      <span style={{ display: "inline-block", width: 0, overflow: "visible", paddingLeft: 4, color: sortKey === k ? "var(--accent)" : "transparent", fontSize: 9 }}>
         {sortKey === k ? (sortDir === "desc" ? "▼" : "▲") : "▼"}
       </span>
     </th>

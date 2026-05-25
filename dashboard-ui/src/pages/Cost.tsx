@@ -93,7 +93,11 @@ function useSort<T extends Record<string, unknown>>(rows: T[], defaultKey: strin
 function SortTh({ label, k, sort, align = "right" }: { label: string; k: string; sort: { key: string; dir: string; toggle: (k: string) => void }; align?: "left" | "right" }) {
   return (
     <th onClick={() => sort.toggle(k)} className={align === "right" ? "r" : ""} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
-      {label}<span style={{ marginLeft: 4, fontSize: 9, color: sort.key === k ? "var(--accent)" : "transparent" }}>{sort.key === k ? (sort.dir === "desc" ? "▼" : "▲") : "▼"}</span>
+      {label}
+      {/* zero-width so the label's right edge stays aligned with the cells */}
+      <span style={{ display: "inline-block", width: 0, overflow: "visible", paddingLeft: 4, fontSize: 9, color: sort.key === k ? "var(--accent)" : "transparent" }}>
+        {sort.key === k ? (sort.dir === "desc" ? "▼" : "▲") : "▼"}
+      </span>
     </th>
   );
 }
