@@ -20,6 +20,7 @@ import type {
   InvocationDetail,
   BisectResult,
   BudgetStatus,
+  ProjectConfig,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -121,6 +122,15 @@ export function getPromptRuns(name: string): Promise<{ runs: PromptRun[] }> {
 
 export function getCostCoverage(days = 30): Promise<CostCoverage> {
   return fetchJson(`/api/cost/coverage?days=${days}`);
+}
+
+export function getConfig(): Promise<ProjectConfig> {
+  return fetchJson(`/api/config`);
+}
+export async function updateConfig(body: Partial<ProjectConfig>) {
+  const res = await fetch(`${BASE}/api/config`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
 }
 
 export function listBudgets(): Promise<{ budgets: BudgetStatus[] }> {

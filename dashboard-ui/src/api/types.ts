@@ -136,6 +136,21 @@ export interface BisectResult {
   model_changed?: boolean;
 }
 
+export interface ModelEntry {
+  id: string;
+  provider?: string;
+  label?: string;
+}
+
+export interface ProjectConfig {
+  models: ModelEntry[];
+  judge: Record<string, string>;
+  dashboard: Record<string, number | string | boolean>;
+  pricing: Record<string, Record<string, number>>;
+  key_status: Record<string, boolean>;
+  path: string;
+}
+
 export interface BudgetStatus {
   id: number;
   scope: string;

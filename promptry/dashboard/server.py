@@ -691,6 +691,47 @@ def cost_coverage(days: int = Query(default=30, ge=1)):
     }
 
 
+@app.get("/api/config")
+def get_project_config():
+    """Project config (.promptry/config.toml): models, judge, dashboard prefs,
+    pricing overrides — plus which provider API keys are present in env."""
+    from promptry import projectconfig
+    data = projectconfig.load_project_config()
+    return {
+        "models": data.get("models", []),
+        "judge": data.get("judge", {}),
+        "dashboard": data.get("dashboard", {}),
+        "pricing": data.get("pricing", {}),
+        "key_status": projectconfig.key_status(),
+        "path": str(projectconfig.config_path()),
+    }
+
+
+class _ConfigUpdate(BaseModel):
+    models: Optional[list] = None
+    judge: Optional[dict] = None
+    dashboard: Optional[dict] = None
+    pricing: Optional[dict] = None
+
+
+@app.post("/api/config")
+def update_project_config(body: _ConfigUpdate):
+    """Persist config to .promptry/config.toml (committable). Keys never stored."""
+    from promptry import projectconfig
+    data = projectconfig.load_project_config()
+    if body.models is not None:
+        data["models"] = body.models
+    if body.judge is not None:
+        data["judge"] = body.judge
+    if body.dashboard is not None:
+        data["dashboard"] = {**data.get("dashboard", {}), **body.dashboard}
+    if body.pricing is not None:
+        data["pricing"] = body.pricing
+    projectconfig.save_project_config(data)
+    projectconfig.apply_pricing_overrides()
+    return {"ok": True, "path": str(projectconfig.config_path())}
+
+
 @app.get("/api/budgets")
 def list_budgets():
     """Budgets with current-period spend, % used, and breach flag."""

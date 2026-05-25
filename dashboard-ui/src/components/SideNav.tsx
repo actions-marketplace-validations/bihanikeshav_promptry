@@ -253,41 +253,6 @@ export function SideNav({
         );
       })}
 
-      <div
-        style={{
-          fontSize: 10,
-          color: "var(--muted)",
-          textTransform: "uppercase",
-          letterSpacing: "0.08em",
-          padding: "14px 8px 4px",
-          fontFamily: "var(--font-mono)",
-        }}
-      >
-        Status
-      </div>
-      <div
-        style={{
-          padding: "8px 10px",
-          fontSize: 11.5,
-          fontFamily: "var(--font-mono)",
-          color: "var(--secondary)",
-          lineHeight: 1.7,
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>suites</span>
-          <span style={{ color: "var(--text)" }}>{counters.suites ?? "—"}</span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>regressions</span>
-          <span style={{ color: "var(--error)" }}>{counters.regressions ?? 0}</span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>drifting</span>
-          <span style={{ color: "var(--warning)" }}>{counters.drifting ?? 0}</span>
-        </div>
-      </div>
-
       <ConnectionStatus />
     </aside>
   );
