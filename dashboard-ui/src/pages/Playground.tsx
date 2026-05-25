@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../components/ui";
-import { runPlaygroundModel } from "../api/client";
+import { runPlaygroundModel, getConfig } from "../api/client";
 import type { PlaygroundRuleType } from "../api/types";
 
 /* -------- presets -------- */
@@ -221,6 +221,34 @@ export default function Playground() {
   const [running, setRunning] = useState(false);
   const [tab, setTab] = useState<"prompt" | "context" | "rules">("prompt");
   const [focusedModel, setFocusedModel] = useState<string | null>(null);
+  // Model picker is driven by the project config (.promptry/config.toml) so it
+  // reflects the models this project actually set up; the hardcoded MODELS list
+  // is the fallback (fresh project) and a source of display metadata/pricing.
+  const [modelMetas, setModelMetas] = useState<ModelMeta[]>(MODELS);
+
+  useEffect(() => {
+    getConfig()
+      .then((cfg) => {
+        if (!cfg.models?.length) return; // no config yet — keep MODELS defaults
+        const metas: ModelMeta[] = cfg.models.map((m) => {
+          const known = MODELS.find((k) => k.id === m.id);
+          return {
+            id: m.id,
+            label: m.label || known?.label || m.id,
+            inCost: known?.inCost ?? 0,
+            outCost: known?.outCost ?? 0,
+          };
+        });
+        setModelMetas(metas);
+        // Reconcile selection: keep any still-valid picks, else default to first two.
+        setModels((cur) => {
+          const ids = metas.map((x) => x.id);
+          const valid = cur.filter((c) => ids.includes(c));
+          return valid.length ? valid : metas.slice(0, 2).map((x) => x.id);
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   const loadPreset = (p: Preset) => {
     setPreset(p);
@@ -678,7 +706,7 @@ export default function Playground() {
               <span style={{ fontSize: 11, color: "var(--muted)" }}>Select 1–5 to compare</span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {MODELS.map((m) => {
+              {modelMetas.map((m) => {
                 const on = models.includes(m.id);
                 return (
                   <label
@@ -760,7 +788,7 @@ export default function Playground() {
           )}
 
           {models.map((mId) => {
-            const m = MODELS.find((x) => x.id === mId)!;
+            const m = modelMetas.find((x) => x.id === mId) ?? { id: mId, label: mId, inCost: 0, outCost: 0 };
             const r = results[mId];
             const isFocused = focusedModel === mId;
             const isLoading = running && !r;
@@ -1015,7 +1043,7 @@ export default function Playground() {
                               ▸
                             </span>
                           )}
-                          {MODELS.find((x) => x.id === mId)?.label ?? mId}
+                          {modelMetas.find((x) => x.id === mId)?.label ?? mId}
                         </td>
                         <td
                           className="mono"
