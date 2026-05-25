@@ -1,434 +1,184 @@
-import { useState, useEffect } from "react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-import { getCostData, getSuites } from "../api/client";
-import type { CostResponse, SuiteSummary } from "../api/types";
-import { theme } from "../theme";
+import { useEffect, useState } from "react";
+import { BarChart, KPI, PageHeader, Select } from "../components/ui";
+import { formatTokens, pct, usd } from "../utils";
+import { getCostData } from "../api/client";
+import type { CostResponse } from "../api/types";
 
 export default function Cost() {
+  const [days, setDays] = useState(14);
   const [data, setData] = useState<CostResponse | null>(null);
-  const [suites, setSuites] = useState<SuiteSummary[]>([]);
-  const [days, setDays] = useState(7);
-  const [promptFilter, setPromptFilter] = useState("");
-  const [modelFilter, setModelFilter] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  // Load suites for filter dropdown
   useEffect(() => {
-    getSuites().then(setSuites).catch(() => {});
-  }, []);
-
-  // Load cost data
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    getCostData(
-      days,
-      promptFilter || undefined,
-      modelFilter || undefined
-    )
+    getCostData(days)
       .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [days, promptFilter, modelFilter]);
+      .catch(() => setData(null));
+  }, [days]);
 
-  // Collect unique models from by_name data
-  const allModels = data
-    ? [...new Set(data.by_name.flatMap((b) => b.models))]
-    : [];
+  if (!data) {
+    return (
+      <div>
+        <PageHeader eyebrow="~/promptry · cost" title="Cost & Tokens" description="Loading…" />
+      </div>
+    );
+  }
+
+  const s = data.summary;
+  const byDate = data.by_date.map((d) => ({
+    ...d,
+    cache_savings: 0,
+  }));
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: theme.muted, marginBottom: 4, fontFamily: theme.fontUI }}>
-        Cost
-      </div>
-      <h1
-        style={{
-          fontSize: 18,
-          fontWeight: 600,
-          color: theme.text,
-          marginBottom: 20,
-          fontFamily: theme.fontUI,
-        }}
-      >
-        Cost Tracking
-      </h1>
-
-      {/* Filters */}
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          marginBottom: 24,
-          flexWrap: "wrap",
-          alignItems: "flex-end",
-        }}
-      >
-        <FilterGroup label="Days">
-          <select
+      <PageHeader
+        eyebrow="~/promptry · cost"
+        title="Cost & Tokens"
+        description="Rolling spend across all prompts with cache credit breakdown."
+        actions={
+          <Select
             value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            style={selectStyle}
-          >
-            <option value={7}>7 days</option>
-            <option value={30}>30 days</option>
-            <option value={90}>90 days</option>
-          </select>
-        </FilterGroup>
+            onChange={setDays}
+            options={[
+              { value: 7, label: "Last 7 days" },
+              { value: 14, label: "Last 14 days" },
+              { value: 30, label: "Last 30 days" },
+            ]}
+          />
+        }
+      />
 
-        <FilterGroup label="Prompt">
-          <select
-            value={promptFilter}
-            onChange={(e) => setPromptFilter(e.target.value)}
-            style={selectStyle}
-          >
-            <option value="">All prompts</option>
-            {data?.by_name.map((b) => (
-              <option key={b.name} value={b.name}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        </FilterGroup>
-
-        <FilterGroup label="Model">
-          <select
-            value={modelFilter}
-            onChange={(e) => setModelFilter(e.target.value)}
-            style={selectStyle}
-          >
-            <option value="">All models</option>
-            {allModels.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </FilterGroup>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+        <KPI
+          label="Total spend"
+          value={usd(s.total_cost, 2)}
+          accent="var(--text)"
+          sub={`${s.total_calls.toLocaleString()} calls`}
+        />
+        <KPI
+          label="Avg $/call"
+          value={"$" + (s.avg_cost ?? 0).toFixed(5)}
+          accent="var(--accent)"
+          sub={`${formatTokens(s.total_tokens_in)} in · ${formatTokens(s.total_tokens_out)} out`}
+        />
+        <KPI
+          label="Cache hit rate"
+          value={pct(s.cache_hit_rate ?? 0, 1)}
+          accent="var(--success)"
+          sub={s.cache_savings != null ? `saved ${usd(s.cache_savings, 2)}` : ""}
+        />
+        <KPI
+          label="Tokens (in)"
+          value={formatTokens(s.total_tokens_in)}
+          accent="var(--text-dim)"
+          sub={`${formatTokens(s.total_tokens_out)} out`}
+        />
       </div>
 
-      {loading && (
-        <div style={{ color: theme.muted, padding: 32, textAlign: "center" }}>
-          Loading...
-        </div>
-      )}
-
-      {error && (
-        <div
-          style={{
-            color: theme.error,
-            padding: 16,
-            background: "rgba(248,113,113,0.1)",
-            borderRadius: 6,
-            fontSize: 13,
-            marginBottom: 16,
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      {!loading && data && (
-        <>
-          {/* Summary cards */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: 12,
-              marginBottom: 24,
-            }}
-          >
-            <SummaryCard
-              label="Total Cost"
-              value={`$${data.summary.total_cost.toFixed(4)}`}
-            />
-            <SummaryCard
-              label="Total Calls"
-              value={data.summary.total_calls.toLocaleString()}
-            />
-            <SummaryCard
-              label="Tokens (in/out)"
-              value={`${formatTokens(data.summary.total_tokens_in)} / ${formatTokens(data.summary.total_tokens_out)}`}
-            />
-            <SummaryCard
-              label="Avg $/Call"
-              value={`$${data.summary.avg_cost.toFixed(6)}`}
-            />
-            <SummaryCard
-              label="Cache Hit Rate"
-              value={`${((data.summary.cache_hit_rate ?? 0) * 100).toFixed(1)}%`}
-              tooltip="Portion of input tokens served from provider cache. OpenAI & xAI: automatic for long prompts. Anthropic: opt-in via cache_control. Gemini: explicit via cachedContents API."
-            />
-            <SummaryCard
-              label="Savings from Caching"
-              value={`$${(data.summary.cache_savings ?? 0).toFixed(4)}`}
-              tooltip="Estimated dollars saved vs paying the uncached input rate on the same tokens."
-            />
-          </div>
-
-          {/* Daily cost chart */}
-          {data.by_date.length > 0 && (
-            <div
-              style={{
-                background: theme.surface,
-                border: `1px solid ${theme.border}`,
-                borderRadius: 6,
-                padding: 16,
-                marginBottom: 24,
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: theme.text,
-                  marginBottom: 12,
-                  fontFamily: theme.fontUI,
-                }}
-              >
-                Daily Cost
-              </h3>
-              <div style={{ width: "100%", height: 240 }}>
-                <ResponsiveContainer>
-                  <BarChart data={data.by_date}>
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fill: theme.muted, fontSize: 10 }}
-                      axisLine={{ stroke: theme.border }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fill: theme.muted, fontSize: 10 }}
-                      axisLine={{ stroke: theme.border }}
-                      tickLine={false}
-                      width={50}
-                      tickFormatter={(v: number) => `$${v.toFixed(3)}`}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: theme.surface,
-                        border: `1px solid ${theme.border}`,
-                        borderRadius: 6,
-                        color: theme.text,
-                        fontSize: 12,
-                        fontFamily: theme.fontMono,
-                      }}
-                      formatter={(value: number) => [
-                        `$${value.toFixed(4)}`,
-                        "Cost",
-                      ]}
-                    />
-                    <Bar
-                      dataKey="cost"
-                      fill={theme.accent}
-                      radius={[3, 3, 0, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+      <div className="card" style={{ padding: 16, marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Daily spend</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+              Orange = billed spend per day.
             </div>
-          )}
-
-          {/* Cache legend */}
-          <div
-            style={{
-              fontSize: 11,
-              color: theme.muted,
-              marginBottom: 12,
-              fontFamily: theme.fontUI,
-            }}
-          >
-            Cache support by provider: <b>OpenAI</b> (auto, prompts &gt;1024 tok, ~50% off),{" "}
-            <b>Anthropic</b> (opt-in via cache_control, ~90% off reads, 125% writes),{" "}
-            <b>Gemini</b> (cachedContents API, ~75% off), <b>xAI Grok</b> (auto, ~75% off).
           </div>
+          <div style={{ display: "flex", gap: 14, fontSize: 11, color: "var(--secondary)", fontFamily: "var(--font-mono)" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 10, height: 10, background: "var(--accent)", borderRadius: 2 }} />
+              Billed
+            </span>
+          </div>
+        </div>
+        <BarChart
+          data={byDate}
+          valueKey="cost"
+          labelKey="date"
+          height={220}
+          format={(v) => "$" + v.toFixed(2)}
+        />
+      </div>
 
-          {/* By-prompt table */}
-          {data.by_name.length > 0 && (
-            <div
-              style={{
-                background: theme.surface,
-                border: `1px solid ${theme.border}`,
-                borderRadius: 6,
-                padding: 16,
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: theme.text,
-                  marginBottom: 12,
-                  fontFamily: theme.fontUI,
-                }}
-              >
-                By Prompt
-              </h3>
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  fontSize: 12,
-                }}
-              >
-                <thead>
-                  <tr
-                    style={{
-                      borderBottom: `1px solid ${theme.border}`,
-                    }}
-                  >
-                    <th style={thStyle}>Name</th>
-                    <th style={thStyle}>Calls</th>
-                    <th style={thStyle}>Tokens In</th>
-                    <th style={thStyle}>Tokens Out</th>
-                    <th style={thStyle}>Hit Rate</th>
-                    <th style={thStyle}>Cost</th>
-                    <th style={thStyle}>Models</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.by_name.map((b) => (
-                    <tr
-                      key={b.name}
+      <div className="card" style={{ overflow: "hidden" }}>
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>By prompt</div>
+        </div>
+        <table className="pr">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th className="r">Calls</th>
+              <th className="r">Tokens in</th>
+              <th className="r">Tokens out</th>
+              <th>Cache</th>
+              <th>Models</th>
+              <th className="r">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.by_name.map((b) => (
+              <tr key={b.name}>
+                <td>
+                  <span style={{ fontWeight: 600 }}>{b.name}</span>
+                </td>
+                <td className="r mono" style={{ color: "var(--text-dim)" }}>
+                  {b.calls.toLocaleString()}
+                </td>
+                <td className="r mono" style={{ color: "var(--text-dim)" }}>
+                  {formatTokens(b.tokens_in)}
+                </td>
+                <td className="r mono" style={{ color: "var(--text-dim)" }}>
+                  {formatTokens(b.tokens_out)}
+                </td>
+                <td>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 130 }}>
+                    <div
                       style={{
-                        borderBottom: `1px solid ${theme.border}`,
+                        width: 60,
+                        height: 4,
+                        background: "var(--bg-elev)",
+                        borderRadius: 2,
+                        overflow: "hidden",
+                        border: "1px solid var(--border)",
                       }}
                     >
-                      <td style={{ ...tdStyle, fontWeight: 600, fontFamily: theme.fontUI }}>
-                        {b.name}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontFamily: theme.fontMono }}>
-                        {b.calls}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontFamily: theme.fontMono }}>
-                        {formatTokens(b.tokens_in)}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontFamily: theme.fontMono }}>
-                        {formatTokens(b.tokens_out)}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontFamily: theme.fontMono }}>
-                        {b.tokens_in > 0
-                          ? `${((b.cache_hit_rate ?? 0) * 100).toFixed(1)}%`
-                          : "-"}
-                      </td>
-                      <td
+                      <div
                         style={{
-                          ...tdStyle,
-                          textAlign: "center",
-                          color: theme.success,
-                          fontFamily: theme.fontMono,
+                          width: ((b.cache_hit_rate ?? 0) * 100) + "%",
+                          height: "100%",
+                          background: "var(--success)",
+                          opacity: 0.8,
                         }}
-                      >
-                        ${b.cost.toFixed(4)}
-                      </td>
-                      <td style={{ ...tdStyle, color: theme.muted, fontFamily: theme.fontMono }}>
-                        {b.models.join(", ")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  tooltip,
-}: {
-  label: string;
-  value: string;
-  tooltip?: string;
-}) {
-  return (
-    <div
-      title={tooltip}
-      style={{
-        background: theme.surface,
-        border: `1px solid ${theme.border}`,
-        borderRadius: 6,
-        padding: "12px 16px",
-        cursor: tooltip ? "help" : "default",
-      }}
-    >
-      <div style={{ fontSize: 10, color: theme.muted, marginBottom: 4, fontFamily: theme.fontUI }}>
-        {label}
-        {tooltip ? (
-          <span style={{ marginLeft: 4, opacity: 0.7 }}>(?)</span>
-        ) : null}
-      </div>
-      <div style={{ fontSize: 16, fontWeight: 700, color: theme.text, fontFamily: theme.fontMono }}>
-        {value}
+                      />
+                    </div>
+                    <span className="mono" style={{ fontSize: 11.5, color: "var(--success)" }}>
+                      {((b.cache_hit_rate ?? 0) * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {b.models.map((m) => (
+                      <span key={m} className="chip mono" style={{ fontSize: 10 }}>
+                        {m}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td className="r mono" style={{ color: "var(--accent)", fontWeight: 600 }}>
+                  ${b.cost.toFixed(2)}
+                </td>
+              </tr>
+            ))}
+            {data.by_name.length === 0 && (
+              <tr>
+                <td colSpan={7} style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
+                  No cost data yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
-
-function FilterGroup({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div
-        style={{
-          fontSize: 10,
-          color: theme.muted,
-          marginBottom: 4,
-          textTransform: "uppercase",
-          fontFamily: theme.fontUI,
-        }}
-      >
-        {label}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-const selectStyle: React.CSSProperties = {
-  background: theme.surface,
-  border: `1px solid ${theme.border}`,
-  color: theme.text,
-  padding: "8px 12px",
-  borderRadius: 6,
-  fontSize: 12,
-  fontFamily: theme.fontUI,
-  minWidth: 160,
-};
-
-const thStyle: React.CSSProperties = {
-  padding: "6px 8px",
-  fontWeight: 500,
-  color: theme.secondary,
-  fontSize: 11,
-  textAlign: "left",
-  fontFamily: theme.fontUI,
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: "8px",
-  whiteSpace: "nowrap",
-};

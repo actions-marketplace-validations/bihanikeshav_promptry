@@ -1,159 +1,133 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { getPrompts } from "../api/client";
-import type { PromptSummary } from "../api/types";
-import { theme } from "../theme";
+import { useState } from "react";
+import { useNavigate, useOutletContext } from "react-router-dom";
+import { PageHeader } from "../components/ui";
+import type { LayoutContext } from "../components/Layout";
 
 export default function Prompts() {
-  const [prompts, setPrompts] = useState<PromptSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { prompts } = useOutletContext<LayoutContext>();
   const navigate = useNavigate();
+  const [q, setQ] = useState("");
 
-  useEffect(() => {
-    getPrompts()
-      .then(setPrompts)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+  const filtered = prompts.filter(
+    (p) => !q || p.name.toLowerCase().includes(q.toLowerCase())
+  );
+
+  // Group by module — the segment before the first dot (agent, chunking,
+  // summary, …). Names without a dot fall under "other".
+  const groups = (() => {
+    const m = new Map<string, typeof filtered>();
+    for (const p of filtered) {
+      const mod = p.name.includes(".") ? p.name.split(".")[0] : "other";
+      if (!m.has(mod)) m.set(mod, []);
+      m.get(mod)!.push(p);
+    }
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  })();
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: theme.muted, marginBottom: 4, fontFamily: theme.fontUI }}>
-        Prompts
-      </div>
-      <h1
-        style={{
-          fontSize: 18,
-          fontWeight: 600,
-          color: theme.text,
-          marginBottom: 20,
-          fontFamily: theme.fontUI,
-        }}
-      >
-        Prompt Registry
-      </h1>
+      <PageHeader
+        eyebrow="~/promptry · prompts"
+        title="Prompt Registry"
+        description="Every versioned prompt tracked by promptry. Click one to inspect history and diffs."
+        actions={
+          <input
+            className="inp"
+            placeholder="filter prompts…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            style={{ minWidth: 240 }}
+          />
+        }
+      />
 
-      {loading && (
-        <div style={{ color: theme.muted, padding: 32, textAlign: "center" }}>
-          Loading...
-        </div>
-      )}
-
-      {error && (
-        <div
-          style={{
-            color: theme.error,
-            padding: 16,
-            background: "rgba(248,113,113,0.1)",
-            borderRadius: 6,
-            fontSize: 13,
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      {!loading && prompts.length === 0 && !error && (
-        <div style={{ color: theme.muted, padding: 32, textAlign: "center" }}>
+      {filtered.length === 0 && (
+        <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
           No prompts found.
         </div>
       )}
 
-      {!loading && prompts.length > 0 && (
-        <div
-          style={{
-            border: `1px solid ${theme.border}`,
-            borderRadius: 6,
-            overflow: "hidden",
-          }}
-        >
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontSize: 13,
-            }}
-          >
-            <thead>
-              <tr
+      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        {groups.map(([mod, items]) => (
+          <div key={mod}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 8,
+                padding: "0 2px",
+              }}
+            >
+              <span
                 style={{
-                  background: theme.surface,
-                  borderBottom: `1px solid ${theme.border}`,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
+                  color: "var(--text)",
+                  fontFamily: "var(--font-mono)",
                 }}
               >
-                <th style={thStyle}>Name</th>
-                <th style={thStyle}>Latest Version</th>
-                <th style={thStyle}>Tags</th>
-              </tr>
-            </thead>
-            <tbody>
-              {prompts.map((p) => (
-                <tr
-                  key={p.name}
-                  onClick={() =>
-                    navigate(`/prompts/${encodeURIComponent(p.name)}`)
-                  }
-                  style={{
-                    borderBottom: `1px solid ${theme.border}`,
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = theme.surface)
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background = "transparent")
-                  }
-                >
-                  <td style={{ ...tdStyle, fontWeight: 600, color: theme.text, fontFamily: theme.fontUI }}>
-                    {p.name}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: "center", fontFamily: theme.fontMono }}>
-                    v{p.latest_version}
-                  </td>
-                  <td style={tdStyle}>
-                    {p.tags.length > 0 ? (
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {p.tags.map((t) => (
-                          <span
-                            key={t}
-                            style={{
-                              padding: "2px 8px",
-                              background: `rgba(255,255,255,0.06)`,
-                              color: theme.secondary,
-                              borderRadius: 4,
-                              fontSize: 11,
-                              fontFamily: theme.fontUI,
-                            }}
-                          >
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span style={{ color: theme.muted }}>--</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                {mod}
+              </span>
+              <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                {items.length}
+              </span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <div className="card" style={{ overflow: "hidden" }}>
+              <table className="pr">
+                <tbody>
+                  {items.map((p) => {
+                    // Show the part after the module prefix as the primary label.
+                    const sub = p.name.includes(".")
+                      ? p.name.slice(p.name.indexOf(".") + 1)
+                      : p.name;
+                    return (
+                      <tr key={p.name} onClick={() => navigate(`/prompts/${encodeURIComponent(p.name)}`)}>
+                        <td>
+                          <div style={{ fontSize: 13.5, color: "var(--text)", fontWeight: 600 }}>
+                            <span style={{ color: "var(--muted)" }}>{mod}.</span>
+                            {sub}
+                          </div>
+                        </td>
+                        <td className="mono" style={{ color: "var(--text-dim)", width: 70 }}>
+                          v{p.latest_version}
+                        </td>
+                        <td style={{ width: 200 }}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {p.tags.length === 0 ? (
+                              <span style={{ color: "var(--muted)", fontSize: 11 }}>—</span>
+                            ) : (
+                              p.tags.map((t) => (
+                                <span
+                                  key={t}
+                                  className="chip mono"
+                                  style={{
+                                    fontSize: 10,
+                                    color: t === "critical" ? "var(--accent)" : "var(--text-dim)",
+                                    borderColor: t === "critical" ? "var(--accent-line)" : "var(--border)",
+                                    background: t === "critical" ? "var(--accent-soft)" : "rgba(255,255,255,0.02)",
+                                  }}
+                                >
+                                  {t}
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        </td>
+                        <td className="r" style={{ width: 30 }}>
+                          <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)" }}>›</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
-
-const thStyle: React.CSSProperties = {
-  padding: "6px 10px",
-  fontWeight: 500,
-  color: theme.secondary,
-  fontSize: 12,
-  textAlign: "left",
-  fontFamily: theme.fontUI,
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: "8px 10px",
-  whiteSpace: "nowrap",
-};

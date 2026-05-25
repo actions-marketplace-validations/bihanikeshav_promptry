@@ -1,171 +1,202 @@
-import { useState, useEffect } from "react";
-import { getSuites, getModelVersions, compareModels } from "../api/client";
-import type {
-  SuiteSummary,
-  ModelVersion,
-  ModelCompareReport,
-} from "../api/types";
-import { theme, scoreColor } from "../theme";
+import { useEffect, useState } from "react";
+import { useOutletContext } from "react-router-dom";
+import { PageHeader, StatusPill, Select } from "../components/ui";
+import { pct, scoreColor } from "../utils";
+import { getModelVersions, compareModels } from "../api/client";
+import type { ModelCompareReport, ModelVersion } from "../api/types";
+import type { LayoutContext } from "../components/Layout";
 
 export default function Models() {
-  const [suites, setSuites] = useState<SuiteSummary[]>([]);
-  const [selectedSuite, setSelectedSuite] = useState("");
-  const [modelVersions, setModelVersions] = useState<ModelVersion[]>([]);
-  const [baseline, setBaseline] = useState("");
-  const [candidate, setCandidate] = useState("");
+  const { suites } = useOutletContext<LayoutContext>();
+  const [suiteName, setSuiteName] = useState<string>("");
+  const [versions, setVersions] = useState<ModelVersion[]>([]);
+  const [baseline, setBaseline] = useState<string>("");
+  const [candidate, setCandidate] = useState<string>("");
   const [report, setReport] = useState<ModelCompareReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getSuites().then(setSuites).catch(() => {});
-  }, []);
+    if (!suiteName && suites.length > 0) setSuiteName(suites[0].name);
+  }, [suiteName, suites]);
 
   useEffect(() => {
-    if (!selectedSuite) {
-      setModelVersions([]);
-      return;
-    }
-    getModelVersions(selectedSuite)
-      .then((d) => {
-        setModelVersions(d.versions);
-        setBaseline("");
-        setCandidate("");
-        setReport(null);
+    if (!suiteName) return;
+    getModelVersions(suiteName)
+      .then((r) => {
+        setVersions(r.versions);
+        if (r.versions[0]) setBaseline(r.versions[0].model_version);
+        if (r.versions[1]) setCandidate(r.versions[1].model_version);
       })
-      .catch(() => setModelVersions([]));
-  }, [selectedSuite]);
+      .catch(() => setVersions([]));
+  }, [suiteName]);
 
-  const handleCompare = () => {
-    if (!selectedSuite || !baseline || !candidate) return;
+  const runCompare = async () => {
+    if (!suiteName || !baseline || !candidate) return;
     setLoading(true);
     setError(null);
-    setReport(null);
-    compareModels(selectedSuite, baseline, candidate)
-      .then(setReport)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    try {
+      const r = await compareModels(suiteName, baseline, candidate);
+      setReport(r);
+    } catch (e) {
+      setError(String(e));
+      setReport(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const verdictColor = (v: string) => {
-    if (v === "switch") return theme.success;
-    if (v === "keep_baseline") return theme.error;
-    return theme.warning;
-  };
-
-  const verdictLabel = (v: string) => {
-    if (v === "switch") return "SWITCH";
-    if (v === "keep_baseline") return "KEEP BASELINE";
-    return "COMPARABLE";
-  };
+  const verdictStyle =
+    report?.verdict === "switch"
+      ? { label: "SWITCH TO CANDIDATE", color: "var(--success)", bg: "var(--success-soft)" }
+      : report?.verdict === "keep_baseline"
+        ? { label: "KEEP BASELINE", color: "var(--error)", bg: "var(--error-soft)" }
+        : { label: "COMPARABLE", color: "var(--warning)", bg: "var(--warning-soft)" };
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: theme.muted, marginBottom: 4, fontFamily: theme.fontUI }}>
-        Models
-      </div>
-      <h1
-        style={{
-          fontSize: 18,
-          fontWeight: 600,
-          color: theme.text,
-          marginBottom: 20,
-          fontFamily: theme.fontUI,
-        }}
-      >
-        Model Comparison
-      </h1>
+      <PageHeader
+        eyebrow="~/promptry · models"
+        title="Model Comparison"
+        description="Pit two models against each other on the same suite. Statistical tests and cost-per-score included."
+      />
 
-      {/* Controls */}
       <div
+        className="card"
         style={{
-          display: "flex",
+          padding: 16,
+          marginBottom: 20,
+          display: "grid",
+          gridTemplateColumns: "1.3fr 1fr 1fr auto",
           gap: 12,
-          alignItems: "flex-end",
-          marginBottom: 24,
-          flexWrap: "wrap",
+          alignItems: "end",
         }}
       >
-        <SelectGroup label="Suite">
-          <select
-            value={selectedSuite}
-            onChange={(e) => setSelectedSuite(e.target.value)}
-            style={selectStyle}
+        <div>
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              marginBottom: 4,
+              fontFamily: "var(--font-mono)",
+            }}
           >
-            <option value="">Select suite...</option>
-            {suites.map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </SelectGroup>
-
-        <SelectGroup label="Baseline">
-          <select
+            Suite
+          </div>
+          <Select
+            value={suiteName}
+            onChange={setSuiteName}
+            minWidth={0}
+            options={suites.map((s) => ({ value: s.name, label: s.name }))}
+          />
+        </div>
+        <div>
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              marginBottom: 4,
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            Baseline
+          </div>
+          <Select
             value={baseline}
-            onChange={(e) => setBaseline(e.target.value)}
-            style={selectStyle}
-            disabled={modelVersions.length === 0}
+            onChange={setBaseline}
+            minWidth={0}
+            options={
+              versions.length === 0
+                ? [{ value: "", label: "— no models —" }]
+                : versions.map((v) => ({
+                    value: v.model_version,
+                    label: `${v.model_version} (${v.run_count})`,
+                  }))
+            }
+          />
+        </div>
+        <div>
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              marginBottom: 4,
+              fontFamily: "var(--font-mono)",
+            }}
           >
-            <option value="">Select baseline...</option>
-            {modelVersions.map((m) => (
-              <option key={m.model_version} value={m.model_version}>
-                {m.model_version} ({m.run_count} runs)
-              </option>
-            ))}
-          </select>
-        </SelectGroup>
-
-        <SelectGroup label="Candidate">
-          <select
+            Candidate
+          </div>
+          <Select
             value={candidate}
-            onChange={(e) => setCandidate(e.target.value)}
-            style={selectStyle}
-            disabled={modelVersions.length === 0}
-          >
-            <option value="">Select candidate...</option>
-            {modelVersions.map((m) => (
-              <option key={m.model_version} value={m.model_version}>
-                {m.model_version} ({m.run_count} runs)
-              </option>
-            ))}
-          </select>
-        </SelectGroup>
-
+            onChange={setCandidate}
+            minWidth={0}
+            options={
+              versions.length === 0
+                ? [{ value: "", label: "— no models —" }]
+                : versions.map((v) => ({
+                    value: v.model_version,
+                    label: `${v.model_version} (${v.run_count})`,
+                  }))
+            }
+          />
+        </div>
         <button
-          onClick={handleCompare}
-          disabled={!selectedSuite || !baseline || !candidate || loading}
-          style={{
-            background: theme.accent,
-            color: "#fff",
-            border: "none",
-            padding: "8px 20px",
-            borderRadius: 6,
-            cursor:
-              !selectedSuite || !baseline || !candidate
-                ? "not-allowed"
-                : "pointer",
-            fontSize: 12,
-            fontFamily: theme.fontUI,
-            fontWeight: 600,
-            opacity: !selectedSuite || !baseline || !candidate ? 0.5 : 1,
-          }}
+          className="btn btn-primary"
+          style={{ alignSelf: "stretch" }}
+          onClick={runCompare}
+          disabled={loading || !baseline || !candidate || baseline === candidate}
         >
-          {loading ? "Comparing..." : "Compare"}
+          {loading ? "Running…" : "Run comparison"}
         </button>
       </div>
 
+      {versions.length < 2 && suiteName && (
+        <div
+          className="card"
+          style={{
+            padding: 14,
+            marginBottom: 20,
+            color: "var(--secondary)",
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: "var(--warning)",
+              background: "var(--warning-soft)",
+              padding: "2px 8px",
+              borderRadius: 4,
+              border: "1px solid var(--warning)22",
+              fontWeight: 600,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+            }}
+          >
+            No comparison
+          </span>
+          <span>
+            {versions.length === 0
+              ? `Suite "${suiteName}" has no recorded model runs yet.`
+              : `Only one model (${versions[0]?.model_version}) has been run on this suite — need at least two to compare.`}
+          </span>
+        </div>
+      )}
+
       {error && (
         <div
-          style={{
-            color: theme.error,
-            padding: 16,
-            background: "rgba(248,113,113,0.1)",
-            borderRadius: 6,
-            fontSize: 13,
-            marginBottom: 16,
-          }}
+          className="card"
+          style={{ padding: 14, marginBottom: 20, color: "var(--error)", fontSize: 13 }}
         >
           {error}
         </div>
@@ -173,273 +204,233 @@ export default function Models() {
 
       {report && (
         <>
-          {/* Verdict banner */}
           <div
+            className="card-elev noise"
             style={{
-              background: theme.surface,
-              border: `2px solid ${verdictColor(report.verdict)}`,
-              borderRadius: 6,
-              padding: "16px 20px",
-              marginBottom: 24,
-              textAlign: "center",
+              padding: 20,
+              marginBottom: 20,
+              display: "grid",
+              gridTemplateColumns: "auto 1fr auto",
+              gap: 20,
+              alignItems: "center",
             }}
           >
             <div
               style={{
-                fontSize: 20,
+                padding: "10px 16px",
+                background: verdictStyle.bg,
+                color: verdictStyle.color,
+                borderRadius: 8,
                 fontWeight: 700,
-                color: verdictColor(report.verdict),
-                marginBottom: 6,
-                fontFamily: theme.fontUI,
+                letterSpacing: "0.04em",
+                fontSize: 14,
               }}
             >
-              {verdictLabel(report.verdict)}
+              {verdictStyle.label}
             </div>
-            <div style={{ fontSize: 12, color: theme.secondary, fontFamily: theme.fontUI }}>
+            <div style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.55 }}>
               {report.verdict_reason}
             </div>
-          </div>
-
-          {/* Score comparison cards */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-              gap: 12,
-              marginBottom: 24,
-            }}
-          >
-            <CompareCard
-              label="Baseline Score"
-              value={`${(report.baseline.overall_mean * 100).toFixed(1)}%`}
-              sub={`${report.baseline.model_version} (${report.baseline.run_count} runs)`}
-              color={scoreColor(report.baseline.overall_mean)}
-            />
-            <CompareCard
-              label="Candidate Score"
-              value={`${(report.candidate.overall_mean * 100).toFixed(1)}%`}
-              sub={`${report.candidate.model_version} (${report.candidate.run_count} runs)`}
-              color={scoreColor(report.candidate.overall_mean)}
-            />
-            <CompareCard
-              label="Delta"
-              value={`${report.overall_delta > 0 ? "+" : ""}${(report.overall_delta * 100).toFixed(1)}%`}
-              sub={`Percentile: ${report.percentile.toFixed(0)}th`}
-              color={
-                report.overall_delta > 0
-                  ? theme.success
-                  : report.overall_delta < 0
-                    ? theme.error
-                    : theme.secondary
-              }
-            />
-            {report.cost_ratio !== null && (
-              <CompareCard
-                label="Cost Ratio"
-                value={`${report.cost_ratio.toFixed(2)}x`}
-                sub={
-                  report.score_per_dollar_baseline !== null &&
-                  report.score_per_dollar_candidate !== null
-                    ? `$/score: ${report.score_per_dollar_baseline.toFixed(4)} vs ${report.score_per_dollar_candidate.toFixed(4)}`
-                    : ""
-                }
-                color={
-                  report.cost_ratio <= 1.0
-                    ? theme.success
-                    : theme.warning
-                }
-              />
-            )}
-          </div>
-
-          {/* Per-assertion table */}
-          {report.assertion_comparisons.length > 0 && (
-            <div
-              style={{
-                background: theme.surface,
-                border: `1px solid ${theme.border}`,
-                borderRadius: 6,
-                padding: 16,
-              }}
-            >
-              <h3
+            <div style={{ textAlign: "right" }}>
+              <div
+                className="mono"
                 style={{
-                  fontSize: 13,
+                  fontSize: 28,
                   fontWeight: 600,
-                  color: theme.text,
-                  marginBottom: 12,
-                  fontFamily: theme.fontUI,
+                  color: report.overall_delta >= 0 ? "var(--success)" : "var(--error)",
                 }}
               >
-                Per-Assertion Comparison
-              </h3>
-              <table
+                {report.overall_delta >= 0 ? "+" : ""}
+                {(report.overall_delta * 100).toFixed(1)}pp
+              </div>
+              <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                p{report.percentile} confidence
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+            {[report.baseline, report.candidate].map((m, i) => (
+              <div
+                key={i}
+                className="card"
                 style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  fontSize: 12,
+                  padding: 16,
+                  borderColor: i === 1 ? "var(--accent-line)" : "var(--border)",
                 }}
               >
-                <thead>
-                  <tr
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "baseline",
+                    marginBottom: 8,
+                  }}
+                >
+                  <div
                     style={{
-                      borderBottom: `1px solid ${theme.border}`,
+                      fontSize: 11,
+                      color: "var(--muted)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      fontFamily: "var(--font-mono)",
                     }}
                   >
-                    <th style={thStyle}>Assertion</th>
-                    <th style={thStyle}>Baseline</th>
-                    <th style={thStyle}>Candidate</th>
-                    <th style={thStyle}>Delta</th>
-                    <th style={thStyle}>Verdict</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.assertion_comparisons.map((ac) => (
-                    <tr
-                      key={ac.assertion_type}
-                      style={{
-                        borderBottom: `1px solid ${theme.border}`,
-                      }}
-                    >
-                      <td style={{ ...tdStyle, fontFamily: theme.fontUI }}>{ac.assertion_type}</td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontFamily: theme.fontMono }}>
-                        {(ac.baseline_mean * 100).toFixed(1)}%
+                    {i === 0 ? "baseline" : "candidate"}
+                  </div>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
+                    {m.run_count} runs
+                  </span>
+                </div>
+                <div
+                  style={{
+                    fontSize: 18,
+                    fontWeight: 600,
+                    color: "var(--text)",
+                    marginBottom: 8,
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  {m.model_version}
+                </div>
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 36,
+                    fontWeight: 600,
+                    color: scoreColor(m.overall_mean),
+                    lineHeight: 1,
+                  }}
+                >
+                  {pct(m.overall_mean, 1)}
+                </div>
+                <div
+                  style={{
+                    marginTop: 8,
+                    fontSize: 11,
+                    color: "var(--muted)",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  σ {m.overall_std.toFixed(3)}
+                  {i === 0 && report.score_per_dollar_baseline != null
+                    ? ` · ${report.score_per_dollar_baseline.toFixed(3)} score/$`
+                    : ""}
+                  {i === 1 && report.score_per_dollar_candidate != null
+                    ? ` · ${report.score_per_dollar_candidate.toFixed(3)} score/$`
+                    : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="card" style={{ overflow: "hidden" }}>
+            <div
+              style={{
+                padding: "14px 16px",
+                borderBottom: "1px solid var(--border)",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              Per-assertion comparison
+            </div>
+            <table className="pr">
+              <thead>
+                <tr>
+                  <th>Assertion</th>
+                  <th className="r">Baseline</th>
+                  <th className="r">Candidate</th>
+                  <th className="r">Δ</th>
+                  <th>Delta (visual)</th>
+                  <th>Verdict</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.assertion_comparisons.map((ac) => {
+                  const dir = ac.delta > 0 ? 1 : ac.delta < 0 ? -1 : 0;
+                  const w = Math.min(100, Math.abs(ac.delta * 400));
+                  return (
+                    <tr key={ac.assertion_type}>
+                      <td>{ac.assertion_type}</td>
+                      <td className="r mono" style={{ color: "var(--text-dim)" }}>
+                        {pct(ac.baseline_mean, 1)}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontFamily: theme.fontMono }}>
-                        {(ac.candidate_score * 100).toFixed(1)}%
+                      <td className="r mono" style={{ color: "var(--text-dim)" }}>
+                        {pct(ac.candidate_score, 1)}
                       </td>
                       <td
+                        className="r mono"
                         style={{
-                          ...tdStyle,
-                          textAlign: "center",
-                          fontFamily: theme.fontMono,
                           color:
-                            ac.delta > 0
-                              ? theme.success
-                              : ac.delta < 0
-                                ? theme.error
-                                : theme.secondary,
+                            dir > 0 ? "var(--success)" : dir < 0 ? "var(--error)" : "var(--muted)",
+                          fontWeight: 600,
                         }}
                       >
-                        {ac.delta > 0 ? "+" : ""}
-                        {(ac.delta * 100).toFixed(1)}%
+                        {dir > 0 ? "+" : ""}
+                        {(ac.delta * 100).toFixed(1)}pp
                       </td>
-                      <td style={{ ...tdStyle, textAlign: "center" }}>
-                        <span
+                      <td>
+                        <div
                           style={{
-                            padding: "2px 8px",
-                            borderRadius: 4,
-                            fontSize: 10,
-                            fontWeight: 600,
-                            fontFamily: theme.fontUI,
-                            background:
-                              ac.verdict === "better"
-                                ? "rgba(74,222,128,0.15)"
-                                : ac.verdict === "worse"
-                                  ? "rgba(248,113,113,0.15)"
-                                  : "rgba(152,152,160,0.15)",
-                            color:
-                              ac.verdict === "better"
-                                ? theme.success
-                                : ac.verdict === "worse"
-                                  ? theme.error
-                                  : theme.secondary,
+                            position: "relative",
+                            height: 10,
+                            background: "var(--bg-elev)",
+                            borderRadius: 2,
+                            border: "1px solid var(--border)",
+                            minWidth: 180,
                           }}
                         >
-                          {ac.verdict.toUpperCase()}
-                        </span>
+                          <div
+                            style={{
+                              position: "absolute",
+                              left: "50%",
+                              width: 1,
+                              top: -2,
+                              bottom: -2,
+                              background: "var(--border-strong)",
+                            }}
+                          />
+                          {dir !== 0 && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                top: 0,
+                                bottom: 0,
+                                left: dir > 0 ? "50%" : `calc(50% - ${w / 2}%)`,
+                                width: `${w / 2}%`,
+                                background: dir > 0 ? "var(--success)" : "var(--error)",
+                                opacity: 0.8,
+                              }}
+                            />
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <StatusPill
+                          status={
+                            ac.verdict === "better"
+                              ? "improved"
+                              : ac.verdict === "worse"
+                                ? "regressed"
+                                : "unchanged"
+                          }
+                        />
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
-    </div>
-  );
-}
 
-function SelectGroup({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div
-        style={{
-          fontSize: 10,
-          color: theme.muted,
-          marginBottom: 4,
-          textTransform: "uppercase",
-          fontFamily: theme.fontUI,
-        }}
-      >
-        {label}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function CompareCard({
-  label,
-  value,
-  sub,
-  color,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  color: string;
-}) {
-  return (
-    <div
-      style={{
-        background: theme.surface,
-        border: `1px solid ${theme.border}`,
-        borderRadius: 6,
-        padding: "12px 16px",
-      }}
-    >
-      <div style={{ fontSize: 10, color: theme.muted, marginBottom: 4, fontFamily: theme.fontUI }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 18, fontWeight: 700, color, fontFamily: theme.fontMono }}>{value}</div>
-      {sub && (
-        <div style={{ fontSize: 10, color: theme.muted, marginTop: 2, fontFamily: theme.fontMono }}>
-          {sub}
+      {!report && !loading && !error && versions.length >= 2 && (
+        <div className="card" style={{ padding: 30, textAlign: "center", color: "var(--muted)" }}>
+          Select baseline and candidate models, then run comparison.
         </div>
       )}
     </div>
   );
 }
-
-const selectStyle: React.CSSProperties = {
-  background: theme.surface,
-  border: `1px solid ${theme.border}`,
-  color: theme.text,
-  padding: "8px 12px",
-  borderRadius: 6,
-  fontSize: 12,
-  fontFamily: theme.fontUI,
-  minWidth: 180,
-};
-
-const thStyle: React.CSSProperties = {
-  padding: "6px 8px",
-  fontWeight: 500,
-  color: theme.secondary,
-  fontSize: 11,
-  textAlign: "left",
-  fontFamily: theme.fontUI,
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: "8px",
-  whiteSpace: "nowrap",
-};
