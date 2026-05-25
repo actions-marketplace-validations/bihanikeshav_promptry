@@ -136,6 +136,22 @@ export interface BisectResult {
   model_changed?: boolean;
 }
 
+export interface PiiFinding {
+  type: string;
+  category: "secret" | "pii";
+  severity: "high" | "medium" | "low";
+  count: number;
+  sample: string;
+}
+
+export interface PiiScan {
+  input: PiiFinding[];
+  output: PiiFinding[];
+  total: number;
+  has_secret: boolean;
+  worst_severity: "high" | "medium" | "low" | null;
+}
+
 export interface OnlineDriftMetric {
   metric: string;
   label: string;

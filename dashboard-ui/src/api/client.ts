@@ -22,6 +22,7 @@ import type {
   BudgetStatus,
   ProjectConfig,
   OnlineDrift,
+  PiiScan,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -165,6 +166,10 @@ export function listInvocations(params: { name?: string; days?: number; limit?: 
 
 export function getInvocation(id: number): Promise<InvocationDetail> {
   return fetchJson(`/api/invocations/${id}`);
+}
+
+export function getInvocationScan(id: number): Promise<PiiScan> {
+  return fetchJson(`/api/invocations/${id}/scan`);
 }
 
 export async function promotePrompt(name: string, version: number, env: string): Promise<{ ok: boolean }> {

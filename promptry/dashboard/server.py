@@ -683,6 +683,20 @@ def get_invocation(invocation_id: int):
     return rec
 
 
+@app.get("/api/invocations/{invocation_id}/scan")
+def scan_invocation_endpoint(invocation_id: int):
+    """Scan a captured invocation's request/response text for secrets and PII.
+    Findings are redacted (masked) so the dashboard can warn without showing
+    the secret it found."""
+    from promptry.pii import scan_invocation
+
+    storage = get_storage()
+    rec = storage.get_invocation(invocation_id) if hasattr(storage, "get_invocation") else None
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Invocation not found")
+    return scan_invocation(rec.get("input_text"), rec.get("output_text"))
+
+
 @app.get("/api/cost/coverage")
 def cost_coverage(days: int = Query(default=30, ge=1)):
     """Models seen in the ledger that have NO pricing entry — their cost

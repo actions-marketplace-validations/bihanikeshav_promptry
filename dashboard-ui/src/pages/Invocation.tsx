@@ -1,9 +1,9 @@
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { Breadcrumbs, PageHeader } from "../components/ui";
 import { relTime } from "../utils";
-import { getInvocation } from "../api/client";
+import { getInvocation, getInvocationScan } from "../api/client";
 import { useCached } from "../lib/cache";
-import type { InvocationDetail } from "../api/types";
+import type { InvocationDetail, PiiScan, PiiFinding } from "../api/types";
 
 const usd = (n: number | null | undefined) => (n == null ? "—" : "$" + n.toFixed(n < 0.01 ? 6 : 4));
 
@@ -14,6 +14,7 @@ export default function Invocation() {
   // The path we drilled down from (Cost or Prompts), passed via nav state.
   const fromCrumbs = (location.state as { from?: { label: string; to?: string }[] } | null)?.from;
   const { data: d } = useCached<InvocationDetail>(`invocation:${id}`, () => getInvocation(Number(id)));
+  const { data: scan } = useCached<PiiScan>(`invocation-scan:${id}`, () => getInvocationScan(Number(id)));
 
   if (!d) return <div><PageHeader eyebrow="~/promptry · invocation" title={`#${id}`} description="Loading…" /></div>;
 
@@ -51,6 +52,9 @@ export default function Invocation() {
           </div>
         ))}
       </div>
+
+      {/* PII / secret scan of captured text */}
+      {scan && scan.total > 0 && <PiiPanel scan={scan} />}
 
       {/* template vs data cost breakdown */}
       {b && b.available === false && (
@@ -107,6 +111,40 @@ export default function Invocation() {
         <Link to={`/prompts/${encodeURIComponent(d.prompt_name)}`} style={{ color: "var(--accent)", textDecoration: "none" }}>
           View prompt · {d.prompt_name} →
         </Link>
+      </div>
+    </div>
+  );
+}
+
+function PiiPanel({ scan }: { scan: PiiScan }) {
+  const sevColor = scan.worst_severity === "high" ? "var(--error)" : "var(--warning)";
+  const label = (t: string) => t.replace(/_/g, " ");
+  const Side = ({ title, findings }: { title: string; findings: PiiFinding[] }) =>
+    findings.length === 0 ? null : (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <span style={{ fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "var(--font-mono)", minWidth: 56 }}>{title}</span>
+        {findings.map((f) => (
+          <span key={f.type} className="chip mono" style={{ fontSize: 10.5, color: f.category === "secret" ? "var(--error)" : "var(--warning)", display: "inline-flex", gap: 6, alignItems: "center" }}>
+            {label(f.type)}{f.count > 1 ? ` ×${f.count}` : ""}
+            <span style={{ color: "var(--muted)" }}>{f.sample}</span>
+          </span>
+        ))}
+      </div>
+    );
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 18, borderColor: sevColor }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ width: 9, height: 9, borderRadius: 999, background: sevColor }} />
+        <div style={{ fontSize: 13, fontWeight: 600 }}>
+          {scan.has_secret ? "Secrets detected in captured text" : "PII detected in captured text"}
+        </div>
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3, marginBottom: 12 }}>
+        Regex tripwire over the request/response. Matches are masked — fix at the source or disable capture for this prompt.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <Side title="request" findings={scan.input} />
+        <Side title="response" findings={scan.output} />
       </div>
     </div>
   );
