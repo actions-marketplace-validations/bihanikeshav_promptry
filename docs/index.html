@@ -182,12 +182,7 @@
       <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Regression detection</h3></div>
         <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Prompt works. Six weeks later, nobody knows what broke it.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Compare any run to a baseline. Root-cause hints flag the exact delta.</span></div>
-      </div>
-      <div class="diff-hunk" role="listitem">
-        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Regression bisect</h3></div>
-        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">A test passed last month and fails now. Somewhere in 200 runs.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Bisect the run history to pinpoint the first run that broke it.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Compare any run to a baseline, then bisect the history to the first run that broke it.</span></div>
       </div>
       <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Live prompt CMS</h3></div>
@@ -195,29 +190,14 @@
         <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text"><code>render_prompt()</code> serves dashboard-edited templates live — no redeploy.</span></div>
       </div>
       <div class="diff-hunk" role="listitem">
-        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Environment promotion</h3></div>
-        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">An edit goes straight to prod and nobody reviewed it first.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">dev → staging → prod tags gate every change before it reaches users.</span></div>
-      </div>
-      <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Drift detection</h3></div>
         <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Scores slowly crawl down. You notice in Q3.</span></div>
         <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Rolling-window regression + Mann-Whitney U catches slow degradation.</span></div>
       </div>
       <div class="diff-hunk" role="listitem">
-        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Safety templates</h3></div>
-        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">"We should probably red-team this." Said in Slack, last quarter.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">25 curated attacks across 6 categories. Extensible via <code>templates.toml</code>.</span></div>
-      </div>
-      <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Cost tracking</h3></div>
         <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Bill spikes. Which prompt? Which model? Nobody knows.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Module → prompt → call drill-down with a template-vs-payload split.</span></div>
-      </div>
-      <div class="diff-hunk" role="listitem">
-        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Cost budgets</h3></div>
-        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">You find out you blew the budget when finance forwards the invoice.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Daily and monthly caps with breach alerts. A coverage check flags un-priced models.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Module → prompt → call drill-down, plus daily/monthly budget caps with breach alerts.</span></div>
       </div>
       <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Trace capture + feedback</h3></div>
@@ -228,11 +208,6 @@
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>CI + GitHub Action</h3></div>
         <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Reviewer eyeballs a prompt diff and hopes for the best.</span></div>
         <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">One-line GitHub Action fails the build and posts the score delta.</span></div>
-      </div>
-      <div class="diff-hunk" role="listitem">
-        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>MCP server</h3></div>
-        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Agent has no idea if its own prompt is any good.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">MCP endpoint exposes suites, diffs, and scores. Agent debugs itself.</span></div>
       </div>
     </div>
   </div>
