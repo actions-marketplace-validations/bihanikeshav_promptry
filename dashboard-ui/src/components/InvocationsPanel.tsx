@@ -22,11 +22,13 @@ export function InvocationsPanel({
   order = "recent",
   days = 30,
   emptyHint,
+  crumbs,
 }: {
   name?: string;
   order?: "recent" | "cost";
   days?: number;
   emptyHint?: string;
+  crumbs?: { label: string; to?: string }[];
 }) {
   const nav = useNavigate();
   const [rows, setRows] = useState<InvocationRow[]>([]);
@@ -86,7 +88,7 @@ export function InvocationsPanel({
         </thead>
         <tbody>
           {sorted.map((r) => (
-            <tr key={r.id} onClick={() => nav(`/invocations/${r.id}`)} style={{ cursor: "pointer" }}>
+            <tr key={r.id} onClick={() => nav(`/invocations/${r.id}`, { state: { from: crumbs } })} style={{ cursor: "pointer" }}>
               <td style={{ textAlign: "left" }}>
                 <div style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
                   <span className="mono" style={{ color: "var(--text-dim)" }}>#{r.id}</span>

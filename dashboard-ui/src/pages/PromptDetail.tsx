@@ -14,6 +14,7 @@ import {
 } from "../api/client";
 import type { PromptVersion, DiffResponse, PromptStats, PromptRun, LintFinding } from "../api/types";
 import { InvocationsPanel } from "../components/InvocationsPanel";
+import { TemplateEditor } from "../components/TemplateEditor";
 
 type View = "current" | "diff" | "edit" | "stats" | "evals" | "calls";
 
@@ -324,25 +325,7 @@ export default function PromptDetail() {
                   Editing from v{selected}. Saving appends a new latest version (it won't overwrite history).
                 </div>
               )}
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                spellCheck={false}
-                style={{
-                  width: "100%",
-                  minHeight: 360,
-                  resize: "vertical",
-                  padding: "12px 14px",
-                  fontSize: 12.5,
-                  lineHeight: 1.6,
-                  fontFamily: "var(--font-mono)",
-                  color: "var(--text)",
-                  background: "var(--bg)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  outline: "none",
-                }}
-              />
+              <TemplateEditor value={draft} onChange={setDraft} minHeight={360} />
 
               {/* Template variables — color-coded against the saved set.
                   The app supplies a FIXED set of variables, so adding/removing
@@ -452,6 +435,7 @@ export default function PromptDetail() {
           {view === "calls" && (
             <div style={{ padding: 16 }}>
               <InvocationsPanel name={promptName} order="recent" days={30}
+                crumbs={[{ label: "prompts", to: "/prompts" }, { label: promptName, to: `/prompts/${encodeURIComponent(promptName)}` }]}
                 emptyHint="No invocations for this prompt in the last 30 days." />
             </div>
           )}

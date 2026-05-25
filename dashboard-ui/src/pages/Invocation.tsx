@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { Breadcrumbs, PageHeader } from "../components/ui";
 import { relTime } from "../utils";
 import { getInvocation } from "../api/client";
@@ -10,6 +10,9 @@ const usd = (n: number | null | undefined) => (n == null ? "—" : "$" + n.toFix
 export default function Invocation() {
   const { id = "" } = useParams();
   const nav = useNavigate();
+  const location = useLocation();
+  // The path we drilled down from (Cost or Prompts), passed via nav state.
+  const fromCrumbs = (location.state as { from?: { label: string; to?: string }[] } | null)?.from;
   const [d, setD] = useState<InvocationDetail | null>(null);
   const [err, setErr] = useState(false);
 
@@ -32,7 +35,12 @@ export default function Invocation() {
 
   return (
     <div>
-      <Breadcrumbs items={[{ label: "prompts", to: "/prompts" }, { label: d.prompt_name, to: `/prompts/${encodeURIComponent(d.prompt_name)}` }, { label: `invocation #${d.id}` }]} />
+      <Breadcrumbs items={[
+        ...(fromCrumbs && fromCrumbs.length
+          ? fromCrumbs
+          : [{ label: "prompts", to: "/prompts" }, { label: d.prompt_name, to: `/prompts/${encodeURIComponent(d.prompt_name)}` }]),
+        { label: `invocation #${d.id}` },
+      ]} />
       <PageHeader
         eyebrow="~/promptry · invocation"
         title={`#${d.id}`}

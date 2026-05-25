@@ -1,17 +1,24 @@
 import { useEffect, useState } from "react";
-import { BarChart, KPI, PageHeader, Select } from "../components/ui";
+import { useSearchParams } from "react-router-dom";
+import { BarChart, KPI, PageHeader, Select, Breadcrumbs } from "../components/ui";
 import { InvocationsPanel } from "../components/InvocationsPanel";
 import { formatTokens, pct, usd } from "../utils";
 import { getCostData, getCostCoverage, getPromptStats } from "../api/client";
 import type { CostResponse, CostCoverage, PromptStats } from "../api/types";
 
-type Drill = { level: "overview" } | { level: "module"; module: string } | { level: "prompt"; module: string; prompt: string };
-
 export default function Cost() {
   const [days, setDays] = useState(14);
   const [data, setData] = useState<CostResponse | null>(null);
   const [coverage, setCoverage] = useState<CostCoverage | null>(null);
-  const [drill, setDrill] = useState<Drill>({ level: "overview" });
+  // Drill lives in the URL so breadcrumbs deep-link back to each level.
+  const [params, setParams] = useSearchParams();
+  const module = params.get("module");
+  const prompt = params.get("prompt");
+  const level: "overview" | "module" | "prompt" = prompt ? "prompt" : module ? "module" : "overview";
+
+  const goOverview = () => setParams({}, { replace: false });
+  const goModule = (m: string) => setParams({ module: m });
+  const goPrompt = (m: string, p: string) => setParams({ module: m, prompt: p });
 
   useEffect(() => {
     getCostData(days).then(setData).catch(() => setData(null));
@@ -24,6 +31,12 @@ export default function Cost() {
 
   const s = data.summary;
   const moduleOf = (n: string) => (n.includes(".") ? n.split(".")[0] : "other");
+  const short = (p: string) => p.slice(p.indexOf(".") + 1);
+
+  // Breadcrumb items reflecting the drill path (deep-linkable).
+  const crumbs: { label: string; to?: string }[] = [{ label: "cost", to: "/cost" }];
+  if (module) crumbs.push({ label: module, to: level === "prompt" ? `/cost?module=${encodeURIComponent(module)}` : undefined });
+  if (prompt) crumbs.push({ label: short(prompt) });
 
   // Module rollup.
   const modules = (() => {
@@ -44,49 +57,25 @@ export default function Cost() {
     ]} />
   );
 
-  // Breadcrumb for drilled views.
-  const crumb = (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, marginBottom: 14, fontFamily: "var(--font-mono)" }}>
-      <button className="lnk" onClick={() => setDrill({ level: "overview" })} style={crumbStyle(drill.level === "overview")}>cost</button>
-      {drill.level !== "overview" && (<>
-        <span style={{ color: "var(--muted)" }}>/</span>
-        <button className="lnk" onClick={() => setDrill({ level: "module", module: drill.module })} style={crumbStyle(drill.level === "module")}>{drill.module}</button>
-      </>)}
-      {drill.level === "prompt" && (<>
-        <span style={{ color: "var(--muted)" }}>/</span>
-        <span style={{ color: "var(--text)" }}>{drill.prompt.slice(drill.prompt.indexOf(".") + 1)}</span>
-      </>)}
-    </div>
-  );
-
   return (
     <div>
+      {/* Breadcrumb always topmost, above the title (consistent with Prompts). */}
+      {level !== "overview" && <Breadcrumbs items={crumbs} />}
+
       <PageHeader eyebrow="~/promptry · cost" title="Cost & Tokens"
         description="Follow the money: module spend → prompt → the priciest individual calls." actions={daysSelect} />
 
-      {drill.level !== "overview" && crumb}
-
-      {drill.level === "overview" && (
-        <OverviewLevel
-          s={s} data={data} coverage={coverage} modules={modules} moduleMax={moduleMax}
-          onModule={(m: string) => setDrill({ level: "module", module: m })}
-        />
+      {level === "overview" && (
+        <OverviewLevel s={s} data={data} coverage={coverage} modules={modules} moduleMax={moduleMax} onModule={goModule} />
       )}
-
-      {drill.level === "module" && (
-        <ModuleLevel
-          module={drill.module} data={data} moduleOf={moduleOf}
-          onPrompt={(p: string) => setDrill({ level: "prompt", module: drill.module, prompt: p })}
-        />
+      {level === "module" && module && (
+        <ModuleLevel module={module} data={data} moduleOf={moduleOf} onPrompt={(p: string) => goPrompt(module, p)} />
       )}
-
-      {drill.level === "prompt" && <PromptCostLevel prompt={drill.prompt} days={days} />}
+      {level === "prompt" && prompt && module && (
+        <PromptCostLevel prompt={prompt} module={module} days={days} />
+      )}
     </div>
   );
-}
-
-function crumbStyle(active: boolean): React.CSSProperties {
-  return { background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "var(--font-mono)", fontSize: 12.5, color: active ? "var(--text)" : "var(--accent)" };
 }
 
 /* ---- overview ---- */
@@ -169,9 +158,16 @@ function ModuleLevel({ module, data, moduleOf, onPrompt }: any) {
 }
 
 /* ---- prompt: cost stats + cost-sorted invocations ---- */
-function PromptCostLevel({ prompt, days }: { prompt: string; days: number }) {
+function PromptCostLevel({ prompt, module, days }: { prompt: string; module: string; days: number }) {
   const [stats, setStats] = useState<PromptStats | null>(null);
   useEffect(() => { getPromptStats(prompt, days).then(setStats).catch(() => setStats(null)); }, [prompt, days]);
+  const short = prompt.slice(prompt.indexOf(".") + 1);
+  // Breadcrumb path to hand to the invocation page so "back" returns here.
+  const crumbs = [
+    { label: "cost", to: "/cost" },
+    { label: module, to: `/cost?module=${encodeURIComponent(module)}` },
+    { label: short, to: `/cost?module=${encodeURIComponent(module)}&prompt=${encodeURIComponent(prompt)}` },
+  ];
   const c = stats?.metrics.cost;
   const fmt = (n: number | undefined) => (n == null ? "—" : "$" + n.toFixed(5));
   return (
@@ -187,7 +183,7 @@ function PromptCostLevel({ prompt, days }: { prompt: string; days: number }) {
       <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
         Most expensive calls first — click one to see exactly what drove the cost.
       </div>
-      <InvocationsPanel name={prompt} order="cost" days={days}
+      <InvocationsPanel name={prompt} order="cost" days={days} crumbs={crumbs}
         emptyHint="No invocations captured for this prompt in the window." />
     </>
   );
