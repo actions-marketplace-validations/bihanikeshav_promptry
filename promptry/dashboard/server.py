@@ -361,7 +361,25 @@ def prompt_content(name: str, v: Optional[int] = Query(default=None)):
     record = storage.get_prompt(name, version=v)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Prompt '{name}' not found")
-    return _dc_to_dict(record)
+    out = _dc_to_dict(record)
+    # Attach template variables + lint findings so the UI can show the
+    # template's contract and warn about footguns.
+    try:
+        from promptry.lint import extract_variables, lint_prompt
+        out["variables"] = extract_variables(record.content)
+        out["lint"] = lint_prompt(record.content)
+    except Exception:
+        out["variables"] = []
+        out["lint"] = []
+    return out
+
+
+@app.post("/api/prompts/lint")
+def lint_prompt_endpoint(body: dict):
+    """Lint arbitrary prompt text (live, as the user types in the editor)."""
+    from promptry.lint import extract_variables, lint_prompt
+    content = body.get("content", "")
+    return {"variables": extract_variables(content), "lint": lint_prompt(content)}
 
 
 class _PromptEdit(BaseModel):
@@ -387,6 +405,16 @@ def update_prompt_content(name: str, body: _PromptEdit):
     record = storage.save_prompt(name=name, content=content, content_hash=h,
                                  metadata={"source": "dashboard_edit"}, force=True)
     return {"ok": True, "name": name, "version": record.version, "hash": record.hash}
+
+
+@app.get("/api/prompts/{name}/runs")
+def prompt_runs(name: str, limit: int = Query(default=50, ge=1)):
+    """Eval runs that exercised this prompt (newest first) for the prompt↔eval
+    linkage on PromptDetail."""
+    storage = get_storage()
+    if not hasattr(storage, "get_runs_for_prompt"):
+        return {"runs": []}
+    return {"runs": storage.get_runs_for_prompt(name, limit=limit)}
 
 
 @app.get("/api/prompts/{name}/stats")
@@ -524,6 +552,32 @@ def cost_data(
 
 
 # ---- Votes ----
+
+@app.get("/api/cost/coverage")
+def cost_coverage(days: int = Query(default=30, ge=1)):
+    """Models seen in the ledger that have NO pricing entry — their cost
+    silently reads $0, so spend is undercounted. Also reports refreshable
+    rate count from litellm if available."""
+    from promptry.pricing import is_known_model
+
+    storage = get_storage()
+    seen = storage.get_invocation_models(days=days) if hasattr(storage, "get_invocation_models") else []
+    uncosted = [m for m in seen if not is_known_model(m["model"])]
+    return {
+        "days": days,
+        "models_seen": len(seen),
+        "uncosted": uncosted,
+        "uncosted_calls": sum(m["calls"] for m in uncosted),
+    }
+
+
+@app.post("/api/cost/refresh-rates")
+def cost_refresh_rates():
+    """Pull current rates from litellm's model_cost into the rate table."""
+    from promptry.pricing import refresh_rates_from_litellm
+    n = refresh_rates_from_litellm()
+    return {"ok": True, "updated": n}
+
 
 @app.get("/api/votes/stats")
 def vote_stats(

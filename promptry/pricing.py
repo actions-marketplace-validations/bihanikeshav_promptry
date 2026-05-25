@@ -82,6 +82,48 @@ def _lookup_rates(model: str) -> dict | None:
     return None
 
 
+def is_known_model(model: str) -> bool:
+    """True if we have a rate for this model (exact or prefix match).
+    Unknown models silently cost $0, so callers can warn on False."""
+    return _lookup_rates(model) is not None
+
+
+def refresh_rates_from_litellm() -> int:
+    """Pull current rates from litellm's model_cost map into RATES, so the
+    hand-maintained snapshot stays current. Returns the number of models
+    added/updated. No-op (returns 0) if litellm isn't installed.
+
+    litellm stores per-token USD as input_cost_per_token / output_cost_per_token
+    (and cache_*); we convert to per-1M and the {in,cached,cache_write,out}
+    shape promptry uses.
+    """
+    try:
+        import litellm  # noqa
+        model_cost = getattr(litellm, "model_cost", None)
+    except Exception:
+        return 0
+    if not model_cost:
+        return 0
+
+    updated = 0
+    for name, info in model_cost.items():
+        if not isinstance(info, dict):
+            continue
+        inp = info.get("input_cost_per_token")
+        out = info.get("output_cost_per_token")
+        if inp is None and out is None:
+            continue
+        in_m = (inp or 0) * 1_000_000
+        out_m = (out or 0) * 1_000_000
+        cached = info.get("cache_read_input_token_cost")
+        cached_m = (cached * 1_000_000) if cached is not None else in_m * 0.5
+        cw = info.get("cache_creation_input_token_cost")
+        cw_m = (cw * 1_000_000) if cw is not None else in_m
+        RATES[name] = {"in": in_m, "cached": cached_m, "cache_write": cw_m, "out": out_m}
+        updated += 1
+    return updated
+
+
 def cache_hit_rate(cached_tokens: int, tokens_in: int) -> float:
     """Fraction of input tokens served from cache. 0 if tokens_in is 0."""
     return cached_tokens / tokens_in if tokens_in > 0 else 0.0

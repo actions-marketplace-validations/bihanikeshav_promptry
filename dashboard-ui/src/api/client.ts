@@ -13,6 +13,9 @@ import type {
   PlaygroundEvalResponse,
   PromptContent,
   PromptStats,
+  PromptRun,
+  CostCoverage,
+  LintFinding,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -97,6 +100,24 @@ export function getPromptContent(
 
 export function getPromptStats(name: string, days = 30): Promise<PromptStats> {
   return fetchJson(`/api/prompts/${encodeURIComponent(name)}/stats?days=${days}`);
+}
+
+export function getPromptRuns(name: string): Promise<{ runs: PromptRun[] }> {
+  return fetchJson(`/api/prompts/${encodeURIComponent(name)}/runs`);
+}
+
+export function getCostCoverage(days = 30): Promise<CostCoverage> {
+  return fetchJson(`/api/cost/coverage?days=${days}`);
+}
+
+export async function lintPromptText(content: string): Promise<{ variables: string[]; lint: LintFinding[] }> {
+  const res = await fetch(`${BASE}/api/prompts/lint`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
 }
 
 export async function savePromptContent(

@@ -8,10 +8,12 @@ import {
   getPromptContent,
   savePromptContent,
   getPromptStats,
+  getPromptRuns,
+  lintPromptText,
 } from "../api/client";
-import type { PromptVersion, DiffResponse, PromptStats } from "../api/types";
+import type { PromptVersion, DiffResponse, PromptStats, PromptRun, LintFinding } from "../api/types";
 
-type View = "current" | "diff" | "edit" | "stats";
+type View = "current" | "diff" | "edit" | "stats" | "evals";
 
 export default function PromptDetail() {
   const { name = "" } = useParams();
@@ -25,6 +27,9 @@ export default function PromptDetail() {
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [stats, setStats] = useState<PromptStats | null>(null);
+  const [runs, setRuns] = useState<PromptRun[] | null>(null);
+  const [variables, setVariables] = useState<string[]>([]);
+  const [lint, setLint] = useState<LintFinding[]>([]);
 
   function reloadVersions(selectLatest = false) {
     return getPromptVersions(promptName)
@@ -72,6 +77,26 @@ export default function PromptDetail() {
     if (view !== "stats" || stats) return;
     getPromptStats(promptName, 30).then(setStats).catch(() => setStats(null));
   }, [view, promptName, stats]);
+
+  // Eval runs that exercised this prompt (loaded when the Evals tab opens).
+  useEffect(() => {
+    if (view !== "evals" || runs) return;
+    getPromptRuns(promptName).then((r) => setRuns(r.runs)).catch(() => setRuns([]));
+  }, [view, promptName, runs]);
+
+  // Live lint + variable extraction while editing.
+  useEffect(() => {
+    if (view !== "edit") return;
+    const t = setTimeout(() => {
+      lintPromptText(draft)
+        .then((r) => {
+          setVariables(r.variables);
+          setLint(r.lint);
+        })
+        .catch(() => {});
+    }, 300);
+    return () => clearTimeout(t);
+  }, [view, draft]);
 
   const isLatest = versions.length > 0 && selected === versions[0].version;
 
@@ -183,6 +208,7 @@ export default function PromptDetail() {
               {tab("diff", "Diff", !diff)}
               {tab("edit", "Edit")}
               {tab("stats", "Stats")}
+              {tab("evals", "Evals")}
             </div>
             {view === "diff" && diff && (
               <div style={{ display: "flex", gap: 6 }}>
@@ -281,6 +307,32 @@ export default function PromptDetail() {
                   outline: "none",
                 }}
               />
+
+              {/* Template variables + lint findings */}
+              {variables.length > 0 && (
+                <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>variables:</span>
+                  {variables.map((v) => (
+                    <span key={v} className="chip mono" style={{ fontSize: 10.5, color: "var(--accent)", borderColor: "var(--accent-line)", background: "var(--accent-soft)" }}>
+                      ${v}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {lint.length > 0 && (
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+                  {lint.map((f, i) => {
+                    const c = f.level === "error" ? "var(--error)" : f.level === "warning" ? "var(--warning)" : "var(--text-dim)";
+                    return (
+                      <div key={i} style={{ display: "flex", gap: 8, fontSize: 11.5, color: c, alignItems: "baseline" }}>
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, textTransform: "uppercase", flexShrink: 0 }}>{f.level}</span>
+                        <span style={{ color: "var(--text-dim)" }}>{f.message}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
                 <button
                   onClick={handleSave}
@@ -322,9 +374,50 @@ export default function PromptDetail() {
 
           {/* STATS — per-call distribution over the last 30 days */}
           {view === "stats" && <StatsPanel stats={stats} />}
+
+          {/* EVALS — which eval runs exercised this prompt */}
+          {view === "evals" && <EvalsPanel runs={runs} />}
         </div>
       </div>
     </div>
+  );
+}
+
+/* -------- eval runs that exercised this prompt -------- */
+function EvalsPanel({ runs }: { runs: PromptRun[] | null }) {
+  if (!runs) return <div style={{ padding: 24, color: "var(--muted)", fontSize: 12 }}>Loading…</div>;
+  if (runs.length === 0)
+    return (
+      <div style={{ padding: 24, color: "var(--muted)", fontSize: 12.5, textAlign: "center" }}>
+        No eval runs have referenced this prompt yet. Link a suite by passing
+        <span className="mono" style={{ color: "var(--text-dim)" }}> prompt_name</span> when you record a run.
+      </div>
+    );
+  return (
+    <table className="pr">
+      <thead>
+        <tr>
+          <th></th><th>Suite</th><th className="r">Prompt v</th><th>Model</th>
+          <th className="r">Score</th><th>When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {runs.map((r) => (
+          <tr key={r.run_id}>
+            <td style={{ width: 24, textAlign: "center" }}>
+              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: r.passed ? "var(--success)" : "var(--error)" }} />
+            </td>
+            <td style={{ fontWeight: 600, fontSize: 13 }}>{r.suite_name}</td>
+            <td className="r mono" style={{ color: "var(--text-dim)" }}>{r.prompt_version != null ? `v${r.prompt_version}` : "—"}</td>
+            <td className="mono" style={{ color: "var(--text-dim)", fontSize: 12 }}>{r.model_version ?? "—"}</td>
+            <td className="r mono" style={{ fontWeight: 600, color: r.passed ? "var(--success)" : "var(--error)" }}>
+              {r.score != null ? (r.score * 100).toFixed(0) + "%" : "—"}
+            </td>
+            <td className="mono" style={{ color: "var(--secondary)", fontSize: 11 }}>{relTime(r.timestamp)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

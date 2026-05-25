@@ -391,6 +391,50 @@ class SQLiteStorage(BaseStorage):
 
         return {"name": name, "days": days, "count": len(rows), "metrics": metrics, "histogram": hist}
 
+    def get_runs_for_prompt(self, prompt_name: str, limit: int = 50) -> list[dict]:
+        """Eval runs that exercised a given prompt, newest first, with the
+        prompt version each ran against. Powers the prompt↔eval linkage so a
+        prompt page can show 'did this version pass?'."""
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT id, suite_name, prompt_version, model_version,
+                          timestamp, overall_pass, overall_score
+                   FROM eval_runs WHERE prompt_name = ?
+                   ORDER BY id DESC LIMIT ?""",
+                (prompt_name, limit),
+            )
+            return [
+                {
+                    "run_id": r["id"],
+                    "suite_name": r["suite_name"],
+                    "prompt_version": r["prompt_version"],
+                    "model_version": r["model_version"],
+                    "timestamp": r["timestamp"],
+                    "passed": bool(r["overall_pass"]),
+                    "score": r["overall_score"],
+                }
+                for r in cur.fetchall()
+            ]
+
+    def get_invocation_models(self, days: int = 30) -> list[dict]:
+        """Distinct models seen in the invocations ledger over the window,
+        with call counts. Used to flag models that have no pricing entry."""
+        import json as _json
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT metadata FROM invocations
+                   WHERE created_at >= datetime('now', ? || ' days')""",
+                (f"-{days}",),
+            )
+            rows = cur.fetchall()
+        counts: dict[str, int] = {}
+        for r in rows:
+            meta = _json.loads(r["metadata"]) if r["metadata"] else {}
+            model = meta.get("model")
+            if model:
+                counts[model] = counts.get(model, 0) + 1
+        return [{"model": m, "calls": c} for m, c in sorted(counts.items(), key=lambda x: -x[1])]
+
     def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
         """Delete all but the newest *keep_last* versions of a prompt.
 

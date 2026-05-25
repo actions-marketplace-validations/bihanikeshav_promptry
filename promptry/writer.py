@@ -56,6 +56,16 @@ class AsyncWriter(BaseStorage):
         self._thread.start()
         atexit.register(self.flush)
 
+    def __getattr__(self, name):
+        # Read methods added to the storage backend don't need an explicit
+        # passthrough here — delegate any unknown attribute to the wrapped
+        # storage. (Write methods that must be queued are defined explicitly
+        # below; __getattr__ only fires for names not found on the instance.)
+        # Guard against recursion before _storage is set.
+        if name == "_storage":
+            raise AttributeError(name)
+        return getattr(self._storage, name)
+
     def _drain(self):
         """Process writes until stopped."""
         while self._running or not self._queue.empty():

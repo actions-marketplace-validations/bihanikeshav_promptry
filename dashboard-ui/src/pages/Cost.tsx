@@ -1,17 +1,21 @@
 import { useEffect, useState } from "react";
 import { BarChart, KPI, PageHeader, Select } from "../components/ui";
 import { formatTokens, pct, usd } from "../utils";
-import { getCostData } from "../api/client";
-import type { CostResponse } from "../api/types";
+import { getCostData, getCostCoverage } from "../api/client";
+import type { CostResponse, CostCoverage } from "../api/types";
 
 export default function Cost() {
   const [days, setDays] = useState(14);
   const [data, setData] = useState<CostResponse | null>(null);
+  const [coverage, setCoverage] = useState<CostCoverage | null>(null);
 
   useEffect(() => {
     getCostData(days)
       .then(setData)
       .catch(() => setData(null));
+    getCostCoverage(days)
+      .then(setCoverage)
+      .catch(() => setCoverage(null));
   }, [days]);
 
   if (!data) {
@@ -62,6 +66,27 @@ export default function Cost() {
           />
         }
       />
+
+      {coverage && coverage.uncosted.length > 0 && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: "11px 14px",
+            borderRadius: 8,
+            border: "1px solid var(--warning)",
+            background: "color-mix(in oklch, var(--warning) 12%, transparent)",
+            fontSize: 12.5,
+            color: "var(--text-dim)",
+          }}
+        >
+          <span style={{ color: "var(--warning)", fontWeight: 600 }}>
+            {coverage.uncosted.length} model{coverage.uncosted.length > 1 ? "s" : ""} with no pricing
+          </span>{" "}
+          — {coverage.uncosted_calls.toLocaleString()} calls are counted as $0, so total spend is understated.
+          Missing: <span className="mono">{coverage.uncosted.map((m) => m.model).join(", ")}</span>. Add rates or run
+          pricing refresh.
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
         <KPI

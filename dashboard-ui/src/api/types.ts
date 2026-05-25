@@ -57,6 +57,30 @@ export interface PromptContent {
   hash: string;
   created_at: string;
   tags: string[];
+  variables?: string[];
+  lint?: { level: "error" | "warning" | "info"; message: string }[];
+}
+
+export interface PromptRun {
+  run_id: number;
+  suite_name: string;
+  prompt_version: number | null;
+  model_version: string | null;
+  timestamp: string;
+  passed: boolean;
+  score: number | null;
+}
+
+export interface LintFinding {
+  level: "error" | "warning" | "info";
+  message: string;
+}
+
+export interface CostCoverage {
+  days: number;
+  models_seen: number;
+  uncosted: { model: string; calls: number }[];
+  uncosted_calls: number;
 }
 
 export interface MetricSummary {
