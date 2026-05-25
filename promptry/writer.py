@@ -145,6 +145,9 @@ class AsyncWriter(BaseStorage):
     def list_prompts(self, name=None, offset=0, limit=100):
         return self._storage.list_prompts(name, offset=offset, limit=limit)
 
+    def list_prompt_summaries(self, offset=0, limit=200):
+        return self._storage.list_prompt_summaries(offset=offset, limit=limit)
+
     def get_tags(self, prompt_id):
         return self._storage.get_tags(prompt_id)
 

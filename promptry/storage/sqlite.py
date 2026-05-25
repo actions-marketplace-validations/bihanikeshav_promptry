@@ -261,6 +261,41 @@ class SQLiteStorage(BaseStorage):
                 records.append(record)
             return records
 
+    def list_prompt_summaries(self, offset=0, limit=200) -> list[dict]:
+        """One row per prompt NAME: its latest version + distinct tags.
+
+        The registry needs names, not versions. Paginating list_prompts()
+        by row meant a single heavily-versioned prompt (e.g. 86 versions)
+        could fill the whole page and hide every other name. This
+        aggregates in SQL so the limit applies to names.
+        """
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """
+                SELECT p.name AS name,
+                       MAX(p.version) AS latest_version,
+                       (SELECT GROUP_CONCAT(DISTINCT pt.tag)
+                          FROM prompt_tags pt
+                          JOIN prompts p2 ON pt.prompt_id = p2.id
+                         WHERE p2.name = p.name) AS tags_csv
+                  FROM prompts p
+                 GROUP BY p.name
+                 ORDER BY p.name
+                 LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            )
+            out = []
+            for row in cur.fetchall():
+                tags_csv = row["tags_csv"]
+                out.append({
+                    "name": row["name"],
+                    "latest_version": row["latest_version"],
+                    "tags": sorted(set(tags_csv.split(","))) if tags_csv else [],
+                })
+            return out
+
     def tag_prompt(self, prompt_id, tag):
         with self._lock:
             self._conn.execute(

@@ -299,21 +299,30 @@ def run_diff(run_id: int, baseline_run_id: int):
 # ---- Prompts ----
 
 @app.get("/api/prompts")
-def list_prompts(offset: int = Query(default=0), limit: int = Query(default=100)):
+def list_prompts(offset: int = Query(default=0), limit: int = Query(default=200)):
+    # Aggregate in SQL so the page limit applies to NAMES, not versions.
+    # (A prompt with 86 versions used to fill the whole page and hide the
+    # rest.) Fall back to the old row-grouping path for storage backends
+    # that don't implement the summaries query yet.
     storage = get_storage()
+    summaries = None
+    if hasattr(storage, "list_prompt_summaries"):
+        try:
+            summaries = storage.list_prompt_summaries(offset=offset, limit=limit)
+        except Exception:
+            summaries = None
+    if summaries is not None:
+        return summaries
+
     all_prompts = storage.list_prompts(offset=offset, limit=limit)
     if not all_prompts:
         return []
-
-    # Group by name, find latest version for each
     by_name: dict[str, list] = {}
     for p in all_prompts:
         by_name.setdefault(p.name, []).append(p)
-
     result = []
     for name, versions in by_name.items():
         latest = max(versions, key=lambda p: p.version)
-        # Collect all tags across versions
         all_tags = set()
         for v in versions:
             all_tags.update(v.tags)
@@ -322,7 +331,6 @@ def list_prompts(offset: int = Query(default=0), limit: int = Query(default=100)
             "latest_version": latest.version,
             "tags": sorted(all_tags),
         })
-
     return result
 
 

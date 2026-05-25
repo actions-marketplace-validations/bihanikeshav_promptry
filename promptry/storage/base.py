@@ -115,6 +115,12 @@ class BaseStorage(ABC):
     def get_cost_data(self, days: int = 7, name: str | None = None, model: str | None = None) -> dict:
         ...
 
+    @abstractmethod
+    def list_prompt_summaries(self, offset: int = 0, limit: int = 200) -> list[dict]:
+        """One row per prompt name: {name, latest_version, tags}. For the
+        registry list view (so heavily-versioned prompts don't hide others)."""
+        ...
+
     # ---- invocations ----
 
     @abstractmethod
