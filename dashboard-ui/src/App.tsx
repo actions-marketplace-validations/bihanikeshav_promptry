@@ -1,6 +1,7 @@
 import { Routes, Route } from "react-router-dom";
 import Layout from "./components/Layout";
 import Overview from "./pages/Overview";
+import Evals from "./pages/Evals";
 import SuiteDetail from "./pages/SuiteDetail";
 import RunDetail from "./pages/RunDetail";
 import RunDiff from "./pages/RunDiff";
@@ -15,6 +16,7 @@ export default function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<Overview />} />
+        <Route path="/evals" element={<Evals />} />
         <Route path="/suite/:name" element={<SuiteDetail />} />
         <Route path="/suite/:name/run/:runId" element={<RunDetail />} />
         <Route path="/suite/:name/diff" element={<RunDiff />} />

@@ -1,244 +1,176 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { KPI, PageHeader, Sparkline, StatusPill, Select } from "../components/ui";
-import { pct, relTime, scoreColor } from "../utils";
+import { KPI, PageHeader, Sparkline, StatusPill } from "../components/ui";
+import { pct, relTime, usd, formatTokens, scoreColor } from "../utils";
+import { getCostData } from "../api/client";
 import type { LayoutContext } from "../components/Layout";
-import type { SuiteSummary } from "../api/types";
-
-type Filter = "all" | "regressions" | "drifting";
-type Sort = "status" | "score" | "time";
-
-function prevScore(s: SuiteSummary): number | null {
-  const arr = s.sparkline_scores;
-  if (!arr || arr.length < 2) return null;
-  return arr[arr.length - 2];
-}
+import type { CostResponse } from "../api/types";
 
 export default function Overview() {
-  const { suites, refresh } = useOutletContext<LayoutContext>();
+  const { suites } = useOutletContext<LayoutContext>();
   const navigate = useNavigate();
-  const [filter, setFilter] = useState<Filter>("all");
-  const [sort, setSort] = useState<Sort>("status");
+  const [cost, setCost] = useState<CostResponse | null>(null);
 
-  const filtered = useMemo(() => {
-    let arr = suites.slice();
-    if (filter === "regressions") arr = arr.filter((s) => !s.passed);
-    if (filter === "drifting") arr = arr.filter((s) => s.drift_status === "drifting");
-    arr.sort((a, b) => {
-      if (sort === "status") {
-        const aw = !a.passed ? 0 : a.drift_status === "drifting" ? 1 : 2;
-        const bw = !b.passed ? 0 : b.drift_status === "drifting" ? 1 : 2;
-        if (aw !== bw) return aw - bw;
-      }
-      if (sort === "score") return (a.latest_score || 0) - (b.latest_score || 0);
-      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-    });
-    return arr;
-  }, [suites, filter, sort]);
+  useEffect(() => {
+    getCostData(30).then(setCost).catch(() => setCost(null));
+  }, []);
 
-  const kpis = useMemo(() => {
+  const evalKpis = useMemo(() => {
     const passing = suites.filter((s) => s.passed).length;
     const regressions = suites.filter((s) => !s.passed).length;
     const drifting = suites.filter((s) => s.drift_status === "drifting").length;
     return { passing, regressions, drifting };
   }, [suites]);
 
+  // Worst-performing suites that need eyes.
+  const attention = useMemo(
+    () =>
+      suites
+        .filter((s) => !s.passed || s.drift_status === "drifting")
+        .sort((a, b) => (a.latest_score || 0) - (b.latest_score || 0))
+        .slice(0, 5),
+    [suites]
+  );
+
+  // Cost rolled up per module (name prefix).
+  const byModule = useMemo(() => {
+    if (!cost) return [];
+    const m = new Map<string, { module: string; cost: number; calls: number }>();
+    for (const b of cost.by_name) {
+      const mod = b.name.includes(".") ? b.name.split(".")[0] : "other";
+      const e = m.get(mod) || { module: mod, cost: 0, calls: 0 };
+      e.cost += b.cost;
+      e.calls += b.calls;
+      m.set(mod, e);
+    }
+    return [...m.values()].sort((a, b) => b.cost - a.cost).slice(0, 6);
+  }, [cost]);
+
+  const moduleMax = Math.max(1e-9, ...byModule.map((r) => r.cost));
+  const cs = cost?.summary;
+
   return (
     <div>
       <PageHeader
         eyebrow="~/promptry · overview"
-        title="Eval Suites"
-        description="Continuous evaluation of every prompt. Regressions surface the moment a run falls below threshold."
-        actions={
-          <button className="btn" onClick={refresh}>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2 6a4 4 0 0 1 7-2.6M10 6a4 4 0 0 1-7 2.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-              <path d="M9 1v2.6H6.6M3 11V8.4h2.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Refresh
-          </button>
-        }
+        title="Overview"
+        description="Eval health and spend at a glance. Dive into Evals or Cost for detail."
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+      {/* Blended KPI row: eval health + spend */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 22 }}>
         <KPI
-          label="Passing"
-          value={`${kpis.passing}/${suites.length}`}
+          label="Suites passing"
+          value={`${evalKpis.passing}/${suites.length}`}
           accent="var(--success)"
-          sub="above 75% threshold"
+          sub={evalKpis.regressions > 0 ? `${evalKpis.regressions} regressions` : "all green"}
         />
-        <KPI label="Regressions" value={kpis.regressions} accent="var(--error)" sub="need attention" />
-        <KPI label="Drifting" value={kpis.drifting} accent="var(--warning)" sub="negative slope" />
+        <KPI label="Drifting" value={evalKpis.drifting} accent="var(--warning)" sub="negative slope" />
         <KPI
-          label="Total suites"
-          value={suites.length}
+          label="Spend (30d)"
+          value={cs ? usd(cs.total_cost, 2) : "—"}
           accent="var(--text)"
-          sub={
-            suites.length > 0
-              ? `last sync ${relTime(
-                  suites.reduce((a, b) =>
-                    new Date(a.timestamp) > new Date(b.timestamp) ? a : b
-                  ).timestamp
-                )}`
-              : "no data yet"
-          }
+          sub={cs ? `${cs.total_calls.toLocaleString()} calls` : ""}
+        />
+        <KPI
+          label="Avg $/call"
+          value={cs ? "$" + (cs.avg_cost ?? 0).toFixed(5) : "—"}
+          accent="var(--accent)"
+          sub={cs ? `${formatTokens(cs.total_tokens_in)} in · ${formatTokens(cs.total_tokens_out)} out` : ""}
         />
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <div
-          style={{
-            display: "inline-flex",
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 6,
-            padding: 2,
-          }}
-        >
-          {[
-            { k: "all" as const, label: "All suites", n: suites.length },
-            { k: "regressions" as const, label: "Regressions", n: kpis.regressions },
-            { k: "drifting" as const, label: "Drifting", n: kpis.drifting },
-          ].map((opt) => (
-            <button
-              key={opt.k}
-              onClick={() => setFilter(opt.k)}
-              style={{
-                padding: "5px 11px",
-                fontSize: 12,
-                borderRadius: 4,
-                background: filter === opt.k ? "var(--bg-elev)" : "transparent",
-                border: filter === opt.k ? "1px solid var(--border)" : "1px solid transparent",
-                color: filter === opt.k ? "var(--text)" : "var(--secondary)",
-                cursor: "pointer",
-                fontWeight: filter === opt.k ? 600 : 500,
-                fontFamily: "var(--font-ui)",
-              }}
-            >
-              {opt.label}{" "}
-              <span className="mono" style={{ marginLeft: 5, color: "var(--muted)", fontSize: 11 }}>
-                {opt.n}
-              </span>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* Needs attention (evals) */}
+        <div className="card" style={{ overflow: "hidden" }}>
+          <div
+            style={{
+              padding: "13px 16px",
+              borderBottom: "1px solid var(--border)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Needs attention</div>
+            <button className="btn" onClick={() => navigate("/evals")}>
+              All evals ›
             </button>
-          ))}
+          </div>
+          {attention.length === 0 ? (
+            <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>
+              All suites passing and stable. 🌿
+            </div>
+          ) : (
+            <table className="pr">
+              <tbody>
+                {attention.map((s) => (
+                  <tr key={s.name} onClick={() => navigate(`/suite/${encodeURIComponent(s.name)}`)}>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</span>
+                        {!s.passed && <StatusPill status="regression" />}
+                      </div>
+                    </td>
+                    <td className="c">
+                      <Sparkline scores={s.sparkline_scores} width={90} height={24} />
+                    </td>
+                    <td className="r mono" style={{ fontSize: 14, fontWeight: 600, color: scoreColor(s.latest_score) }}>
+                      {pct(s.latest_score, 0)}
+                    </td>
+                    <td className="mono" style={{ color: "var(--secondary)", fontSize: 11 }}>
+                      {relTime(s.timestamp)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
-        <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Sort
-          </span>
-          <Select
-            value={sort}
-            onChange={(v) => setSort(v as Sort)}
-            minWidth={200}
-            options={[
-              { value: "status", label: "Status · regressions first" },
-              { value: "score", label: "Score · low to high" },
-              { value: "time", label: "Last run" },
-            ]}
-          />
-        </div>
-      </div>
 
-      <div className="card" style={{ overflow: "hidden" }}>
-        <table className="pr">
-          <thead>
-            <tr>
-              <th style={{ width: 28 }}></th>
-              <th>Suite</th>
-              <th>Model</th>
-              <th>Prompt</th>
-              <th className="r">Score</th>
-              <th>Δ 7d</th>
-              <th className="c">Trend</th>
-              <th>Drift</th>
-              <th>Last run</th>
-              <th className="r"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((s) => {
-              const prev = prevScore(s);
-              const delta = prev != null && s.latest_score != null ? s.latest_score - prev : null;
-              const rowCls = !s.passed ? "regressed" : s.drift_status === "drifting" ? "drifting" : "";
-              return (
-                <tr
-                  key={s.name}
-                  className={rowCls}
-                  onClick={() => navigate(`/suite/${encodeURIComponent(s.name)}`)}
-                >
-                  <td style={{ textAlign: "center" }}>
-                    <span
-                      style={{
-                        display: "inline-block",
-                        width: 8,
-                        height: 8,
-                        borderRadius: 999,
-                        background: !s.passed
-                          ? "var(--error)"
-                          : s.drift_status === "drifting"
-                            ? "var(--warning)"
-                            : "var(--success)",
-                        boxShadow: `0 0 0 3px ${
-                          !s.passed
-                            ? "rgba(248,113,113,0.15)"
-                            : s.drift_status === "drifting"
-                              ? "rgba(251,191,36,0.15)"
-                              : "rgba(74,222,128,0.12)"
-                        }`,
-                      }}
-                    />
-                  </td>
-                  <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ color: "var(--text)", fontWeight: 600, fontSize: 13.5 }}>{s.name}</span>
-                      {!s.passed && <StatusPill status="regression" />}
-                    </div>
-                  </td>
-                  <td className="mono" style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                    {s.model_version ?? "—"}
-                  </td>
-                  <td className="mono" style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                    {s.prompt_version != null ? `v${s.prompt_version}` : "—"}
-                  </td>
-                  <td
-                    className="r mono"
-                    style={{ fontSize: 15, fontWeight: 600, color: scoreColor(s.latest_score) }}
-                  >
-                    {pct(s.latest_score, 0)}
-                  </td>
-                  <td
-                    className="mono"
-                    style={{
-                      color: delta == null ? "var(--muted)" : delta >= 0 ? "var(--success)" : "var(--error)",
-                      fontSize: 12,
-                    }}
-                  >
-                    {delta == null ? "—" : (delta >= 0 ? "+" : "") + (delta * 100).toFixed(1)}
-                  </td>
-                  <td className="c">
-                    <Sparkline scores={s.sparkline_scores} width={110} height={28} />
-                  </td>
-                  <td>
-                    <StatusPill status={s.drift_status} />
-                  </td>
-                  <td className="mono" style={{ color: "var(--secondary)", fontSize: 11.5 }}>
-                    {relTime(s.timestamp)}
-                  </td>
-                  <td className="r">
-                    <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 14 }}>›</span>
-                  </td>
-                </tr>
-              );
-            })}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={10} style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
-                  No suites match this filter.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        {/* Spend by module */}
+        <div className="card" style={{ overflow: "hidden" }}>
+          <div
+            style={{
+              padding: "13px 16px",
+              borderBottom: "1px solid var(--border)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Spend by module · 30d</div>
+            <button className="btn" onClick={() => navigate("/cost")}>
+              Cost detail ›
+            </button>
+          </div>
+          {byModule.length === 0 ? (
+            <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>
+              No cost data yet.
+            </div>
+          ) : (
+            <div style={{ padding: "10px 16px" }}>
+              {byModule.map((r) => (
+                <div key={r.module} style={{ marginBottom: 11 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12.5, fontFamily: "var(--font-mono)", color: "var(--text)" }}>
+                      {r.module}
+                      <span style={{ color: "var(--muted)", marginLeft: 6, fontSize: 11 }}>
+                        {r.calls.toLocaleString()} calls
+                      </span>
+                    </span>
+                    <span className="mono" style={{ fontSize: 12.5, color: "var(--accent)", fontWeight: 600 }}>
+                      ${r.cost.toFixed(2)}
+                    </span>
+                  </div>
+                  <div style={{ height: 5, background: "var(--bg-elev)", borderRadius: 3, overflow: "hidden", border: "1px solid var(--border)" }}>
+                    <div style={{ width: (r.cost / moduleMax) * 100 + "%", height: "100%", background: "var(--accent)", opacity: 0.85 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
