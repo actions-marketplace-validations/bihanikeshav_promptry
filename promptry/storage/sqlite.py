@@ -512,29 +512,24 @@ class SQLiteStorage(BaseStorage):
 
     def get_cost_data(self, days: int = 7, name: str | None = None, model: str | None = None) -> dict:
         with self._lock:
-            params: list = [days]
+            params: list = [f"-{days}"]
             name_filter = ""
             if name is not None:
-                name_filter = " AND name = ?"
+                name_filter = " AND prompt_name = ?"
                 params.append(name)
 
-            # Pull from BOTH the legacy prompts table (which versioned per
-            # call when track() was used naively) and the new invocations
-            # table (per-call ledger). Aliasing the column lets one loop
-            # process both.
-            inv_name_filter = name_filter.replace("name", "prompt_name") if name_filter else ""
+            # Cost lives in the invocations ledger — one row per LLM call.
+            # (The prompts table holds versioned templates, not per-call
+            # telemetry, so it must not contribute to cost or calls would be
+            # double-counted against template versions.)
             cur = self._conn.execute(
                 f"""
-                SELECT name, metadata, created_at FROM prompts
-                WHERE created_at >= datetime('now', ? || ' days')
-                {name_filter}
-                UNION ALL
                 SELECT prompt_name AS name, metadata, created_at FROM invocations
                 WHERE created_at >= datetime('now', ? || ' days')
-                {inv_name_filter}
+                {name_filter}
                 ORDER BY created_at ASC
                 """,
-                [f"-{days}"] + params[1:] + [f"-{days}"] + params[1:],
+                params,
             )
             rows = cur.fetchall()
 
