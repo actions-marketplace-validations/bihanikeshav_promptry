@@ -21,6 +21,7 @@ import type {
   BisectResult,
   BudgetStatus,
   ProjectConfig,
+  OnlineDrift,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -118,6 +119,10 @@ export function getPromptStats(name: string, days = 30): Promise<PromptStats> {
 
 export function getPromptRuns(name: string): Promise<{ runs: PromptRun[] }> {
   return fetchJson(`/api/prompts/${encodeURIComponent(name)}/runs`);
+}
+
+export function getOnlineDrift(name: string, days = 30): Promise<OnlineDrift> {
+  return fetchJson(`/api/prompts/${encodeURIComponent(name)}/online-drift?days=${days}`);
 }
 
 export function getCostCoverage(days = 30): Promise<CostCoverage> {

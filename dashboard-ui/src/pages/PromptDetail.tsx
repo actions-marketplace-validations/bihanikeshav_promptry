@@ -9,14 +9,15 @@ import {
   savePromptContent,
   getPromptStats,
   getPromptRuns,
+  getOnlineDrift,
   lintPromptText,
   promotePrompt,
 } from "../api/client";
-import type { PromptVersion, DiffResponse, PromptStats, PromptRun, LintFinding } from "../api/types";
+import type { PromptVersion, DiffResponse, PromptStats, PromptRun, LintFinding, OnlineDrift } from "../api/types";
 import { InvocationsPanel } from "../components/InvocationsPanel";
 import { TemplateEditor } from "../components/TemplateEditor";
 
-type View = "current" | "diff" | "edit" | "stats" | "evals" | "calls";
+type View = "current" | "diff" | "edit" | "stats" | "evals" | "calls" | "drift";
 
 export default function PromptDetail() {
   const { name = "" } = useParams();
@@ -31,6 +32,7 @@ export default function PromptDetail() {
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [stats, setStats] = useState<PromptStats | null>(null);
   const [runs, setRuns] = useState<PromptRun[] | null>(null);
+  const [drift, setDrift] = useState<OnlineDrift | null>(null);
   const [variables, setVariables] = useState<string[]>([]);
   const [savedVars, setSavedVars] = useState<string[]>([]);
   const [lint, setLint] = useState<LintFinding[]>([]);
@@ -88,6 +90,12 @@ export default function PromptDetail() {
     if (view !== "evals" || runs) return;
     getPromptRuns(promptName).then((r) => setRuns(r.runs)).catch(() => setRuns([]));
   }, [view, promptName, runs]);
+
+  // Production-telemetry drift (loaded when the Drift tab opens).
+  useEffect(() => {
+    if (view !== "drift" || drift) return;
+    getOnlineDrift(promptName, 30).then(setDrift).catch(() => setDrift(null));
+  }, [view, promptName, drift]);
 
   // Live lint + variable extraction while editing.
   useEffect(() => {
@@ -231,6 +239,7 @@ export default function PromptDetail() {
               {tab("stats", "Stats")}
               {tab("calls", "Invocations")}
               {tab("evals", "Evals")}
+              {tab("drift", "Drift")}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {view === "diff" && diff && (
@@ -439,7 +448,79 @@ export default function PromptDetail() {
                 emptyHint="No invocations for this prompt in the last 30 days." />
             </div>
           )}
+
+          {/* DRIFT — distribution shift in live telemetry (recent half vs older half) */}
+          {view === "drift" && <DriftPanel drift={drift} />}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------- production-telemetry drift -------- */
+function fmtMean(metric: string, v: number): string {
+  if (metric === "cost") return "$" + v.toFixed(4);
+  if (metric === "latency_ms") return Math.round(v) + "ms";
+  if (metric === "rating") return v.toFixed(2);
+  return Math.round(v).toString();
+}
+
+function DriftPanel({ drift }: { drift: OnlineDrift | null }) {
+  if (!drift) return <div style={{ padding: 24, color: "var(--muted)", fontSize: 12 }}>Loading…</div>;
+  if (drift.status === "insufficient")
+    return (
+      <div style={{ padding: 24, color: "var(--muted)", fontSize: 12.5, textAlign: "center" }}>
+        Not enough production traffic to analyse drift — needs a handful of recorded
+        invocations for this prompt in the last {drift.days} days.
+      </div>
+    );
+  const sevColor = (s: string) =>
+    s === "high" ? "var(--error)" : s === "medium" ? "var(--warning)" : "var(--muted)";
+  return (
+    <div style={{ padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <span style={{ width: 9, height: 9, borderRadius: 999, background: drift.drifting_count ? "var(--error)" : "var(--success)" }} />
+        <div style={{ fontSize: 13, fontWeight: 600 }}>
+          {drift.drifting_count
+            ? `${drift.drifting_count} metric${drift.drifting_count > 1 ? "s" : ""} drifting`
+            : "Stable"}
+        </div>
+        <div className="mono" style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>
+          {drift.total_calls} calls · last {drift.days}d · recent vs older half
+        </div>
+      </div>
+      <table className="pr">
+        <thead>
+          <tr>
+            <th></th><th>Metric</th><th className="r">Baseline</th><th className="r">Recent</th>
+            <th className="r">Change</th><th className="r">p</th><th>Flag</th>
+          </tr>
+        </thead>
+        <tbody>
+          {drift.metrics.map((m) => (
+            <tr key={m.metric}>
+              <td style={{ width: 24, textAlign: "center" }}>
+                <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: sevColor(m.severity) }} />
+              </td>
+              <td style={{ fontWeight: 600, fontSize: 13 }}>{m.label}</td>
+              <td className="r mono" style={{ color: "var(--text-dim)" }}>{fmtMean(m.metric, m.baseline_mean)}</td>
+              <td className="r mono" style={{ color: "var(--text-dim)" }}>{fmtMean(m.metric, m.recent_mean)}</td>
+              <td className="r mono" style={{ fontWeight: 600, color: m.drifting ? sevColor(m.severity) : "var(--text-dim)" }}>
+                {m.pct_change == null ? "n/a" : (m.pct_change >= 0 ? "+" : "") + (m.pct_change * 100).toFixed(0) + "%"}
+              </td>
+              <td className="r mono" style={{ color: "var(--text-dim)" }}>{m.p_value == null ? "—" : m.p_value.toFixed(3)}</td>
+              <td>
+                {m.drifting
+                  ? <span className="chip mono" style={{ fontSize: 10, color: sevColor(m.severity) }}>{m.severity}</span>
+                  : <span style={{ color: "var(--muted)", fontSize: 11 }}>—</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 10 }}>
+        Flagged only when a metric moves ≥10% toward its bad direction (cost, latency, length up;
+        rating down). p from a Mann-Whitney U test comparing the two halves.
       </div>
     </div>
   );

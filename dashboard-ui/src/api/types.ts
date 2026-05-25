@@ -136,6 +136,31 @@ export interface BisectResult {
   model_changed?: boolean;
 }
 
+export interface OnlineDriftMetric {
+  metric: string;
+  label: string;
+  count: number;
+  baseline_mean: number;
+  recent_mean: number;
+  pct_change: number | null;
+  slope: number;
+  p_value: number | null;
+  direction: "up" | "down" | "flat";
+  bad_direction: "up" | "down";
+  drifting: boolean;
+  severity: "high" | "medium" | "none";
+  message: string;
+}
+
+export interface OnlineDrift {
+  name: string;
+  days: number;
+  total_calls: number;
+  metrics: OnlineDriftMetric[];
+  drifting_count: number;
+  status: "drifting" | "stable" | "insufficient";
+}
+
 export interface ModelEntry {
   id: string;
   provider?: string;
