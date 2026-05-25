@@ -1,7 +1,8 @@
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { Breadcrumbs, PageHeader } from "../components/ui";
 import { relTime } from "../utils";
-import { getInvocation, getInvocationScan } from "../api/client";
+import { useState } from "react";
+import { getInvocation, getInvocationScan, addExample } from "../api/client";
 import { useCached } from "../lib/cache";
 import type { InvocationDetail, PiiScan, PiiFinding } from "../api/types";
 
@@ -15,8 +16,15 @@ export default function Invocation() {
   const fromCrumbs = (location.state as { from?: { label: string; to?: string }[] } | null)?.from;
   const { data: d } = useCached<InvocationDetail>(`invocation:${id}`, () => getInvocation(Number(id)));
   const { data: scan } = useCached<PiiScan>(`invocation-scan:${id}`, () => getInvocationScan(Number(id)));
+  const [addState, setAddState] = useState<"idle" | "adding" | "added" | "error">("idle");
 
   if (!d) return <div><PageHeader eyebrow="~/promptry · invocation" title={`#${id}`} description="Loading…" /></div>;
+
+  const addToEvalSet = async () => {
+    setAddState("adding");
+    try { await addExample(d.prompt_name, d.id); setAddState("added"); }
+    catch { setAddState("error"); }
+  };
 
   const m = d.metadata as Record<string, number | string>;
   const b = d.breakdown;
@@ -40,7 +48,17 @@ export default function Invocation() {
         eyebrow="~/promptry · invocation"
         title={`#${d.id}`}
         description={`${d.prompt_name}${d.prompt_version != null ? ` · v${d.prompt_version}` : ""} · ${relTime(d.created_at)}`}
-        actions={<button className="btn" onClick={() => nav(-1)}>← Back</button>}
+        actions={
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {d.input_text && (
+              <button className="btn" onClick={addToEvalSet} disabled={addState === "adding" || addState === "added"}
+                title="Promote this trace into the prompt's golden eval set">
+                {addState === "added" ? "✓ Added to eval set" : addState === "adding" ? "Adding…" : addState === "error" ? "Failed — retry" : "+ Add to eval set"}
+              </button>
+            )}
+            <button className="btn" onClick={() => nav(-1)}>← Back</button>
+          </div>
+        }
       />
 
       {/* meta strip */}

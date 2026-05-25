@@ -24,6 +24,8 @@ import type {
   OnlineDrift,
   PiiScan,
   NearDuplicates,
+  GoldenExample,
+  GoldenRunResult,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -129,6 +131,33 @@ export function getOnlineDrift(name: string, days = 30): Promise<OnlineDrift> {
 
 export function getNearDuplicates(threshold = 0.85): Promise<NearDuplicates> {
   return fetchJson(`/api/prompts/near-duplicates?threshold=${threshold}`);
+}
+
+// ---- Eval-from-trace: per-prompt golden set ----
+
+export function listExamples(name: string): Promise<{ examples: GoldenExample[] }> {
+  return fetchJson(`/api/prompts/${encodeURIComponent(name)}/examples`);
+}
+export async function addExample(name: string, invocationId: number): Promise<{ ok: boolean; id: number }> {
+  const res = await fetch(`${BASE}/api/prompts/${encodeURIComponent(name)}/examples`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ invocation_id: invocationId }),
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+export async function deleteExample(id: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`${BASE}/api/examples/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+export async function runExamples(name: string, model: string, threshold = 0.8): Promise<GoldenRunResult> {
+  const res = await fetch(`${BASE}/api/prompts/${encodeURIComponent(name)}/examples/run`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, threshold }),
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+  return res.json();
 }
 
 export function getCostCoverage(days = 30): Promise<CostCoverage> {

@@ -10,14 +10,17 @@ import {
   getPromptStats,
   getPromptRuns,
   getOnlineDrift,
+  listExamples,
+  runExamples,
+  deleteExample,
   lintPromptText,
   promotePrompt,
 } from "../api/client";
-import type { PromptVersion, DiffResponse, PromptStats, PromptRun, LintFinding, OnlineDrift } from "../api/types";
+import type { PromptVersion, DiffResponse, PromptStats, PromptRun, LintFinding, OnlineDrift, GoldenExample, GoldenRunResult } from "../api/types";
 import { InvocationsPanel } from "../components/InvocationsPanel";
 import { TemplateEditor } from "../components/TemplateEditor";
 
-type View = "current" | "diff" | "edit" | "stats" | "evals" | "calls" | "drift";
+type View = "current" | "diff" | "edit" | "stats" | "evals" | "calls" | "drift" | "examples";
 
 export default function PromptDetail() {
   const { name = "" } = useParams();
@@ -33,6 +36,7 @@ export default function PromptDetail() {
   const [stats, setStats] = useState<PromptStats | null>(null);
   const [runs, setRuns] = useState<PromptRun[] | null>(null);
   const [drift, setDrift] = useState<OnlineDrift | null>(null);
+  const [examples, setExamples] = useState<GoldenExample[] | null>(null);
   const [variables, setVariables] = useState<string[]>([]);
   const [savedVars, setSavedVars] = useState<string[]>([]);
   const [lint, setLint] = useState<LintFinding[]>([]);
@@ -96,6 +100,13 @@ export default function PromptDetail() {
     if (view !== "drift" || drift) return;
     getOnlineDrift(promptName, 30).then(setDrift).catch(() => setDrift(null));
   }, [view, promptName, drift]);
+
+  // Golden eval set (loaded when the Eval set tab opens).
+  const loadExamples = () => listExamples(promptName).then((r) => setExamples(r.examples)).catch(() => setExamples([]));
+  useEffect(() => {
+    if (view !== "examples" || examples) return;
+    loadExamples();
+  }, [view, promptName, examples]);
 
   // Live lint + variable extraction while editing.
   useEffect(() => {
@@ -240,6 +251,7 @@ export default function PromptDetail() {
               {tab("calls", "Invocations")}
               {tab("evals", "Evals")}
               {tab("drift", "Drift")}
+              {tab("examples", "Eval set")}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {view === "diff" && diff && (
@@ -451,6 +463,11 @@ export default function PromptDetail() {
 
           {/* DRIFT — distribution shift in live telemetry (recent half vs older half) */}
           {view === "drift" && <DriftPanel drift={drift} />}
+
+          {/* EVAL SET — golden examples promoted from real traces */}
+          {view === "examples" && (
+            <ExamplesPanel promptName={promptName} examples={examples} onChange={() => { setExamples(null); }} />
+          )}
         </div>
       </div>
     </div>
@@ -522,6 +539,90 @@ function DriftPanel({ drift }: { drift: OnlineDrift | null }) {
         Flagged only when a metric moves ≥10% toward its bad direction (cost, latency, length up;
         rating down). p from a Mann-Whitney U test comparing the two halves.
       </div>
+    </div>
+  );
+}
+
+/* -------- golden eval set (eval-from-trace) -------- */
+function ExamplesPanel({ promptName, examples, onChange }: { promptName: string; examples: GoldenExample[] | null; onChange: () => void }) {
+  const [model, setModel] = useState("gpt-4o-mini");
+  const [threshold, setThreshold] = useState(0.8);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<GoldenRunResult | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (!examples) return <div style={{ padding: 24, color: "var(--muted)", fontSize: 12 }}>Loading…</div>;
+
+  const run = async () => {
+    setRunning(true); setErr(null); setResult(null);
+    try { setResult(await runExamples(promptName, model.trim(), threshold)); }
+    catch (e) { setErr(e instanceof Error ? e.message : "Run failed"); }
+    finally { setRunning(false); }
+  };
+  const remove = async (id: number) => { await deleteExample(id); onChange(); };
+  const scoreFor = (id: number) => result?.results.find((r) => r.id === id);
+
+  if (examples.length === 0)
+    return (
+      <div style={{ padding: 24, color: "var(--muted)", fontSize: 12.5, textAlign: "center" }}>
+        No golden examples yet. Open any invocation of this prompt and click
+        <span className="mono" style={{ color: "var(--text-dim)" }}> + Add to eval set</span> to
+        promote a real trace into a regression case.
+      </div>
+    );
+
+  return (
+    <div style={{ padding: 16 }}>
+      {/* run controls */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{examples.length} example{examples.length === 1 ? "" : "s"}</span>
+        <div style={{ flex: 1 }} />
+        <input className="inp" value={model} onChange={(e) => setModel(e.target.value)} placeholder="model id"
+          style={{ width: 160, height: 28, fontSize: 12 }} />
+        <label style={{ fontSize: 11, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+          pass ≥
+          <input className="inp" type="number" min={0} max={1} step={0.05} value={threshold}
+            onChange={(e) => setThreshold(Number(e.target.value))} style={{ width: 60, height: 28, fontSize: 12 }} />
+        </label>
+        <button className="btn" onClick={run} disabled={running} style={{ background: "var(--accent)", color: "var(--bg)" }}>
+          {running ? "Running…" : "Run eval set"}
+        </button>
+      </div>
+
+      {err && <div style={{ fontSize: 12, color: "var(--error)", marginBottom: 12 }}>{err}</div>}
+      {result && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 14, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 18, fontWeight: 700, color: result.accuracy >= threshold ? "var(--success)" : "var(--error)" }}>
+            {(result.accuracy * 100).toFixed(0)}%
+          </span>
+          <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{result.passed}/{result.count} matched reference · {result.model}</span>
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)", marginLeft: "auto" }}>{result.mode} similarity ≥ {result.threshold}</span>
+        </div>
+      )}
+
+      <table className="pr">
+        <thead>
+          <tr><th></th><th>Reference (recorded)</th>{result && <th>Re-run output</th>}<th className="r">Score</th><th className="r"></th></tr>
+        </thead>
+        <tbody>
+          {examples.map((ex) => {
+            const r = scoreFor(ex.id);
+            return (
+              <tr key={ex.id}>
+                <td style={{ width: 22, textAlign: "center" }}>
+                  {r ? <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: r.error ? "var(--warning)" : r.passed ? "var(--success)" : "var(--error)" }} /> : <span style={{ color: "var(--muted)" }}>·</span>}
+                </td>
+                <td style={{ fontSize: 12, color: "var(--text-dim)", maxWidth: 340 }}>{(ex.reference_output || "").slice(0, 160) || <span style={{ color: "var(--muted)" }}>(no reference)</span>}</td>
+                {result && <td style={{ fontSize: 12, color: "var(--text)", maxWidth: 340 }}>{r?.error ? <span style={{ color: "var(--warning)" }}>{r.error}</span> : (r?.output_preview || "—")}</td>}
+                <td className="r mono" style={{ fontWeight: 600, color: r ? (r.passed ? "var(--success)" : "var(--error)") : "var(--muted)" }}>
+                  {r ? (r.score * 100).toFixed(0) + "%" : "—"}
+                </td>
+                <td className="r"><span role="button" onClick={() => remove(ex.id)} style={{ cursor: "pointer", color: "var(--muted)" }} title="remove">✕</span></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

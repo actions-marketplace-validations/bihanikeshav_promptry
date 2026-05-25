@@ -147,6 +147,37 @@ export interface BisectResult {
   model_changed?: boolean;
 }
 
+export interface GoldenExample {
+  id: number;
+  prompt_name: string;
+  input_text: string;
+  reference_output: string | null;
+  source_invocation_id: number | null;
+  model: string | null;
+  created_at: string;
+}
+
+export interface GoldenRunItem {
+  id: number;
+  score: number;
+  passed: boolean;
+  output_preview: string;
+  reference_preview: string;
+  latency_ms: number;
+  error: string | null;
+}
+
+export interface GoldenRunResult {
+  prompt_name: string;
+  model: string;
+  threshold: number;
+  mode: "semantic" | "lexical" | "none";
+  count: number;
+  passed: number;
+  accuracy: number;
+  results: GoldenRunItem[];
+}
+
 export interface NearDuplicatePair {
   a: string;
   b: string;

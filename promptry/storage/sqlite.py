@@ -146,6 +146,22 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
     ]),
+    (7, "add golden_examples (eval-from-trace) table", [
+        # A per-prompt golden set: real production traces promoted into
+        # regression examples. The recorded output becomes the reference a
+        # re-run is scored against. Distinct from code @suites (which are
+        # Python) — this is the data-driven, dashboard-managed counterpart.
+        """CREATE TABLE IF NOT EXISTS golden_examples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_name TEXT NOT NULL,
+            input_text TEXT NOT NULL,
+            reference_output TEXT,
+            source_invocation_id INTEGER,
+            model TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_golden_prompt ON golden_examples(prompt_name)",
+    ]),
 ]
 
 
@@ -1156,6 +1172,42 @@ class SQLiteStorage(BaseStorage):
                     "item_count": item_count,
                 })
             return results
+
+    # ---- golden examples (eval-from-trace) ----
+
+    def add_golden_example(self, prompt_name: str, input_text: str,
+                           reference_output: str | None = None,
+                           source_invocation_id: int | None = None,
+                           model: str | None = None) -> int:
+        """Promote a trace into a per-prompt golden example. Returns its id."""
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO golden_examples
+                   (prompt_name, input_text, reference_output, source_invocation_id, model)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (prompt_name, input_text, reference_output, source_invocation_id, model),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def list_golden_examples(self, prompt_name: str) -> list[dict]:
+        """Golden examples for a prompt, newest first."""
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT id, prompt_name, input_text, reference_output,
+                          source_invocation_id, model, created_at
+                   FROM golden_examples WHERE prompt_name = ? ORDER BY id DESC""",
+                (prompt_name,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def delete_golden_example(self, example_id: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM golden_examples WHERE id = ?", (example_id,)
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
 
     # ---- invocations ----
 
