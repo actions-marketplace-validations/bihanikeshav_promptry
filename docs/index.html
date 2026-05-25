@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>promptry · Sentry for prompts</title>
-<meta name="description" content="Local-first regression testing for LLM pipelines. Versions prompts, runs eval suites in CI, detects drift and regressions. SQLite. MIT. Zero SaaS." />
+<meta name="description" content="Local-first prompt observability for LLM pipelines. Versions prompts, runs eval suites in CI, tracks per-call cost with budgets, captures traces and feedback, edits prompts live. SQLite. MIT. Zero SaaS." />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -49,7 +49,7 @@
       </button>
       <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
         <svg class="sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" /></svg>
-        <svg class="moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
+        <svg class="moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
       </button>
       <a class="nav-cta" href="https://github.com/bihanikeshav/promptry">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5A11.5 11.5 0 0 0 .5 12c0 5.08 3.29 9.39 7.86 10.92.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.38-3.88-1.38-.52-1.32-1.28-1.67-1.28-1.67-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.3-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.3-.52-1.46.1-3.04 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.18-1.49 3.15-1.18 3.15-1.18.62 1.58.23 2.74.11 3.04.74.81 1.19 1.84 1.19 3.1 0 4.44-2.7 5.4-5.27 5.68.42.36.78 1.07.78 2.16v3.2c0 .32.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z" /></svg>
@@ -66,7 +66,7 @@
       <span class="dateline">~/promptry<span class="sep">·</span>released April 2026<span class="sep">·</span><a href="https://github.com/bihanikeshav/promptry/releases/tag/v0.9.5">v0.9.5</a></span>
       <h1 class="h1">Catch prompt regressions <em>before</em> your users do.</h1>
       <p class="hero-sub">
-        Python-native eval suites, automatic prompt versioning, statistical drift detection. One SQLite file on your machine — no YAML, no account, no cloud, no per-run judge tax.
+        Python eval suites that version every prompt, track the cost of every call, and catch drift with statistical tests. Edit prompts live, capture traces, set budgets. One SQLite file on your laptop, no account required.
       </p>
 
       <div class="install-stack">
@@ -165,8 +165,8 @@
   <div class="shell">
     <div class="sec-head">
       <div class="sec-kicker">~/capabilities</div>
-      <h2 class="sec-title">Everything you need to keep a prompt <em>honest</em>.</h2>
-      <p class="sec-lede">Eight primitives that cover the lifecycle, from the moment a prompt lands in source control to the moment it misbehaves in production.</p>
+      <h2 class="sec-title">Keep a prompt <em>honest</em>.</h2>
+      <p class="sec-lede">From the first commit to the cost of every call in production.</p>
     </div>
     <div class="caps-diff" role="list">
       <div class="diff-hunk" role="listitem">
@@ -185,6 +185,21 @@
         <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Compare any run to a baseline. Root-cause hints flag the exact delta.</span></div>
       </div>
       <div class="diff-hunk" role="listitem">
+        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Regression bisect</h3></div>
+        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">A test passed last month and fails now. Somewhere in 200 runs.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Bisect the run history to pinpoint the first run that broke it.</span></div>
+      </div>
+      <div class="diff-hunk" role="listitem">
+        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Live prompt CMS</h3></div>
+        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Fixing a typo in a prompt means a code change and a redeploy.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text"><code>render_prompt()</code> serves dashboard-edited templates live — no redeploy.</span></div>
+      </div>
+      <div class="diff-hunk" role="listitem">
+        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Environment promotion</h3></div>
+        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">An edit goes straight to prod and nobody reviewed it first.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">dev → staging → prod tags gate every change before it reaches users.</span></div>
+      </div>
+      <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Drift detection</h3></div>
         <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Scores slowly crawl down. You notice in Q3.</span></div>
         <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Rolling-window regression + Mann-Whitney U catches slow degradation.</span></div>
@@ -197,7 +212,17 @@
       <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Cost tracking</h3></div>
         <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Bill spikes. Which prompt? Which model? Nobody knows.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Per-prompt, per-model, per-suite accounting. Cache-aware everywhere.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Module → prompt → call drill-down with a template-vs-payload split.</span></div>
+      </div>
+      <div class="diff-hunk" role="listitem">
+        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Cost budgets</h3></div>
+        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">You find out you blew the budget when finance forwards the invoice.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Daily and monthly caps with breach alerts. A coverage check flags un-priced models.</span></div>
+      </div>
+      <div class="diff-hunk" role="listitem">
+        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Trace capture + feedback</h3></div>
+        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">A user thumbs-down a bad answer and it vanishes into a log file.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Opt-in, sampled request/response capture. Ratings ingest from your app via API.</span></div>
       </div>
       <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>CI + GitHub Action</h3></div>
@@ -218,42 +243,46 @@
   <div class="shell">
     <div class="sec-head">
       <div class="sec-kicker">~/flow</div>
-      <h2 class="sec-title">Four steps from plain-text prompt to a regression-proof pipeline.</h2>
-      <p class="sec-lede">No server to run. No account to create. No vendor telemetry to audit.</p>
+      <h2 class="sec-title">Four steps. Plain-text prompt in, regression tests out.</h2>
+      <p class="sec-lede">No server, no account, no telemetry. Just a CLI and a SQLite file.</p>
     </div>
     <div class="walk">
       <div class="steps">
-        <button class="step on" data-step="0">
-          <div class="step-num">1.</div>
+        <button class="step on" data-step="0" data-view="prompts" data-side="3">
+          <div class="step-num">1</div>
           <div>
-            <div class="step-title">Wrap your prompts with <code>track()</code></div>
-            <div class="step-body">One function call. Promptry stores the content-hashed version, keeps the history, and returns the string unchanged so your pipeline is untouched.</div>
+            <div class="step-title">Wrap prompts with <code>track()</code></div>
+            <div class="step-body">One line. <code>track()</code> hashes the prompt, saves the version, and returns the string. Your pipeline doesn't notice.</div>
           </div>
           <div class="step-meta">30s</div>
+          <span class="step-progress" aria-hidden="true"></span>
         </button>
-        <button class="step" data-step="1">
-          <div class="step-num">2.</div>
+        <button class="step" data-step="1" data-view="suites" data-side="1">
+          <div class="step-num">2</div>
           <div>
-            <div class="step-title">Declare a suite, write assertions</div>
-            <div class="step-body">Mix semantic, schema, LLM-judge, regex, grounding, JSON, tool-use, and multi-turn checks in a single <code>@suite</code>. The assertion API reads like pytest.</div>
+            <div class="step-title">Write a <code>@suite</code> of assertions</div>
+            <div class="step-body">Add whichever assertions the task needs. Semantic, schema, judge, tool-use, a few others. If you've used pytest you already know the API.</div>
           </div>
           <div class="step-meta">Python + JS</div>
+          <span class="step-progress" aria-hidden="true"></span>
         </button>
-        <button class="step" data-step="2">
-          <div class="step-num">3.</div>
+        <button class="step" data-step="2" data-view="runs" data-side="2">
+          <div class="step-num">3</div>
           <div>
             <div class="step-title">Run locally or in CI</div>
-            <div class="step-body"><code>promptry run</code> blocks on regression. The GitHub Action posts a PR comment with score deltas and the version that caused them.</div>
+            <div class="step-body"><code>promptry run</code> exits non-zero on regression. The GitHub Action comments on the PR with the score delta and the version that caused it.</div>
           </div>
           <div class="step-meta">GitHub Action</div>
+          <span class="step-progress" aria-hidden="true"></span>
         </button>
-        <button class="step" data-step="3">
-          <div class="step-num">4.</div>
+        <button class="step" data-step="3" data-view="overview" data-side="0">
+          <div class="step-num">4</div>
           <div>
-            <div class="step-title">Open the dashboard when something slips</div>
-            <div class="step-body">Zero-config web UI over the same SQLite file. Drift charts, run history, prompt diffs, cost rollups, playground.</div>
+            <div class="step-title">Open the dashboard to see what broke</div>
+            <div class="step-body">Same SQLite file, rendered in a browser. Drift charts, prompt diffs you can edit live, module→prompt→call cost drill-down, traces, and a playground.</div>
           </div>
           <div class="step-meta">localhost:8420</div>
+          <span class="step-progress" aria-hidden="true"></span>
         </button>
       </div>
 
@@ -271,61 +300,152 @@
             <div class="mock-side-item" data-side="1">Suites</div>
             <div class="mock-side-item" data-side="2">Runs</div>
             <div class="mock-side-item" data-side="3">Prompts</div>
-            <div class="mock-side-item">Models</div>
             <div class="mock-side-item">Cost</div>
+            <div class="mock-side-item">Models</div>
+            <div class="mock-side-item">Traces</div>
+            <div class="mock-side-item">Playground</div>
             <div class="mock-side-h" style="margin-top: 14px">Recent</div>
             <div class="mock-side-item recent">rag-regression</div>
             <div class="mock-side-item recent">summarizer-v2</div>
             <div class="mock-side-item recent">safety-suite</div>
           </div>
           <div class="mock-main">
-            <div class="mock-toolbar">
-              <div class="mock-title">rag-regression · <span class="dim">last 14 days</span></div>
-              <div class="base">● baseline: prod-2026-04-10</div>
-            </div>
-            <div class="mock-kpis">
-              <div class="kpi">
-                <div class="kpi-label">Score</div>
-                <div class="kpi-val">0.913<span class="kpi-delta">+0.02</span></div>
+
+            <!-- View 1: PROMPTS (maps to step 1: wrap with track()) -->
+            <div class="mock-view on" data-view="prompts">
+              <div class="mock-toolbar">
+                <div class="mock-title">prompts <span class="dim">· 47 versions tracked</span></div>
+                <div class="base">+ 3 this week</div>
               </div>
-              <div class="kpi">
-                <div class="kpi-label">Runs</div>
-                <div class="kpi-val">1,284</div>
-              </div>
-              <div class="kpi">
-                <div class="kpi-label">Pass rate</div>
-                <div class="kpi-val">96.4%<span class="kpi-delta down">-0.8</span></div>
-              </div>
-              <div class="kpi">
-                <div class="kpi-label">Cost / 1k</div>
-                <div class="kpi-val">$0.21</div>
+              <div class="mv-table">
+                <div class="mv-row mv-head">
+                  <span>name</span><span>ver</span><span>hash</span><span>tag</span><span class="mv-right">age</span>
+                </div>
+                <div class="mv-row"><span>rag-qa</span><span>v13</span><span>a3f9c2e</span><span class="mv-tag mv-tag-prod">prod</span><span class="mv-right">2h</span></div>
+                <div class="mv-row"><span>rag-qa</span><span>v12</span><span>8b2f14a</span><span></span><span class="mv-right">3d</span></div>
+                <div class="mv-row"><span>summarizer</span><span>v5</span><span>d91a0b7</span><span class="mv-tag mv-tag-prod">prod</span><span class="mv-right">5d</span></div>
+                <div class="mv-row"><span>safety-refusal</span><span>v8</span><span>4c1e52a</span><span></span><span class="mv-right">1w</span></div>
+                <div class="mv-row"><span>classify-intent</span><span>v2</span><span>7890fed</span><span class="mv-tag mv-tag-stage">staging</span><span class="mv-right">1w</span></div>
+                <div class="mv-row"><span>code-review</span><span>v3</span><span>2345abc</span><span></span><span class="mv-right">2w</span></div>
+                <div class="mv-row"><span>grounding-check</span><span>v7</span><span>6f1a09e</span><span class="mv-tag mv-tag-prod">prod</span><span class="mv-right">2w</span></div>
               </div>
             </div>
-            <div class="mock-chart">
-              <svg viewBox="0 0 400 140" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35" />
-                    <stop offset="100%" stop-color="var(--accent)" stop-opacity="0" />
-                  </linearGradient>
-                </defs>
-                <path d="M0,80 L30,72 L60,78 L90,60 L120,64 L150,52 L180,58 L210,44 L240,52 L270,40 L300,46 L330,36 L360,52 L400,28" fill="none" stroke="var(--accent)" stroke-width="1.5" />
-                <path d="M0,80 L30,72 L60,78 L90,60 L120,64 L150,52 L180,58 L210,44 L240,52 L270,40 L300,46 L330,36 L360,52 L400,28 L400,140 L0,140 Z" fill="url(#g1)" />
-                <path d="M0,90 L30,94 L60,88 L90,82 L120,86 L150,78 L180,84 L210,74 L240,80 L270,72 L300,78 L330,70 L360,76 L400,66" fill="none" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" />
-                <circle cx="330" cy="36" r="3" fill="var(--accent)" />
-                <circle cx="330" cy="36" r="6" fill="none" stroke="var(--accent)" stroke-opacity="0.4" />
-              </svg>
-            </div>
-            <div class="mock-insights">
-              <div class="mock-insight">
-                <div class="label">Root cause</div>
-                <div class="val">rag-qa v12 → v13 · refusal template shortened</div>
+
+            <!-- View 2: SUITES (maps to step 2: write @suite of assertions) -->
+            <div class="mock-view" data-view="suites">
+              <div class="mock-toolbar">
+                <div class="mock-title">suites <span class="dim">· 5 registered</span></div>
+                <div class="base">+ run all</div>
               </div>
-              <div class="mock-insight">
-                <div class="label">Drift window</div>
-                <div class="val">7 day · safety-refusal <span class="neg">-0.04σ</span></div>
+              <div class="mv-suites">
+                <div class="mv-suite">
+                  <div class="mv-suite-row">
+                    <span class="mv-suite-name">rag-regression</span>
+                    <span class="mv-status ok">● passing</span>
+                  </div>
+                  <div class="mv-suite-meta">12 tests · semantic + grounding + schema · score <b>0.913</b></div>
+                </div>
+                <div class="mv-suite">
+                  <div class="mv-suite-row">
+                    <span class="mv-suite-name">summarizer-quality</span>
+                    <span class="mv-status ok">● passing</span>
+                  </div>
+                  <div class="mv-suite-meta">8 tests · semantic + judge · score <b>0.872</b></div>
+                </div>
+                <div class="mv-suite">
+                  <div class="mv-suite-row">
+                    <span class="mv-suite-name">safety-refusal</span>
+                    <span class="mv-status warn">▲ drift</span>
+                  </div>
+                  <div class="mv-suite-meta">6 tests · refusal + not-contains · score <b>0.844</b> <span class="mv-delta down">−0.04σ</span></div>
+                </div>
+                <div class="mv-suite">
+                  <div class="mv-suite-row">
+                    <span class="mv-suite-name">classify-intent</span>
+                    <span class="mv-status ok">● passing</span>
+                  </div>
+                  <div class="mv-suite-meta">4 tests · matches + schema · score <b>0.955</b></div>
+                </div>
+                <div class="mv-suite">
+                  <div class="mv-suite-row">
+                    <span class="mv-suite-name">grounding-check</span>
+                    <span class="mv-status ok">● passing</span>
+                  </div>
+                  <div class="mv-suite-meta">9 tests · grounded + contains · score <b>0.891</b></div>
+                </div>
               </div>
             </div>
+
+            <!-- View 3: RUNS (maps to step 3: run locally or in CI) -->
+            <div class="mock-view" data-view="runs">
+              <div class="mock-toolbar">
+                <div class="mock-title">runs <span class="dim">· last 20 · main branch</span></div>
+                <div class="base">→ GitHub Action</div>
+              </div>
+              <div class="mv-runs">
+                <div class="mv-run mv-run-head"><span>time</span><span>suite</span><span class="mv-right">score</span><span class="mv-right">verdict</span></div>
+                <div class="mv-run"><span class="mv-t">10:42</span><span>rag-regression</span><span class="mv-right">0.913</span><span class="mv-right ok">✓ PASS</span></div>
+                <div class="mv-run"><span class="mv-t">09:15</span><span>summarizer-quality</span><span class="mv-right">0.872</span><span class="mv-right ok">✓ PASS</span></div>
+                <div class="mv-run"><span class="mv-t">08:03</span><span>safety-refusal</span><span class="mv-right">0.844</span><span class="mv-right warn">▲ WARN</span></div>
+                <div class="mv-run"><span class="mv-t">07:14</span><span>classify-intent</span><span class="mv-right">0.955</span><span class="mv-right ok">✓ PASS</span></div>
+                <div class="mv-run"><span class="mv-t">06:30</span><span>rag-regression</span><span class="mv-right">0.905</span><span class="mv-right ok">✓ PASS</span></div>
+                <div class="mv-run"><span class="mv-t">05:45</span><span>summarizer-quality</span><span class="mv-right">0.870</span><span class="mv-right ok">✓ PASS</span></div>
+                <div class="mv-run"><span class="mv-t">04:02</span><span>grounding-check</span><span class="mv-right">0.891</span><span class="mv-right ok">✓ PASS</span></div>
+                <div class="mv-run mv-run-fail"><span class="mv-t">yesterday</span><span>safety-refusal</span><span class="mv-right">0.762</span><span class="mv-right err">✗ FAIL</span></div>
+              </div>
+            </div>
+
+            <!-- View 4: OVERVIEW (maps to step 4: open the dashboard) -->
+            <div class="mock-view" data-view="overview">
+              <div class="mock-toolbar">
+                <div class="mock-title">rag-regression · <span class="dim">last 14 days</span></div>
+                <div class="base">● baseline: prod-2026-04-10</div>
+              </div>
+              <div class="mock-kpis">
+                <div class="kpi">
+                  <div class="kpi-label">Score</div>
+                  <div class="kpi-val">0.913<span class="kpi-delta">+0.02</span></div>
+                </div>
+                <div class="kpi">
+                  <div class="kpi-label">Runs</div>
+                  <div class="kpi-val">1,284</div>
+                </div>
+                <div class="kpi">
+                  <div class="kpi-label">Pass rate</div>
+                  <div class="kpi-val">96.4%<span class="kpi-delta down">-0.8</span></div>
+                </div>
+                <div class="kpi">
+                  <div class="kpi-label">Cost / 1k</div>
+                  <div class="kpi-val">$0.21</div>
+                </div>
+              </div>
+              <div class="mock-chart">
+                <svg viewBox="0 0 400 140" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35" />
+                      <stop offset="100%" stop-color="var(--accent)" stop-opacity="0" />
+                    </linearGradient>
+                  </defs>
+                  <path class="chart-line" d="M0,80 L30,72 L60,78 L90,60 L120,64 L150,52 L180,58 L210,44 L240,52 L270,40 L300,46 L330,36 L360,52 L400,28" fill="none" stroke="var(--accent)" stroke-width="1.5" pathLength="1" />
+                  <path class="chart-fill" d="M0,80 L30,72 L60,78 L90,60 L120,64 L150,52 L180,58 L210,44 L240,52 L270,40 L300,46 L330,36 L360,52 L400,28 L400,140 L0,140 Z" fill="url(#g1)" />
+                  <path class="chart-baseline" d="M0,90 L30,94 L60,88 L90,82 L120,86 L150,78 L180,84 L210,74 L240,80 L270,72 L300,78 L330,70 L360,76 L400,66" fill="none" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" pathLength="1" />
+                  <circle class="chart-dot" cx="330" cy="36" r="3" fill="var(--accent)" />
+                  <circle class="chart-pulse" cx="330" cy="36" r="6" fill="none" stroke="var(--accent)" stroke-opacity="0.4" />
+                </svg>
+              </div>
+              <div class="mock-insights">
+                <div class="mock-insight">
+                  <div class="label">Root cause</div>
+                  <div class="val">rag-qa v12 → v13 · refusal template shortened</div>
+                </div>
+                <div class="mock-insight">
+                  <div class="label">Drift window</div>
+                  <div class="val">7 day · safety-refusal <span class="neg">-0.04σ</span></div>
+                </div>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
@@ -359,7 +479,9 @@
           <tr><td class="col-feat">Account required</td><td class="us yes">No, ever</td><td class="yes">No</td><td class="yes">No</td><td class="no">Yes</td><td class="yes">No (OSS)</td></tr>
           <tr><td class="col-feat">CI cost per run</td><td class="us yes">$0 deterministic</td><td class="mid">Mixed</td><td class="no">Per-judge-call</td><td class="mid">Trace volume</td><td class="no">Per-judge-call</td></tr>
           <tr><td class="col-feat">Prompt versioning</td><td class="us yes">Automatic content-hash</td><td class="mid">Manual + git</td><td class="no">·</td><td class="yes">Prompt Hub</td><td class="no">·</td></tr>
+          <tr><td class="col-feat">Live prompt editing</td><td class="us yes">Dashboard, no redeploy</td><td class="no">·</td><td class="no">·</td><td class="mid">Prompt Hub (cloud)</td><td class="no">·</td></tr>
           <tr><td class="col-feat">Drift detection</td><td class="us yes">Mann-Whitney U + p-values</td><td class="no">·</td><td class="no">·</td><td class="mid">Dashboards only</td><td class="no">·</td></tr>
+          <tr><td class="col-feat">Cost budgets + alerts</td><td class="us yes">Daily/monthly caps</td><td class="no">·</td><td class="no">·</td><td class="mid">Usage charts only</td><td class="no">·</td></tr>
           <tr><td class="col-feat">MCP server</td><td class="us yes">Native</td><td class="mid">Plugin</td><td class="no">·</td><td class="no">·</td><td class="mid">Partial</td></tr>
           <tr><td class="col-feat">Commercial tier</td><td class="us yes">None planned</td><td class="mid">Enterprise</td><td class="yes">None</td><td class="no">SaaS</td><td class="mid">Confident AI</td></tr>
         </tbody>
@@ -415,7 +537,7 @@
           <span class="brand-mark"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1a1a1e"/><text x="0" y="27" class="logo-p">p</text><text x="15" y="27" class="logo-r">r</text></svg></span>
           <span class="brand-name"><b>prompt<span class="ry">ry</span></b></span>
         </div>
-        <p class="foot-tag">Local-first regression testing for LLM pipelines. MIT-licensed. Built by Keshav.</p>
+        <p class="foot-tag">Local-first prompt observability for LLM pipelines. MIT-licensed. Built by Keshav.</p>
       </div>
       <div>
         <h5>Product</h5>
@@ -452,22 +574,24 @@
 </footer>
 
 <script>
-  // Theme toggle (persisted)
+  // Theme toggle (persisted). Icons cross-fade via CSS [data-theme] selector.
   (function () {
     const root = document.documentElement;
     const saved = localStorage.getItem('promptry-theme');
     if (saved) root.setAttribute('data-theme', saved);
-    function syncIcons() {
-      const dark = root.getAttribute('data-theme') !== 'light';
-      document.querySelector('.theme-toggle .sun').style.display = dark ? '' : 'none';
-      document.querySelector('.theme-toggle .moon').style.display = dark ? 'none' : '';
-    }
-    syncIcons();
-    document.getElementById('theme-toggle').addEventListener('click', function () {
+    function flip() {
       const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
       root.setAttribute('data-theme', next);
       localStorage.setItem('promptry-theme', next);
-      syncIcons();
+    }
+    document.getElementById('theme-toggle').addEventListener('click', flip);
+    // Keyboard hotkey: "t" toggles theme (ignored while typing).
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 't' && e.key !== 'T') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      flip();
     });
 
     // Mobile nav toggle
@@ -492,41 +616,146 @@
     btn.addEventListener('click', function () {
       const tab = btn.dataset.tab;
       const container = btn.closest('.term');
-      container.querySelectorAll('.term-tab').forEach(function (b) { b.classList.toggle('on', b === btn); });
+      container.querySelectorAll('.term-tab').forEach(function (b) {
+        b.classList.toggle('on', b === btn);
+      });
       container.querySelectorAll('.term-pane').forEach(function (p) {
         p.classList.toggle('on', p.dataset.pane === tab);
       });
     });
   });
 
-  // Walkthrough steps + sync dashboard sidebar highlight
-  document.querySelectorAll('.step').forEach(function (step) {
-    step.addEventListener('click', function () {
-      const idx = step.dataset.step;
-      document.querySelectorAll('.step').forEach(function (s) { s.classList.toggle('on', s === step); });
-      document.querySelectorAll('.mock-side-item[data-side]').forEach(function (item) {
-        item.classList.toggle('on', item.dataset.side === idx);
-      });
-    });
-  });
-  // initial sync
-  document.querySelectorAll('.mock-side-item[data-side="0"]').forEach(function (i) { i.classList.add('on'); });
+  // Walkthrough steps: each click swaps both the main mock view AND
+  // the sidebar highlight. Auto-cycles every 4s until the user interacts.
+  (function () {
+    const steps = Array.from(document.querySelectorAll('.step'));
+    const chart = document.querySelector('.mock-chart');
+    let cycling = false;   // becomes true once the flow scrolls into view
+    let timer = null;
 
-  // Copy buttons
+    function syncMock(step) {
+      const view = step.dataset.view;
+      const side = step.dataset.side;
+      document.querySelectorAll('.mock-view').forEach(function (v) {
+        v.classList.toggle('on', v.dataset.view === view);
+      });
+      document.querySelectorAll('.mock-side-item[data-side]').forEach(function (item) {
+        item.classList.toggle('on', item.dataset.side === side);
+      });
+      // Replay chart draw-in every time the overview view activates.
+      if (view === 'overview' && chart) {
+        chart.classList.remove('in-view');
+        // force reflow so the animation restarts cleanly
+        // eslint-disable-next-line no-unused-expressions
+        void chart.offsetWidth;
+        chart.classList.add('in-view');
+      }
+    }
+
+    function activate(step, isUser) {
+      steps.forEach(function (s) { s.classList.toggle('on', s === step); });
+      syncMock(step);
+      if (isUser) {
+        // user took control — stop the auto-cycle for the rest of the session
+        cycling = false;
+        if (timer) { clearTimeout(timer); timer = null; }
+        steps.forEach(function (s) { s.classList.remove('cycling'); });
+      } else {
+        // still in auto-cycle mode — keep the progress bar class present
+        steps.forEach(function (s) { s.classList.toggle('cycling', cycling); });
+        scheduleNext();
+      }
+    }
+
+    function scheduleNext() {
+      if (!cycling) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () {
+        const activeIdx = steps.findIndex(function (s) { return s.classList.contains('on'); });
+        const next = steps[(activeIdx + 1) % steps.length];
+        activate(next, false);
+      }, 4000); // matches the CSS stepFill duration
+    }
+
+    steps.forEach(function (step) {
+      step.addEventListener('click', function () { activate(step, true); });
+    });
+
+    // Initial sync + start cycling once the walkthrough section enters view.
+    const initialStep = document.querySelector('.step.on') || steps[0];
+    syncMock(initialStep);
+
+    const howSection = document.getElementById('how');
+    if (howSection && typeof IntersectionObserver !== 'undefined') {
+      const io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting && !cycling && timer === null) {
+            cycling = true;
+            steps.forEach(function (s) { s.classList.add('cycling'); });
+            scheduleNext();
+            io.disconnect();
+          }
+        });
+      }, { threshold: 0.3 });
+      io.observe(howSection);
+    }
+
+    // Respect prefers-reduced-motion: don't auto-cycle if user wants less motion.
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (reduce && reduce.matches) {
+      cycling = false;
+      steps.forEach(function (s) { s.classList.remove('cycling'); });
+    }
+  })();
+
+  // Copy buttons: ring flash + ✓ glyph, auto-reset.
   document.querySelectorAll('.copy-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       const text = btn.dataset.copy;
       navigator.clipboard.writeText(text).then(function () {
         const original = btn.textContent;
-        btn.textContent = 'COPIED';
+        btn.textContent = '✓ COPIED';
+        btn.classList.add('copied');
+        // Force ring restart if clicked twice in quick succession.
+        btn.classList.remove('copied');
+        // eslint-disable-next-line no-unused-expressions
+        void btn.offsetWidth;
         btn.classList.add('copied');
         setTimeout(function () {
           btn.textContent = original;
           btn.classList.remove('copied');
-        }, 1500);
+        }, 1400);
       });
     });
   });
+
+  // Chart draw-in: kicks off once the chart scrolls into view.
+  (function () {
+    const chart = document.querySelector('.mock-chart');
+    if (!chart || typeof IntersectionObserver === 'undefined') {
+      if (chart) chart.classList.add('in-view');
+      return;
+    }
+    const io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          chart.classList.add('in-view');
+          io.disconnect();
+        }
+      });
+    }, { threshold: 0.35 });
+    io.observe(chart);
+  })();
+
+  // Console nod for devs who open DevTools.
+  if (typeof console !== 'undefined' && console.log) {
+    var big = 'color:#e0a23c;font:700 16px -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif';
+    var mono = 'color:#9aa0a6;font-family:"JetBrains Mono",monospace;font-size:12px';
+    console.log('%c▸ promptry', big, '— local-first prompt regression testing.');
+    console.log('%c  → docs     https://promptry.meownikov.xyz/docs.html', mono);
+    console.log('%c  → repo     https://github.com/bihanikeshav/promptry', mono);
+    console.log('%c  → issues   welcome. (press t to toggle theme)', mono);
+  }
 </script>
 
 </body>
