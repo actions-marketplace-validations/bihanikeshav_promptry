@@ -631,19 +631,33 @@ def get_invocation(invocation_id: int):
     # the (fixed) prompt template vs the (variable) interpolated payload.
     try:
         from promptry.pricing import estimate_tokens, calculate_cost
+        from promptry.lint import extract_variables
         meta = rec.get("metadata") or {}
         model = meta.get("model")
         tokens_in = int(meta.get("tokens_in", meta.get("prompt_tokens", 0)) or 0)
         tokens_out = int(meta.get("tokens_out", meta.get("completion_tokens", 0)) or 0)
         tmpl = storage.get_prompt(rec["prompt_name"])
-        tmpl_tokens = estimate_tokens(tmpl.content) if tmpl else 0
-        tmpl_tokens = min(tmpl_tokens, tokens_in) if tokens_in else tmpl_tokens
+        # The template/payload split is only meaningful when the registry
+        # entry is a real $-template (placeholders). For prompts that aren't
+        # CMS-managed, the stored "template" is a baked snapshot, so we can't
+        # separate fixed overhead from payload — say so rather than mislead.
+        is_template = bool(tmpl and extract_variables(tmpl.content))
+        if not is_template:
+            rec["breakdown"] = {
+                "available": False,
+                "reason": "This prompt isn't a $-template, so template overhead can't be separated from payload. Migrate it to render_prompt to see the split.",
+            }
+            return rec
+
+        # For a real template, the placeholders ($x) are short; estimating the
+        # template string's tokens approximates the fixed overhead.
+        tmpl_tokens = min(estimate_tokens(tmpl.content), tokens_in) if tokens_in else estimate_tokens(tmpl.content)
         data_tokens = max(0, tokens_in - tmpl_tokens)
 
         def _in_cost(t):
-            c = calculate_cost(model, tokens_in=t, tokens_out=0) if model else None
-            return c
+            return calculate_cost(model, tokens_in=t, tokens_out=0) if model else None
         rec["breakdown"] = {
+            "available": True,
             "model": model,
             "template_tokens": tmpl_tokens,
             "data_tokens": data_tokens,

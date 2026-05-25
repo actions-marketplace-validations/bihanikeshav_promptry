@@ -100,15 +100,17 @@ export interface FeedbackEntry {
 }
 
 export interface InvocationBreakdown {
-  model: string | null;
-  template_tokens: number;
-  data_tokens: number;
-  tokens_out: number;
-  template_cost: number | null;
-  data_cost: number | null;
-  output_cost: number | null;
-  total_cost: number | null;
-  estimated: boolean;
+  available?: boolean;
+  reason?: string;
+  model?: string | null;
+  template_tokens?: number;
+  data_tokens?: number;
+  tokens_out?: number;
+  template_cost?: number | null;
+  data_cost?: number | null;
+  output_cost?: number | null;
+  total_cost?: number | null;
+  estimated?: boolean;
 }
 
 export interface InvocationDetail {

@@ -51,7 +51,12 @@ export default function Invocation() {
       </div>
 
       {/* template vs data cost breakdown */}
-      {b && (b.template_tokens > 0 || b.data_tokens > 0) && (
+      {b && b.available === false && (
+        <div className="card" style={{ padding: "12px 16px", marginBottom: 18, fontSize: 12, color: "var(--muted)" }}>
+          {b.reason}
+        </div>
+      )}
+      {b && b.available && ((b.template_tokens || 0) > 0 || (b.data_tokens || 0) > 0) && (
         <div className="card" style={{ padding: 16, marginBottom: 18 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Where the input cost went <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>· estimated (~4 chars/token)</span></div>
           <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3, marginBottom: 12 }}>
@@ -59,7 +64,7 @@ export default function Invocation() {
           </div>
           {(() => {
             const total = (b.template_tokens || 0) + (b.data_tokens || 0) || 1;
-            const tPct = (b.template_tokens / total) * 100;
+            const tPct = ((b.template_tokens || 0) / total) * 100;
             return (
               <>
                 <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden", border: "1px solid var(--border)" }}>
@@ -67,9 +72,9 @@ export default function Invocation() {
                   <div style={{ width: 100 - tPct + "%", background: "var(--text-dim)", opacity: 0.4 }} title="payload" />
                 </div>
                 <div style={{ display: "flex", gap: 24, marginTop: 12 }}>
-                  <Split color="var(--accent)" label="Template (fixed)" tokens={b.template_tokens} cost={b.template_cost} />
-                  <Split color="var(--text-dim)" label="Payload (variable)" tokens={b.data_tokens} cost={b.data_cost} />
-                  <Split color="var(--success)" label="Response" tokens={b.tokens_out} cost={b.output_cost} />
+                  <Split color="var(--accent)" label="Template (fixed)" tokens={b.template_tokens ?? 0} cost={b.template_cost ?? null} />
+                  <Split color="var(--text-dim)" label="Payload (variable)" tokens={b.data_tokens ?? 0} cost={b.data_cost ?? null} />
+                  <Split color="var(--success)" label="Response" tokens={b.tokens_out ?? 0} cost={b.output_cost ?? null} />
                 </div>
               </>
             );
