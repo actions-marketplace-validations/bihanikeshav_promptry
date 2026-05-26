@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PageHeader, Select } from "../components/ui";
 import { runPlaygroundModel, getConfig, getPrompts, getPromptContent } from "../api/client";
 import { templateVars } from "../utils";
+import { TemplateEditor } from "../components/TemplateEditor";
 import type { PlaygroundRuleType } from "../api/types";
 
 interface Rule {
@@ -117,13 +118,20 @@ function evalRule(r: Rule, response: string, golden: string): RuleResult {
 }
 
 function interpolate(tmpl: string, vars: Record<string, string>): string {
-  // Preferred {{name}} plus legacy $name / ${name}; unknowns left intact.
-  return tmpl
-    .replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => vars[k] ?? `{{${k}}}`)
-    .replace(/\$\{(\w+)\}|\$(\w+)/g, (m, a, b) => {
-      const k = a ?? b;
-      return vars[k] != null ? vars[k] : m;
-    });
+  // Value-driven: replace ONLY supplied variable names, in any of {{name}},
+  // {name}, ${name}, $name. JSON braces and unknown placeholders are untouched
+  // (mirrors promptry.prompts._substitute on the backend).
+  const names = Object.keys(vars);
+  if (!names.length) return tmpl;
+  const alt = names
+    .sort((a, b) => b.length - a.length)
+    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  const re = new RegExp(
+    `\\{\\{\\s*(${alt})\\s*\\}\\}|\\$\\{(${alt})\\}|\\{\\s*(${alt})\\s*\\}|\\$(${alt})(?![A-Za-z0-9_])`,
+    "g"
+  );
+  return tmpl.replace(re, (_m, a, b, c, d) => vars[a ?? b ?? c ?? d]);
 }
 
 /* -------- per-model run record -------- */
@@ -489,13 +497,7 @@ export default function Playground() {
                       {sys.length} chars
                     </span>
                   </div>
-                  <textarea
-                    className="inp"
-                    value={sys}
-                    onChange={(e) => setSys(e.target.value)}
-                    rows={4}
-                    style={{ width: "100%" }}
-                  />
+                  <TemplateEditor value={sys} onChange={setSys} minHeight={96} />
                 </div>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
@@ -506,13 +508,7 @@ export default function Playground() {
                       use <span style={{ color: "var(--accent)" }}>{"{{name}}"}</span> for variables
                     </span>
                   </div>
-                  <textarea
-                    className="inp"
-                    value={user}
-                    onChange={(e) => setUser(e.target.value)}
-                    rows={3}
-                    style={{ width: "100%" }}
-                  />
+                  <TemplateEditor value={user} onChange={setUser} minHeight={72} />
                 </div>
                 {varKeys.length > 0 && (
                   <div>

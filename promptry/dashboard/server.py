@@ -440,9 +440,15 @@ def update_prompt_content(name: str, body: _PromptEdit):
     fetch their templates from promptry by name will pick up the new
     version on their next cache refresh.
     """
+    from promptry.prompts import normalize_template
+
     content = (body.content or "").strip()
     if not content:
         raise HTTPException(status_code=400, detail="Prompt content cannot be empty")
+    # Canonicalize $name/${name} -> {{name}} on save so the registry stores one
+    # consistent syntax. (Single-brace {name} is left as authored — it renders
+    # fine value-driven, and can't be told from JSON without the variable set.)
+    content = normalize_template(content)
     storage = get_storage()
     h = PromptRegistry.content_hash(content)
     # force=True: an explicit edit always becomes the latest version (so a

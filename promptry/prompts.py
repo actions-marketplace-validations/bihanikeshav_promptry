@@ -23,25 +23,62 @@ import re
 import time
 import logging
 import threading
-from string import Template
 
 logger = logging.getLogger("promptry.prompts")
 
-# Preferred variable syntax is ``{{name}}`` — unambiguous and doesn't collide
-# with literal ``$`` in prompts (prices, shell, regex). Legacy ``$name`` /
-# ``${name}`` is still rendered via string.Template for backward compatibility
-# with prompts authored before the switch.
-_BRACE_VAR = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+# Canonical variable syntax is ``{{name}}``. Substitution is *value-driven*: we
+# only ever touch tokens whose name was actually supplied as a variable, in any
+# of the recognized forms below. That makes single-brace ``{name}`` safe to
+# support — a literal ``{"answer": …}`` in a prompt is never mistaken for a
+# variable because "answer" (and the quote) aren't in the variable set. Literal
+# ``$5`` and unknown placeholders are likewise left untouched.
 
 
 def _substitute(template_str: str, variables: dict) -> str:
-    """Fill {{name}} then legacy $name, leaving unknown placeholders intact."""
-    def _brace(m: "re.Match") -> str:
-        name = m.group(1)
-        return str(variables[name]) if name in variables else m.group(0)
+    """Replace each supplied variable wherever it appears as ``{{name}}``,
+    ``${name}``, ``{name}`` or ``$name``. Only names in *variables* are
+    substituted; everything else (JSON braces, literal ``$``, unknown vars) is
+    left intact. ``{{name}}`` is matched before ``{name}`` so it wins."""
+    if not variables or not template_str:
+        return template_str
+    alt = "|".join(re.escape(n) for n in sorted(variables, key=len, reverse=True))
+    pattern = re.compile(
+        r"\{\{\s*(" + alt + r")\s*\}\}"   # {{ name }}  (canonical)
+        r"|\$\{(" + alt + r")\}"          # ${name}
+        r"|\{\s*(" + alt + r")\s*\}"      # { name }    (format / f-string style)
+        r"|\$(" + alt + r")(?![A-Za-z0-9_])"  # $name
+    )
 
-    rendered = _BRACE_VAR.sub(_brace, template_str)
-    return Template(rendered).safe_substitute(**variables)
+    def repl(m: "re.Match") -> str:
+        name = m.group(1) or m.group(2) or m.group(3) or m.group(4)
+        return str(variables[name])
+
+    return pattern.sub(repl, template_str)
+
+
+# Canonicalization (store-time): $name / ${name} are unambiguous -> {{name}}.
+# Single-brace {name} is only canonicalized when the variable names are known
+# (passed in), since otherwise it can't be told apart from JSON / code braces.
+_DOLLAR_BRACED = re.compile(r"\$\{([A-Za-z_]\w*)\}")
+_DOLLAR_BARE = re.compile(r"\$([A-Za-z_]\w*)")
+
+
+def normalize_template(text: str, known_vars: "list[str] | None" = None) -> str:
+    """Rewrite recognized variables to the canonical ``{{name}}`` form.
+
+    Always converts ``$name`` / ``${name}``. When *known_vars* is given, also
+    converts single-brace ``{name}`` for those names (without touching existing
+    ``{{name}}`` or JSON braces). Idempotent.
+    """
+    if not text:
+        return text
+    text = _DOLLAR_BRACED.sub(r"{{\1}}", text)
+    text = _DOLLAR_BARE.sub(r"{{\1}}", text)
+    if known_vars:
+        alt = "|".join(re.escape(n) for n in sorted(known_vars, key=len, reverse=True))
+        # (?<!\{) / (?!\}) so we never match the inner {name} of an existing {{name}}.
+        text = re.sub(r"(?<!\{)\{\s*(" + alt + r")\s*\}(?!\})", r"{{\1}}", text)
+    return text
 
 _cache: dict[str, tuple[str, float]] = {}
 _lock = threading.Lock()
@@ -56,7 +93,7 @@ def seed_prompt(name: str, default_content: str) -> None:
         from promptry.registry import track
 
         if get_storage().get_prompt(name) is None:
-            track(default_content, name, metadata={"source": "seed_default"})
+            track(normalize_template(default_content), name, metadata={"source": "seed_default"})
             logger.info("seeded prompt %s", name)
     except Exception:
         logger.debug("seed_prompt failed for %s", name, exc_info=True)
