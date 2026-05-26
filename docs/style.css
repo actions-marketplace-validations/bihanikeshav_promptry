@@ -175,40 +175,56 @@ button { font-family: inherit; cursor: pointer; }
 }
 .nav-links a:hover,
 .nav-links a.active { color: var(--ink); background: var(--bg-2); }
-/* Live-demo nav link: a solid amber CTA — the one obviously-clickable thing in
-   the bar — with dark text for contrast and a slow light sheen that sweeps
-   across so it feels live. Selectors are scoped to .nav-links a.nav-demo so the
-   base link hover rules can't strip the fill. Sheen is disabled for users who
-   prefer reduced motion. */
-.nav-links a.nav-demo {
+/* Live-demo nav link: a bordered button at the end of the bar (next to GitHub)
+   that pops via motion, not colour — a small pulsing accent dot plus a slow,
+   monochrome sheen sweep. Sits beside .nav-cta and matches its weight. Motion
+   is dropped for users who prefer reduced motion. */
+.nav-demo {
   position: relative;
   overflow: hidden;
-  padding: 6px 14px;
-  border-radius: var(--r-md);
-  color: #17181a;                 /* near-black: high contrast on amber in either theme */
-  background: var(--accent);
-  font-weight: 600;
-  transition: filter .15s;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  border: 1px solid color-mix(in oklab, var(--accent) 34%, var(--line-2));
+  font-size: 13px;
+  font-weight: 500;
+  transition: background .15s, border-color .15s;
 }
-.nav-links a.nav-demo:hover {
-  color: #17181a;
+.nav-demo:hover {
+  color: var(--ink);
+  background: var(--bg-2);
+  border-color: color-mix(in oklab, var(--accent) 60%, var(--line-2));
+}
+.nav-demo .live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   background: var(--accent);
-  filter: brightness(1.09);
+  flex: none;
+  animation: navDemoPulse 1.8s ease-in-out infinite;
 }
 .nav-demo::after {
   content: "";
   position: absolute;
   inset: 0;
-  transform: translateX(-120%);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32), transparent);
-  animation: navDemoSheen 3.6s ease-in-out infinite;
+  transform: translateX(-130%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.10), transparent);
+  animation: navDemoSheen 4s ease-in-out infinite;
+}
+@keyframes navDemoPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .35; transform: scale(.66); }
 }
 @keyframes navDemoSheen {
-  0%, 55% { transform: translateX(-120%); }
-  100%    { transform: translateX(120%); }
+  0%, 60% { transform: translateX(-130%); }
+  100%    { transform: translateX(130%); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .nav-demo::after { animation: none; }
+  .nav-demo .live-dot, .nav-demo::after { animation: none; }
 }
 .nav-cta {
   margin-left: 8px;
