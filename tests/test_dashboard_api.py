@@ -272,17 +272,10 @@ class TestCost:
         assert data["summary"]["total_calls"] == 0
 
     def test_cost_with_data(self, client, storage):
-        # Save prompts with cost metadata
-        import json
-        import hashlib
-
-        for i in range(3):
-            content = f"prompt content {i}"
-            h = hashlib.sha256(content.encode()).hexdigest()[:16]
-            storage.save_prompt(
-                name="cost-prompt",
-                content=content,
-                content_hash=h,
+        # Cost comes from the invocations ledger (one row per call).
+        for _ in range(3):
+            storage.record_invocation(
+                "cost-prompt",
                 metadata={"model": "gpt-4o", "cost": 0.05, "tokens_in": 100, "tokens_out": 50},
             )
 
