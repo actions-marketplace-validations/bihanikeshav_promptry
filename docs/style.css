@@ -54,6 +54,24 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 
+/* Thin, theme-matched scrollbars everywhere (Firefox + WebKit). The thumb
+   floats inside a transparent border via background-clip, so it reads as a
+   slim pill rather than a chunky bar. */
+* { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-4);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
 /* Wait for webfonts before revealing the page — avoids a jarring font-swap
    flash. The inline script in each HTML head flips this within ~100-300ms. */
 html:not(.fonts-ready) body { visibility: hidden; }
@@ -157,6 +175,41 @@ button { font-family: inherit; cursor: pointer; }
 }
 .nav-links a:hover,
 .nav-links a.active { color: var(--ink); background: var(--bg-2); }
+/* Live-demo nav link: a solid amber CTA — the one obviously-clickable thing in
+   the bar — with dark text for contrast and a slow light sheen that sweeps
+   across so it feels live. Selectors are scoped to .nav-links a.nav-demo so the
+   base link hover rules can't strip the fill. Sheen is disabled for users who
+   prefer reduced motion. */
+.nav-links a.nav-demo {
+  position: relative;
+  overflow: hidden;
+  padding: 6px 14px;
+  border-radius: var(--r-md);
+  color: #17181a;                 /* near-black: high contrast on amber in either theme */
+  background: var(--accent);
+  font-weight: 600;
+  transition: filter .15s;
+}
+.nav-links a.nav-demo:hover {
+  color: #17181a;
+  background: var(--accent);
+  filter: brightness(1.09);
+}
+.nav-demo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32), transparent);
+  animation: navDemoSheen 3.6s ease-in-out infinite;
+}
+@keyframes navDemoSheen {
+  0%, 55% { transform: translateX(-120%); }
+  100%    { transform: translateX(120%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-demo::after { animation: none; }
+}
 .nav-cta {
   margin-left: 8px;
   padding: 6px 12px;
