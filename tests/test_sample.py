@@ -30,18 +30,19 @@ def isolated_db(tmp_path, monkeypatch):
     clear_suites()
 
 
-def test_sample_command_registered_with_expected_options(monkeypatch):
-    """The command is discoverable and exposes the documented flags."""
-    # Widen via the real process env (not just invoke's env=) so Rich doesn't
-    # wrap/truncate option names on narrow terminals or CI — otherwise flaky.
-    monkeypatch.setenv("COLUMNS", "200")
-    result = runner.invoke(app, ["sample", "--help"])
-    assert result.exit_code == 0
-    out = result.output
-    assert "--module" in out
-    assert "--every" in out
-    assert "--compare" in out
-    assert "--max-runs" in out
+def test_sample_command_registered_with_expected_options():
+    """The command is discoverable and exposes the documented flags.
+
+    Introspects the registered Click command rather than parsing `--help`
+    text — Rich wraps/truncates option names by terminal width, which made the
+    text-scrape flaky in CI.
+    """
+    import typer
+
+    sample = typer.main.get_command(app).commands["sample"]
+    opts = {opt for param in sample.params for opt in param.opts}
+    for flag in ("--module", "--every", "--compare", "--max-runs"):
+        assert flag in opts, f"{flag} missing from sample options: {sorted(opts)}"
 
 
 def test_sample_rejects_interval_below_5():
