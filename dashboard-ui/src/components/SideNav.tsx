@@ -167,7 +167,7 @@ export function SideNav({
       >
         <Wordmark />
         <span className="chip mono" style={{ fontSize: 9.5, padding: "2px 6px" }}>
-          v0.9.5
+          v1.0.0
         </span>
       </div>
 

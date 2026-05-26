@@ -1,8 +1,52 @@
 # Changelog
 
-## 0.9.5 (unreleased — waiting on user sign-off before 1.0)
+## 1.0.0 (2026-05-26)
 
-### New features
+First stable release — the library, CLI, dashboard, GitHub Action, and MCP
+server are feature-complete around a single local SQLite store.
+
+### Prompts
+
+- **Live prompt CMS** — `render_prompt()` / `seed_prompt()` serve
+  dashboard-edited templates with no redeploy; edit, diff, version, and
+  promote prompts from the UI.
+- **`{{name}}` templating** — value-driven substitution recognizes `{{name}}`,
+  `{name}`, `${name}`, and `$name` but only substitutes the variables you
+  actually pass, so JSON braces and literal `$` are never touched. `$`-style is
+  normalized to `{{}}` on save/seed.
+- **Environment promotion** — dev/staging/prod tags gate which version
+  `render_prompt(env=…)` serves. Prompt linting on save; template variables
+  surfaced as first-class metadata.
+- **Semantic prompt search + near-duplicate detection** (embeddings, with a
+  lexical fallback).
+
+### Evals
+
+- **Eval↔prompt linkage**, **regression bisect** across runs, and **online
+  drift** on production telemetry (Mann-Whitney with an effect-size floor).
+- **Judge-cost attribution** per run; **eval-from-trace** — promote a captured
+  invocation into a per-prompt golden set and re-run it against any model.
+- **Latency SLO gates** — `[slo]` budgets fail CI independently of the score.
+
+### Cost & traces
+
+- Per-call **invocation ledger** (`track_invocation`) with module→prompt→call
+  cost drill-down and a template-vs-payload split; **cost budgets** with breach
+  tracking; pricing auto-refresh + uncosted-model coverage report.
+- Opt-in **trace capture** + end-user **feedback ingest** by `request_id`;
+  **PII/secret scanning** of captured traces (regex tripwire, masked findings).
+
+### Dashboard & config
+
+- Rebuilt React dashboard (Overview, Evals, Prompts, Cost, Models, Playground,
+  Settings) with live `{{var}}` highlighting and a model-comparison playground.
+- **`.promptry/config.toml`** (committed) holds models, judge, dashboard prefs,
+  and pricing overrides; API keys stay in env.
+- A clickable **live demo** of the dashboard and an **agent integration guide**
+  (`docs/INTEGRATION.md`).
+
+### Agents & capture
+
 
 - **Agent trajectory model** (`promptry.trajectory`) — a `Trajectory`
   dataclass with `.from_openai` / `.from_anthropic` / `.from_dicts`

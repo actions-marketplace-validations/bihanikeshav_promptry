@@ -8,6 +8,8 @@
 
 **Local-first prompt observability that lives in your repo.** Version your prompts, write eval suites in Python, track the cost of every call, edit prompts live, and catch regressions in CI. One `pip install`, one SQLite file, zero services — your prompts never leave your laptop.
 
+**[Try the live demo →](https://promptry.meownikov.xyz/demo/)** · [Integration guide](docs/INTEGRATION.md) · [Docs](https://promptry.meownikov.xyz/docs.html)
+
 ```python
 from promptry import track, suite, assert_semantic
 
@@ -59,18 +61,23 @@ Overall: PASS  score: 0.891
 | Feature | What it does |
 |---------|--------------|
 | **Prompt versioning** | Content-hashed, automatic dedup, grouped by module. No manual bumps, no YAML, no git dance. |
-| **Live prompt CMS** | `render_prompt()` serves dashboard-edited `$`-placeholder templates with no redeploy. Edit a prompt in the browser, your app picks it up on the next call. |
+| **Live prompt CMS** | `render_prompt()` serves dashboard-edited `{{name}}` templates with no redeploy. Edit a prompt in the browser, your app picks it up on the next call. Substitution is value-driven, so JSON braces and literal `$` are never mistaken for variables. |
+| **Semantic prompt search** | Search the registry by meaning and flag near-duplicate prompts (likely forks to consolidate). Embeddings with a lexical fallback. |
 | **Environment promotion** | dev → staging → prod tags gate every edit before it reaches users. Promote a version, roll one back. |
 | **Python-native suites** | `@suite` decorators, not YAML. Loops, fixtures, and your IDE's debugger all work. |
 | **Deterministic assertions** | Semantic, schema, JSON, regex, grounding, tool-use. Zero API calls at CI time. |
 | **LLM-as-judge** | Opt-in, not default. You decide when to spend tokens on evaluation. |
-| **Drift detection** | Mann-Whitney U on a rolling window with real p-values, not vibes. |
+| **Drift detection** | Mann-Whitney U on a rolling window with real p-values — on eval scores *and* on live production telemetry (cost, latency, output length, rating). |
 | **Regression diff** | Tells you *what* changed — prompt version, model, or data — not just that it broke. |
 | **Regression bisect** | Walks the run history to pinpoint the first run that broke a test. |
+| **SLO gates** | `[slo]` latency budgets fail CI on performance regressions, independent of the eval score. |
+| **Judge-cost attribution** | LLM-judge spend estimated and summed per eval run, so you see what evaluation itself costs. |
+| **Eval-from-trace** | Promote a real captured invocation into a per-prompt golden set, then re-run it against any model to check accuracy. |
 | **Model comparison** | Statistical comparison against the historical baseline, not snapshot-to-snapshot. |
 | **Invocations ledger** | Every call recorded: tokens, cost, latency, model. Opt-in sampled request/response trace capture; per-call ratings/feedback via `POST /api/feedback`. |
 | **Cost tracking** | Per-model pricing with module → prompt → call drill-down, per-call template-vs-payload split, and a coverage check that flags un-priced models. Cache-aware, across OpenAI, Anthropic, Gemini, Grok. |
 | **Budgets** | Daily and monthly spend caps with breach alerts. |
+| **PII / secret scanning** | Captured request/response text is scanned for API keys, private keys, JWTs, emails, SSNs, and card numbers; the dashboard warns with masked findings. |
 | **Safety suite** | 25 jailbreak / injection / PII / encoding templates across 6 categories. Extensible via `templates.toml`. |
 | **MCP server** | First-class: your LLM agent drives the whole test runner. Native, not a plugin. |
 | **Dashboard** | Local web UI for eval history, prompt registry + live editing, cost drill-down, model comparison, invocation traces, and a multi-model playground. No account, no cloud. |
