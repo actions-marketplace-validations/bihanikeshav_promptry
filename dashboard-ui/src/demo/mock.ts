@@ -4,16 +4,15 @@
  * the app code changes — installDemoFetch() monkeypatches window.fetch when the
  * build flag VITE_DEMO is set, so the demo can never drift from the product.
  *
- * The dataset below is a fictional "Helpdesk AI" product: a RAG support
- * assistant, a triage classifier, an agent, and summarizers — enough breadth
- * that every dashboard surface (cost drill-down, drift, traces, PII, evals,
- * golden sets, playground) has something real to show.
+ * Fictional "Helpdesk AI" product at production scale: ~1.6M calls / month
+ * across a RAG assistant, a triage classifier, an agent, summarizers, and a
+ * safety guardrail. Cost rollups are curated aggregates (a real deployment's
+ * numbers); the trace list materializes a recent sample.
  */
 
 const now = Date.now();
 const iso = (daysAgo: number, h = 0) => new Date(now - daysAgo * 864e5 - h * 36e5).toISOString();
 const r2 = (n: number, d = 4) => Number(n.toFixed(d));
-// deterministic pseudo-random in [0,1) so the demo looks the same every load
 const rnd = (seed: number) => { const x = Math.sin(seed * 12.9898) * 43758.5453; return x - Math.floor(x); };
 const moduleOf = (n: string) => (n.includes(".") ? n.split(".")[0] : "other");
 
@@ -29,7 +28,7 @@ Question: {{question}}
 Return JSON: {"answer": "...", "sources": ["..."], "confidence": 0.0-1.0}`,
   "rag.rerank": `Rank the {{k}} candidate passages by how well they answer: "{{query}}".
 Return a JSON array of passage ids, most relevant first. Drop anything off-topic.`,
-  "rag.query_expansion": `Rewrite the user query into {{n}} diverse search queries that cover synonyms and sub-questions.
+  "rag.query_expansion": `Rewrite the user query into {{n}} diverse search queries covering synonyms and sub-questions.
 Original: {{query}}
 Return a JSON array of strings.`,
   "agent.planner": `You are the planner for a {{role}} agent.
@@ -72,6 +71,29 @@ const NAMES = Object.keys(CONTENT);
 const ver = (n: string) => VERSIONS[n] ?? 1;
 const promptSummaries = NAMES.map((name) => ({ name, latest_version: ver(name), tags: TAGS[name] || [] }));
 
+const RATE: Record<string, [number, number]> = {
+  "gpt-4o-mini": [0.15, 0.6], "gpt-4o": [2.5, 10], "claude-haiku-4-5": [0.25, 1.25],
+};
+
+// per-prompt production profile: daily volume, the model it runs on, and avg
+// token shape. Cost rollups + the trace sample are both derived from this so
+// the numbers are internally consistent.
+interface Prof { perDay: number; cost: number; tin: number; tout: number; model: string }
+const PROFILE: Record<string, Prof> = {
+  "rag.answer":         { perDay: 5200,  cost: 0.0040,  tin: 6800, tout: 300, model: "gpt-4o-mini" },
+  "rag.rerank":         { perDay: 5200,  cost: 0.0016,  tin: 4200, tout: 140, model: "gpt-4o-mini" },
+  "rag.query_expansion":{ perDay: 3400,  cost: 0.0006,  tin: 950,  tout: 110, model: "gpt-4o-mini" },
+  "support.classify":   { perDay: 9800,  cost: 0.0005,  tin: 720,  tout: 38,  model: "gpt-4o-mini" },
+  "support.reply":      { perDay: 1500,  cost: 0.0048,  tin: 2600, tout: 420, model: "claude-haiku-4-5" },
+  "summary.tldr":       { perDay: 700,   cost: 0.0082,  tin: 6400, tout: 360, model: "gpt-4o" },
+  "summary.section":    { perDay: 950,   cost: 0.0034,  tin: 2800, tout: 240, model: "claude-haiku-4-5" },
+  "agent.planner":      { perDay: 620,   cost: 0.0220,  tin: 5200, tout: 300, model: "gpt-4o" },
+  "agent.tool_select":  { perDay: 620,   cost: 0.0004,  tin: 720,  tout: 14,  model: "gpt-4o-mini" },
+  "safety.guardrail":   { perDay: 11200, cost: 0.00028, tin: 520,  tout: 20,  model: "gpt-4o-mini" },
+  "intent.router":      { perDay: 11200, cost: 0.00020, tin: 380,  tout: 9,   model: "gpt-4o-mini" },
+  "chat.system":        { perDay: 2600,  cost: 0.0013,  tin: 1500, tout: 150, model: "gpt-4o-mini" },
+};
+
 function vars(name: string): string[] {
   return [...(CONTENT[name] || "").matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((m) => m[1]);
 }
@@ -90,7 +112,7 @@ function contentResp(name: string, v?: number) {
   };
 }
 
-// ---- suites: 5, varied states, real run histories ----
+// ---- suites: 5, varied states, real 16-run histories ----
 interface Suite { name: string; latest_score: number; passed: boolean; model_version: string; prompt: string; drift_status: "stable" | "drifting"; drift_slope: number; spark: number[]; }
 const SUITES_RAW: Suite[] = [
   { name: "rag-quality", latest_score: 0.913, passed: true, model_version: "gpt-4o-mini", prompt: "rag.answer", drift_status: "stable", drift_slope: 0.003, spark: [0.88, 0.9, 0.89, 0.91, 0.9, 0.92, 0.913] },
@@ -112,7 +134,7 @@ function suiteRuns(name: string) {
   return Array.from({ length: N }, (_, i) => {
     const drift = s.drift_status === "drifting" ? (N - 1 - i) * 0.004 : 0;
     const noise = (rnd(name.length + i) - 0.5) * 0.025;
-    const score = Math.max(0.6, Math.min(0.99, s.latest_score + drift + noise - (i === 0 ? 0 : 0)));
+    const score = Math.max(0.6, Math.min(0.99, s.latest_score + drift + noise));
     return {
       id: 1000 + name.length * 100 + i, suite_name: name, prompt_name: s.prompt,
       prompt_version: Math.max(1, ver(s.prompt) - (i % 3)),
@@ -144,18 +166,16 @@ function runDetail(name: string, runId: number) {
   };
 }
 
-// ---- invocations + cost (the per-call ledger) ----
-const MODELS = ["gpt-4o-mini", "gpt-4o", "claude-haiku-4-5", "llama-3.1-8b"];
-const RATE: Record<string, [number, number] | null> = {
-  "gpt-4o-mini": [0.15, 0.6], "gpt-4o": [2.5, 10], "claude-haiku-4-5": [0.25, 1.25], "llama-3.1-8b": null, // unpriced -> coverage gap
-};
-// weight prompts so the cost-by-module chart looks realistic
-const WEIGHTED = [
-  "rag.answer", "rag.answer", "rag.answer", "rag.answer", "support.classify", "support.classify", "support.classify",
-  "support.reply", "support.reply", "rag.rerank", "rag.rerank", "rag.query_expansion", "summary.tldr", "summary.tldr",
-  "summary.section", "agent.planner", "agent.tool_select", "safety.guardrail", "intent.router", "chat.system",
-];
-const previewFor = (name: string, id: number) => {
+// ---- trace sample: a recent ~2,500-row materialization for the traces list,
+//      invocation detail, and per-prompt stats (the full month is ~1.6M calls).
+const PROMPT_CDF = (() => {
+  const entries = Object.entries(PROFILE);
+  const total = entries.reduce((a, [, p]) => a + p.perDay, 0);
+  let acc = 0;
+  return entries.map(([n, p]) => { acc += p.perDay / total; return [acc, n] as [number, string]; });
+})();
+const pickPrompt = (r: number) => (PROMPT_CDF.find(([c]) => r <= c) || PROMPT_CDF[PROMPT_CDF.length - 1])[1];
+const previewFor = (name: string) => {
   const m = moduleOf(name);
   if (m === "summary") return "• Renewal at risk: usage down 18% QoQ. • Two P1 bugs open >30d. • Expansion blocked on SSO.";
   if (name === "support.reply") return "Hi Dana — thanks for reaching out. Your plan does include priority support, so I've…";
@@ -164,54 +184,56 @@ const previewFor = (name: string, id: number) => {
   if (name === "intent.router") return "billing";
   return '{"answer": "100 requests per minute on the free plan.", "sources": ["billing.md#limits"], "confidence": 0.9}';
 };
-const INVOCATIONS = Array.from({ length: 210 }, (_, i) => {
-  const name = WEIGHTED[Math.floor(rnd(i + 1) * WEIGHTED.length)];
-  const model = i % 11 === 0 ? "llama-3.1-8b" : i % 7 === 0 ? "gpt-4o" : i % 3 === 0 ? "claude-haiku-4-5" : "gpt-4o-mini";
-  const tin = 400 + Math.floor(rnd(i + 7) * 3200);
-  const tout = 40 + Math.floor(rnd(i + 13) * 600);
-  const rate = RATE[model];
-  const cost = rate ? (tin * rate[0] + tout * rate[1]) / 1e6 : 0;
-  const dayAgo = Math.floor(rnd(i + 3) * 30);
+const INVOCATIONS = Array.from({ length: 2500 }, (_, i) => {
+  const name = pickPrompt(rnd(i + 1));
+  const p = PROFILE[name];
+  const tin = Math.max(80, Math.round(p.tin * (0.6 + rnd(i + 7) * 0.9)));
+  const tout = Math.max(8, Math.round(p.tout * (0.6 + rnd(i + 13) * 0.9)));
+  const rate = RATE[p.model];
+  const cost = (tin * rate[0] + tout * rate[1]) / 1e6;
   const rated = i % 3 === 0;
   const low = rated && rnd(i + 5) < 0.22;
   return {
-    id: 9000 - i, prompt_name: name, prompt_version: Math.max(1, ver(name) - (i % 2)),
-    created_at: iso(dayAgo, Math.floor(rnd(i + 17) * 24)),
-    model, tokens_in: tin, tokens_out: tout, cost: r2(cost, 6), latency_ms: 280 + Math.floor(rnd(i + 19) * 4200),
-    has_capture: i % 3 === 0,
-    output_preview: previewFor(name, i),
+    id: 90000 - i, prompt_name: name, prompt_version: Math.max(1, ver(name) - (i % 2)),
+    created_at: iso(Math.floor(rnd(i + 3) * 30), Math.floor(rnd(i + 17) * 24)),
+    model: p.model, tokens_in: tin, tokens_out: tout, cost: r2(cost, 6), latency_ms: 280 + Math.floor(rnd(i + 19) * 4200),
+    has_capture: i % 3 === 0, output_preview: previewFor(name),
     rating: rated ? (low ? 0.4 : 0.95) : null,
-    comment: low ? pick3(i, ["missed the figure", "wrong policy cited", "hallucinated a source"]) : null,
+    comment: low ? ["missed the figure", "wrong policy cited", "hallucinated a source"][i % 3] : null,
   };
 });
-function pick3<T>(i: number, a: T[]): T { return a[i % a.length]; }
 
+// curated, production-scale cost rollups derived from PROFILE (not the sample)
 function costResp(days: number, name?: string | null, model?: string | null) {
-  const cutoff = now - days * 864e5;
-  let rows = INVOCATIONS.filter((r) => new Date(r.created_at).getTime() >= cutoff);
-  if (name) rows = rows.filter((r) => r.prompt_name === name || moduleOf(r.prompt_name) === name);
-  if (model) rows = rows.filter((r) => r.model === model);
-  const byName: Record<string, any> = {};
-  for (const r of rows) {
-    const e = (byName[r.prompt_name] ||= { name: r.prompt_name, calls: 0, tokens_in: 0, tokens_out: 0, cost: 0, models: new Set<string>() });
-    e.calls++; e.tokens_in += r.tokens_in; e.tokens_out += r.tokens_out; e.cost += r.cost || 0; e.models.add(r.model);
-  }
-  const byDate: Record<string, any> = {};
-  for (const r of rows) {
-    const d = r.created_at.slice(0, 10);
-    const e = (byDate[d] ||= { date: d, calls: 0, tokens_in: 0, tokens_out: 0, cost: 0 });
-    e.calls++; e.tokens_in += r.tokens_in; e.tokens_out += r.tokens_out; e.cost += r.cost || 0;
-  }
-  const total_cost = rows.reduce((a, r) => a + (r.cost || 0), 0);
+  const sel = Object.entries(PROFILE).filter(([n, p]) =>
+    (!name || n === name || moduleOf(n) === name) && (!model || p.model === model));
+  const by_name = sel.map(([n, p]) => {
+    const calls = Math.round(p.perDay * days);
+    return { name: n, calls, tokens_in: calls * p.tin, tokens_out: calls * p.tout, cost: r2(calls * p.cost, 2), models: [p.model] };
+  }).sort((a, b) => b.cost - a.cost);
+  const total_cost = by_name.reduce((a, r) => a + r.cost, 0);
+  const total_calls = by_name.reduce((a, r) => a + r.calls, 0);
+  const total_tin = by_name.reduce((a, r) => a + r.tokens_in, 0);
+  const total_tout = by_name.reduce((a, r) => a + r.tokens_out, 0);
+  // distribute over the window with a weekend dip + mild noise, normalized to the total
+  const weights = Array.from({ length: days }, (_, d) => {
+    const dow = new Date(now - (days - 1 - d) * 864e5).getDay();
+    return (dow === 0 || dow === 6 ? 0.55 : 1) * (0.9 + rnd(d + 31) * 0.2);
+  });
+  const wsum = weights.reduce((a, b) => a + b, 0);
+  const by_date = weights.map((w, d) => ({
+    date: new Date(now - (days - 1 - d) * 864e5).toISOString().slice(0, 10),
+    calls: Math.round((total_calls * w) / wsum),
+    tokens_in: Math.round((total_tin * w) / wsum),
+    tokens_out: Math.round((total_tout * w) / wsum),
+    cost: r2((total_cost * w) / wsum, 2),
+  }));
   return {
     summary: {
-      total_cost: r2(total_cost), total_calls: rows.length,
-      total_tokens_in: rows.reduce((a, r) => a + r.tokens_in, 0),
-      total_tokens_out: rows.reduce((a, r) => a + r.tokens_out, 0),
-      cache_hit_rate: 0.34, cache_savings: r2(total_cost * 0.21), avg_cost: rows.length ? total_cost / rows.length : 0,
+      total_cost: r2(total_cost, 2), total_calls, total_tokens_in: total_tin, total_tokens_out: total_tout,
+      cache_hit_rate: 0.34, cache_savings: r2(total_cost * 0.27, 2), avg_cost: total_calls ? total_cost / total_calls : 0,
     },
-    by_name: Object.values(byName).map((e: any) => ({ ...e, cost: r2(e.cost, 5), models: [...e.models] })).sort((a, b) => b.cost - a.cost),
-    by_date: Object.values(byDate).map((e: any) => ({ ...e, cost: r2(e.cost, 5) })).sort((a, b) => a.date.localeCompare(b.date)),
+    by_name, by_date,
   };
 }
 
@@ -233,25 +255,24 @@ const CONFIG = {
 function captured(name: string, id: number) {
   const sys = (CONTENT[name] || "").split("\n").slice(0, 3).join("\n");
   let user = "How do I increase the rate limit on the free plan?";
-  let out = previewFor(name, id);
-  if (id % 9 === 0) { user = "My account is jordan.lee@northwind.io — why was I double charged?"; }
-  if (id % 23 === 0) { out = 'Use the admin key sk-live-9f2ab7c41de83b6072aa to rotate it via the API.'; }
+  let out = previewFor(name);
+  if (id % 9 === 0) user = "My account is jordan.lee@northwind.io — why was I double charged?";
+  if (id % 23 === 0) out = "Use the admin key sk-live-9f2ab7c41de83b6072aa to rotate it via the API.";
   return { input_text: `System:\n${sys}\n\nUser: ${user}`, output_text: out };
 }
 function invocationDetail(id: number) {
   const r = INVOCATIONS.find((x) => x.id === id) || INVOCATIONS[0];
   const cap = captured(r.prompt_name, id);
-  const tmplTok = Math.round(r.tokens_in * 0.55);
+  const tmpl = Math.round(r.tokens_in * 0.55);
+  const rate = RATE[r.model];
   return {
     id: r.id, prompt_name: r.prompt_name, prompt_version: r.prompt_version, created_at: r.created_at,
     request_id: "req-" + r.id, metadata: { model: r.model, tokens_in: r.tokens_in, tokens_out: r.tokens_out, cost: r.cost, latency_ms: r.latency_ms },
     input_text: cap.input_text, output_text: cap.output_text,
     feedback: r.rating != null ? [{ rating: r.rating, comment: r.comment, source: "web-widget", created_at: r.created_at }] : [],
-    breakdown: r.cost
-      ? { available: true, model: r.model, template_tokens: tmplTok, data_tokens: r.tokens_in - tmplTok, tokens_out: r.tokens_out,
-          template_cost: r2((tmplTok * (RATE[r.model]?.[0] || 0)) / 1e6, 6), data_cost: r2(((r.tokens_in - tmplTok) * (RATE[r.model]?.[0] || 0)) / 1e6, 6),
-          output_cost: r2((r.tokens_out * (RATE[r.model]?.[1] || 0)) / 1e6, 6), total_cost: r.cost, estimated: true }
-      : { available: false, reason: "Model 'llama-3.1-8b' has no pricing entry — add it under [pricing] to see the split." },
+    breakdown: { available: true, model: r.model, template_tokens: tmpl, data_tokens: r.tokens_in - tmpl, tokens_out: r.tokens_out,
+      template_cost: r2((tmpl * rate[0]) / 1e6, 6), data_cost: r2(((r.tokens_in - tmpl) * rate[0]) / 1e6, 6),
+      output_cost: r2((r.tokens_out * rate[1]) / 1e6, 6), total_cost: r.cost, estimated: true },
   };
 }
 function scanResp(id: number) {
@@ -263,16 +284,15 @@ function scanResp(id: number) {
   return out;
 }
 
-// golden eval-from-trace examples, a few per prompt
 const GOLDEN: Record<string, any[]> = {
   "rag.answer": [
-    { id: 1, prompt_name: "rag.answer", input_text: "What is the rate limit on the free plan?", reference_output: '{"answer":"100 requests per minute","sources":["billing.md#limits"]}', source_invocation_id: 8990, model: "gpt-4o-mini", created_at: iso(2) },
-    { id: 2, prompt_name: "rag.answer", input_text: "Do you offer SSO on the Team plan?", reference_output: '{"answer":"SSO is available on Team and Enterprise","sources":["security.md#sso"]}', source_invocation_id: 8975, model: "gpt-4o-mini", created_at: iso(5) },
-    { id: 3, prompt_name: "rag.answer", input_text: "Can I export my data?", reference_output: '{"answer":"Yes, via Settings → Export (CSV/JSON)","sources":["data.md#export"]}', source_invocation_id: 8961, model: "gpt-4o", created_at: iso(8) },
+    { id: 1, prompt_name: "rag.answer", input_text: "What is the rate limit on the free plan?", reference_output: '{"answer":"100 requests per minute","sources":["billing.md#limits"]}', source_invocation_id: 89990, model: "gpt-4o-mini", created_at: iso(2) },
+    { id: 2, prompt_name: "rag.answer", input_text: "Do you offer SSO on the Team plan?", reference_output: '{"answer":"SSO is available on Team and Enterprise","sources":["security.md#sso"]}', source_invocation_id: 89975, model: "gpt-4o-mini", created_at: iso(5) },
+    { id: 3, prompt_name: "rag.answer", input_text: "Can I export my data?", reference_output: '{"answer":"Yes, via Settings → Export (CSV/JSON)","sources":["data.md#export"]}', source_invocation_id: 89961, model: "gpt-4o", created_at: iso(8) },
   ],
   "support.classify": [
-    { id: 4, prompt_name: "support.classify", input_text: "I was charged twice this month", reference_output: '{"intent":"billing","confidence":0.97}', source_invocation_id: 8950, model: "gpt-4o-mini", created_at: iso(3) },
-    { id: 5, prompt_name: "support.classify", input_text: "The export button does nothing", reference_output: '{"intent":"bug","confidence":0.92}', source_invocation_id: 8944, model: "gpt-4o-mini", created_at: iso(6) },
+    { id: 4, prompt_name: "support.classify", input_text: "I was charged twice this month", reference_output: '{"intent":"billing","confidence":0.97}', source_invocation_id: 89950, model: "gpt-4o-mini", created_at: iso(3) },
+    { id: 5, prompt_name: "support.classify", input_text: "The export button does nothing", reference_output: '{"intent":"bug","confidence":0.92}', source_invocation_id: 89944, model: "gpt-4o-mini", created_at: iso(6) },
   ],
 };
 
@@ -301,8 +321,7 @@ const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => a
   ] })],
   [/^\/api\/prompts\/([^/]+)\/content$/, (m, q) => contentResp(decodeURIComponent(m[1]), q.get("v") ? +q.get("v")! : undefined)],
   [/^\/api\/prompts\/([^/]+)\/diff$/, (m) => {
-    const name = decodeURIComponent(m[1]);
-    const first = (CONTENT[name] || "You are an assistant.").split("\n")[0];
+    const first = (CONTENT[decodeURIComponent(m[1])] || "You are an assistant.").split("\n")[0];
     return { additions: 2, deletions: 1, lines: [
       { type: "unchanged", old_num: 1, new_num: 1, content: first },
       { type: "deleted", old_num: 2, new_num: null, content: "Answer briefly." },
@@ -334,9 +353,9 @@ const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => a
   [/^\/api\/prompts\/([^/]+)\/online-drift$/, (m) => {
     const name = decodeURIComponent(m[1]);
     const drifting = name === "rag.answer" || name === "summary.tldr";
-    return { name, days: 30, total_calls: INVOCATIONS.filter((r) => r.prompt_name === name).length || 40, drifting_count: drifting ? 2 : 0, status: drifting ? "drifting" : "stable", metrics: [
-      { metric: "cost", label: "cost / call", count: 40, baseline_mean: 0.00061, recent_mean: drifting ? 0.00094 : 0.00063, pct_change: drifting ? 0.54 : 0.03, slope: 0.00001, p_value: drifting ? 0.018 : 0.4, direction: "up", bad_direction: "up", drifting: drifting, severity: drifting ? "high" : "none", message: drifting ? "cost / call ↑ +54% (p=0.018)" : "cost / call → +3% (p=0.400)" },
-      { metric: "rating", label: "feedback rating", count: 22, baseline_mean: 0.91, recent_mean: drifting ? 0.79 : 0.9, pct_change: drifting ? -0.13 : -0.01, slope: 0, p_value: drifting ? 0.03 : 0.7, direction: "down", bad_direction: "down", drifting: drifting, severity: drifting ? "medium" : "none", message: drifting ? "feedback rating ↓ -13% (p=0.030)" : "feedback rating → -1% (p=0.700)" },
+    return { name, days: 30, total_calls: Math.round((PROFILE[name]?.perDay || 1000) * 30), drifting_count: drifting ? 2 : 0, status: drifting ? "drifting" : "stable", metrics: [
+      { metric: "cost", label: "cost / call", count: 40, baseline_mean: 0.0031, recent_mean: drifting ? 0.0048 : 0.0032, pct_change: drifting ? 0.54 : 0.03, slope: 0.00001, p_value: drifting ? 0.018 : 0.4, direction: "up", bad_direction: "up", drifting, severity: drifting ? "high" : "none", message: drifting ? "cost / call ↑ +54% (p=0.018)" : "cost / call → +3% (p=0.400)" },
+      { metric: "rating", label: "feedback rating", count: 22, baseline_mean: 0.91, recent_mean: drifting ? 0.79 : 0.9, pct_change: drifting ? -0.13 : -0.01, slope: 0, p_value: drifting ? 0.03 : 0.7, direction: "down", bad_direction: "down", drifting, severity: drifting ? "medium" : "none", message: drifting ? "feedback rating ↓ -13% (p=0.030)" : "feedback rating → -1% (p=0.700)" },
       { metric: "latency_ms", label: "latency", count: 40, baseline_mean: 1180, recent_mean: 1240, pct_change: 0.05, slope: 2, p_value: 0.32, direction: "up", bad_direction: "up", drifting: false, severity: "none", message: "latency ↑ +5% (p=0.320)" },
       { metric: "tokens_out", label: "output tokens", count: 40, baseline_mean: 210, recent_mean: 224, pct_change: 0.07, slope: 0.5, p_value: 0.28, direction: "up", bad_direction: "up", drifting: false, severity: "none", message: "output tokens ↑ +7% (p=0.280)" },
     ] };
@@ -360,13 +379,13 @@ const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => a
     verdict: "keep_baseline", verdict_reason: "Claude scores +2.3pts but costs 1.7× — gpt-4o-mini wins on score-per-dollar.",
   })],
   [/^\/api\/models\/([^/]+)$/, () => ({ versions: [{ model_version: "gpt-4o-mini", run_count: 9 }, { model_version: "claude-haiku-4-5", run_count: 7 }, { model_version: "gpt-4o", run_count: 4 }] })],
-  [/^\/api\/cost\/coverage$/, (_m, q) => ({ days: +(q.get("days") || 14), models_seen: 4, uncosted: [{ model: "llama-3.1-8b", calls: INVOCATIONS.filter((r) => r.model === "llama-3.1-8b").length }], uncosted_calls: INVOCATIONS.filter((r) => r.model === "llama-3.1-8b").length })],
+  [/^\/api\/cost\/coverage$/, (_m, q) => ({ days: +(q.get("days") || 14), models_seen: 3, uncosted: [], uncosted_calls: 0 })],
   [/^\/api\/cost$/, (_m, q) => costResp(+(q.get("days") || 14), q.get("name"), q.get("model"))],
   [/^\/api\/config$/, () => CONFIG],
   [/^\/api\/budgets$/, () => ({ budgets: [
-    { id: 1, scope: "global", target: null, period: "monthly", limit_usd: 50, spend: 21.4, pct: 0.428, breached: false },
-    { id: 2, scope: "module", target: "rag", period: "daily", limit_usd: 1.5, spend: 1.31, pct: 0.873, breached: false },
-    { id: 3, scope: "prompt", target: "agent.planner", period: "monthly", limit_usd: 5, spend: 5.6, pct: 1.12, breached: true },
+    { id: 1, scope: "global", target: null, period: "monthly", limit_usd: 3000, spend: 2247.6, pct: 74.9, breached: false },
+    { id: 2, scope: "module", target: "rag", period: "daily", limit_usd: 40, spend: 36.3, pct: 90.8, breached: false },
+    { id: 3, scope: "prompt", target: "agent.planner", period: "monthly", limit_usd: 350, spend: 409.2, pct: 116.9, breached: true },
   ] })],
   [/^\/api\/invocations\/(\d+)\/scan$/, (m) => scanResp(+m[1])],
   [/^\/api\/invocations\/(\d+)$/, (m) => invocationDetail(+m[1])],
@@ -428,7 +447,7 @@ export function installDemoFetch() {
       try { body = init?.body ? JSON.parse(init.body as string) : undefined; } catch { /* ignore */ }
       const path = url.slice(url.indexOf("/api/"));
       const data = match(path, method, body);
-      await new Promise((res) => setTimeout(res, 90)); // a touch of latency so loading states show
+      await new Promise((res) => setTimeout(res, 90));
       return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     return orig(input, init);
