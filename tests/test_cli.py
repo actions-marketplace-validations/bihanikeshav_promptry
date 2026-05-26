@@ -189,7 +189,7 @@ class TestCostReport:
 
         storage = Storage(db_path=db_path)
         meta = {"tokens_in": 100, "tokens_out": 50, "cost": 0.001, "model": "gpt-4o"}
-        storage.save_prompt("cost-test", "prompt content", "hash1", metadata=meta)
+        storage.record_invocation("cost-test", metadata=meta)
         storage.close()
 
         result = runner.invoke(app, ["cost-report", "--days", "30"])
@@ -208,8 +208,8 @@ class TestCostReport:
         storage = Storage(db_path=db_path)
         meta_a = {"tokens_in": 100, "tokens_out": 50, "cost": 0.001, "model": "gpt-4o"}
         meta_b = {"tokens_in": 200, "tokens_out": 75, "cost": 0.002, "model": "gpt-4o"}
-        storage.save_prompt("prompt-a", "content a", "hash_a", metadata=meta_a)
-        storage.save_prompt("prompt-b", "content b", "hash_b", metadata=meta_b)
+        storage.record_invocation("prompt-a", metadata=meta_a)
+        storage.record_invocation("prompt-b", metadata=meta_b)
         storage.close()
 
         result = runner.invoke(app, ["cost-report", "--name", "prompt-a", "--days", "30"])
@@ -227,7 +227,7 @@ class TestCostReport:
 
         storage = Storage(db_path=db_path)
         meta = {"tokens_in": 100, "tokens_out": 50, "cost": 0.001, "model": "claude-sonnet"}
-        storage.save_prompt("model-test", "content", "hash_m", metadata=meta)
+        storage.record_invocation("model-test", metadata=meta)
         storage.close()
 
         # Filter for a model that does not match

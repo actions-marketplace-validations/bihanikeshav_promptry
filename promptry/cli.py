@@ -1259,10 +1259,10 @@ def cost_report_cmd(
 ):
     """Show token usage and cost aggregated by prompt name.
 
-    Reads metadata from tracked prompts. For this to work, pass token/cost
-    info when calling track()::
+    Reads the invocations ledger (one row per LLM call). For this to work,
+    record each call with track_invocation()::
 
-        track(prompt, "my-prompt", metadata={
+        track_invocation("my-prompt", metadata={
             "tokens_in": 500,
             "tokens_out": 150,
             "model": "gpt-4o",
@@ -1279,9 +1279,9 @@ def cost_report_cmd(
     by_date_list = data["by_date"]
 
     if summary["total_calls"] == 0:
-        console.print(f"[yellow]No prompts with metadata found in the last {days} days.[/yellow]")
-        console.print("Tip: pass metadata when calling track():")
-        console.print('  track(prompt, "name", metadata={"tokens_in": 500, "tokens_out": 150, "model": "gpt-4o", "cost": 0.003})')
+        console.print(f"[yellow]No recorded invocations in the last {days} days.[/yellow]")
+        console.print("Tip: record each call with track_invocation():")
+        console.print('  track_invocation("name", metadata={"tokens_in": 500, "tokens_out": 150, "model": "gpt-4o", "cost": 0.003})')
         raise typer.Exit(0)
 
     # --- by prompt name ---

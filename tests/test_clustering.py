@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -69,9 +70,14 @@ def test_signature_unknown_type_falls_back_to_reason():
 # ---------------------------------------------------------------------------
 
 class _MockRun:
-    def __init__(self, id, timestamp="2026-04-18T00:00:00Z"):
+    def __init__(self, id, timestamp=None):
         self.id = id
-        self.timestamp = timestamp
+        # Default to a recent timestamp so runs land inside the default 30-day
+        # window no matter when the suite runs (the old hardcoded date became a
+        # time bomb once 30 days elapsed).
+        self.timestamp = timestamp if timestamp is not None else (
+            datetime.now(timezone.utc) - timedelta(days=1)
+        ).isoformat()
 
 
 class _MockStorage:

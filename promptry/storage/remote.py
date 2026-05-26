@@ -296,6 +296,22 @@ class RemoteStorage(BaseStorage):
     def get_cost_data(self, days: int = 7, name=None, model=None) -> dict:
         return self._local.get_cost_data(days, name, model)
 
+    def list_prompt_summaries(self, offset: int = 0, limit: int = 200):
+        return self._local.list_prompt_summaries(offset=offset, limit=limit)
+
+    def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
+        return self._local.prune_prompt_versions(name, keep_last=keep_last)
+
+    def get_invocation_stats(self, name: str, days: int = 30) -> dict:
+        return self._local.get_invocation_stats(name, days=days)
+
+    def record_invocation(self, prompt_name: str, metadata=None, prompt_version=None, **kwargs) -> int:
+        # Record to the local store; remote shipping of invocations isn't a
+        # distinct event type, so the local ledger is the source of truth.
+        return self._local.record_invocation(
+            prompt_name, metadata=metadata, prompt_version=prompt_version, **kwargs
+        )
+
     def get_votes(self, prompt_name=None, days=30, offset=0, limit=200):
         return self._local.get_votes(prompt_name, days, offset=offset, limit=limit)
 

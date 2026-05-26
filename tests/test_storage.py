@@ -208,10 +208,10 @@ class TestGetCostData:
         assert result["by_name"] == []
 
     def test_cost_data_with_metadata(self, storage):
-        storage.save_prompt(name="my-prompt", content="test", content_hash="h1",
-            metadata={"tokens_in": 500, "tokens_out": 100, "model": "gpt-4o", "cost": 0.005})
-        storage.save_prompt(name="my-prompt", content="test2", content_hash="h2",
-            metadata={"tokens_in": 300, "tokens_out": 50, "model": "gpt-4o", "cost": 0.003})
+        # Cost lives in the invocations ledger (one row per call), not in
+        # prompt-version metadata.
+        storage.record_invocation("my-prompt", metadata={"tokens_in": 500, "tokens_out": 100, "model": "gpt-4o", "cost": 0.005})
+        storage.record_invocation("my-prompt", metadata={"tokens_in": 300, "tokens_out": 50, "model": "gpt-4o", "cost": 0.003})
         result = storage.get_cost_data(days=7)
         assert result["summary"]["total_calls"] == 2
         assert result["summary"]["total_cost"] == pytest.approx(0.008)
@@ -220,14 +220,14 @@ class TestGetCostData:
         assert result["by_name"][0]["tokens_in"] == 800
 
     def test_cost_data_filter_by_name(self, storage):
-        storage.save_prompt(name="a", content="x", content_hash="h1", metadata={"cost": 0.01})
-        storage.save_prompt(name="b", content="y", content_hash="h2", metadata={"cost": 0.02})
+        storage.record_invocation("a", metadata={"cost": 0.01})
+        storage.record_invocation("b", metadata={"cost": 0.02})
         result = storage.get_cost_data(days=7, name="a")
         assert len(result["by_name"]) == 1
         assert result["by_name"][0]["name"] == "a"
 
     def test_cost_data_filter_by_model(self, storage):
-        storage.save_prompt(name="p", content="x", content_hash="h1", metadata={"cost": 0.01, "model": "gpt-4o"})
-        storage.save_prompt(name="p", content="y", content_hash="h2", metadata={"cost": 0.02, "model": "claude"})
+        storage.record_invocation("p", metadata={"cost": 0.01, "model": "gpt-4o"})
+        storage.record_invocation("p", metadata={"cost": 0.02, "model": "claude"})
         result = storage.get_cost_data(days=7, model="gpt-4o")
         assert result["summary"]["total_cost"] == pytest.approx(0.01)

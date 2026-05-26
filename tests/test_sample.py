@@ -30,9 +30,12 @@ def isolated_db(tmp_path, monkeypatch):
     clear_suites()
 
 
-def test_sample_command_registered_with_expected_options():
+def test_sample_command_registered_with_expected_options(monkeypatch):
     """The command is discoverable and exposes the documented flags."""
-    result = runner.invoke(app, ["sample", "--help"], env={"COLUMNS": "200"})
+    # Widen via the real process env (not just invoke's env=) so Rich doesn't
+    # wrap/truncate option names on narrow terminals or CI — otherwise flaky.
+    monkeypatch.setenv("COLUMNS", "200")
+    result = runner.invoke(app, ["sample", "--help"])
     assert result.exit_code == 0
     out = result.output
     assert "--module" in out

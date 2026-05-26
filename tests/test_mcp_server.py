@@ -205,10 +205,8 @@ class TestCostReportTools:
         from promptry.storage import get_storage
 
         storage = get_storage()
-        storage.save_prompt(
-            name="my-prompt",
-            content="test content",
-            content_hash="abc123",
+        storage.record_invocation(
+            "my-prompt",
             metadata={"tokens_in": 500, "tokens_out": 100, "model": "gpt-4o", "cost": 0.005},
         )
         result = cost_report(days=7)
