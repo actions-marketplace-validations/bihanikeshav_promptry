@@ -705,19 +705,23 @@ def cost_data(
 def list_invocations(
     name: Optional[str] = Query(default=None),
     days: int = Query(default=7, ge=1),
-    limit: int = Query(default=100, ge=1),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     captured_only: bool = Query(default=False),
     order: str = Query(default="recent"),
+    sort: Optional[str] = Query(default=None),
+    direction: str = Query(default="desc"),
     min_rating: Optional[float] = Query(default=None),
 ):
-    """Per-call invocations. order='recent' or 'cost'; min_rating filters to
-    low-rated calls. Each row carries its latest feedback rating/comment."""
+    """Per-call invocations, paged via limit/offset. Sorting is server-side:
+    sort=<created_at|cost|latency_ms|tokens_in|tokens_out> + direction, or the
+    legacy order='recent'|'cost'. Each row carries its latest feedback rating."""
     storage = get_storage()
     if not hasattr(storage, "list_invocations"):
         return {"invocations": []}
     return {"invocations": storage.list_invocations(
-        name=name, days=days, limit=limit, captured_only=captured_only,
-        order=order, min_rating=min_rating,
+        name=name, days=days, limit=limit, offset=offset, captured_only=captured_only,
+        order=order, sort=sort, direction=direction, min_rating=min_rating,
     )}
 
 
@@ -739,6 +743,36 @@ def submit_feedback(body: _FeedbackIn):
     return {"ok": True, "id": fid}
 
 
+@app.get("/api/feedback")
+def list_feedback(
+    name: Optional[str] = Query(default=None),
+    days: int = Query(default=30, ge=1),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    only_comments: bool = Query(default=False),
+    min_rating: Optional[float] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+):
+    """End-user feedback rows, newest first, paged via limit/offset. q searches
+    comment + prompt name. Each row links back to its invocation."""
+    storage = get_storage()
+    if not hasattr(storage, "list_feedback"):
+        return {"feedback": []}
+    return {"feedback": storage.list_feedback(
+        name=name, days=days, limit=limit, offset=offset,
+        only_comments=only_comments, min_rating=min_rating, q=q,
+    )}
+
+
+@app.get("/api/feedback/stats")
+def feedback_stats(days: int = Query(default=30, ge=1)):
+    """Satisfaction + counts + per-prompt breakdown + daily positive-rate spark."""
+    storage = get_storage()
+    if not hasattr(storage, "get_feedback_stats"):
+        return {"days": days, "total": 0, "rated": 0, "positive_rate": None, "by_prompt": [], "sparkline": []}
+    return storage.get_feedback_stats(days=days)
+
+
 @app.get("/api/invocations/{invocation_id}")
 def get_invocation(invocation_id: int):
     """A single invocation with captured text, feedback, and an estimated
@@ -747,6 +781,12 @@ def get_invocation(invocation_id: int):
     rec = storage.get_invocation(invocation_id) if hasattr(storage, "get_invocation") else None
     if rec is None:
         raise HTTPException(status_code=404, detail="Invocation not found")
+
+    # Mask any detected secrets/PII in the captured text before it leaves the
+    # server — the scanner warns, so the trace view must not re-expose them.
+    from promptry.pii import redact_text
+    rec["input_text"] = redact_text(rec.get("input_text"))
+    rec["output_text"] = redact_text(rec.get("output_text"))
 
     # Template-vs-data breakdown: estimate how much of this call's input was
     # the (fixed) prompt template vs the (variable) interpolated payload.

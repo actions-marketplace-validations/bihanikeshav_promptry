@@ -203,6 +203,59 @@ const INVOCATIONS = Array.from({ length: 2500 }, (_, i) => {
   };
 });
 
+// end-user feedback derived from the rated invocations, with varied ratings + notes
+const POS_NOTES = ["spot on, thanks!", "exactly what I needed", "fast and accurate", "resolved my issue", "great answer"];
+const NEG_NOTES = ["missed the figure", "wrong policy cited", "hallucinated a source", "didn't actually answer", "outdated info"];
+const FB_SOURCES = ["web-widget", "thumbs", "in-app", "api"];
+const FEEDBACK = INVOCATIONS.filter((r) => r.rating != null).map((r, i) => {
+  const positive = r.rating! >= 0.7;
+  const rating = positive ? [1, 0.9, 0.8, 0.95][i % 4] : [0.4, 0.2, 0.3][i % 3];
+  const hasNote = !positive || i % 5 === 0;
+  return {
+    id: 70000 - i, request_id: "req-" + r.id, prompt_name: r.prompt_name, rating,
+    comment: hasNote ? (positive ? POS_NOTES[i % POS_NOTES.length] : NEG_NOTES[i % NEG_NOTES.length]) : null,
+    source: FB_SOURCES[i % FB_SOURCES.length], created_at: r.created_at, invocation_id: r.id, model: r.model,
+  };
+}).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+function feedbackList(qp: URLSearchParams) {
+  const days = +(qp.get("days") || 30), cutoff = now - days * 864e5;
+  let rows = FEEDBACK.filter((f) => new Date(f.created_at).getTime() >= cutoff);
+  const name = qp.get("name"); if (name) rows = rows.filter((f) => f.prompt_name === name);
+  if (qp.get("only_comments") === "true") rows = rows.filter((f) => f.comment && f.comment.trim());
+  const minR = qp.get("min_rating"); if (minR != null) rows = rows.filter((f) => f.rating != null && f.rating <= +minR);
+  const q = (qp.get("q") || "").toLowerCase();
+  if (q) rows = rows.filter((f) => (f.comment || "").toLowerCase().includes(q) || f.prompt_name.toLowerCase().includes(q));
+  const offset = +(qp.get("offset") || 0), limit = +(qp.get("limit") || 50);
+  return { feedback: rows.slice(offset, offset + limit) };
+}
+
+function feedbackStats(days: number) {
+  const cutoff = now - days * 864e5;
+  const rows = FEEDBACK.filter((f) => new Date(f.created_at).getTime() >= cutoff);
+  const rated = rows.map((f) => f.rating).filter((v): v is number => v != null);
+  const positive = rated.filter((v) => v >= 0.7).length;
+  const negative = rated.filter((v) => v <= 0.4).length;
+  const bp: Record<string, { name: string; count: number; sum: number; neg: number }> = {};
+  const byDay: Record<string, number[]> = {};
+  for (const f of rows) {
+    if (f.rating == null) continue;
+    const e = (bp[f.prompt_name] ||= { name: f.prompt_name, count: 0, sum: 0, neg: 0 });
+    e.count++; e.sum += f.rating; if (f.rating <= 0.4) e.neg++;
+    (byDay[f.created_at.slice(0, 10)] ||= []).push(f.rating);
+  }
+  const spark = Object.keys(byDay).sort().map((d) => r2(byDay[d].filter((v) => v >= 0.7).length / byDay[d].length, 3)).slice(-14);
+  return {
+    days, total: rows.length, rated: rated.length, positive, negative, neutral: rated.length - positive - negative,
+    with_comments: rows.filter((f) => f.comment && f.comment.trim()).length,
+    positive_rate: rated.length ? r2(positive / rated.length, 4) : null,
+    avg_rating: rated.length ? r2(rated.reduce((a, b) => a + b, 0) / rated.length, 4) : null,
+    by_prompt: Object.values(bp).map((e) => ({ name: e.name, count: e.count, avg_rating: r2(e.sum / e.count, 3), negative: e.neg }))
+      .sort((a, b) => b.negative - a.negative || b.count - a.count),
+    sparkline: spark,
+  };
+}
+
 // curated, production-scale cost rollups derived from PROFILE (not the sample)
 function costResp(days: number, name?: string | null, model?: string | null) {
   const sel = Object.entries(PROFILE).filter(([n, p]) =>
@@ -251,13 +304,18 @@ const CONFIG = {
   path: "~/helpdesk-ai/.promptry/config.toml",
 };
 
-// captured request/response, with a couple traces carrying PII/secrets to demo the scanner
+// captured request/response, with a couple traces carrying PII/secrets to demo
+// the scanner. Mask all-but-last-4, mirroring the backend's redact_text — the
+// dashboard never re-displays what the scanner flagged.
+const PII_EMAIL = "jordan.lee@northwind.io";
+const PII_KEY = "sk-live-9f2ab7c41de83b6072aa";
+const maskPII = (s: string) => "•".repeat(Math.min(8, Math.max(4, s.length - 4))) + s.slice(-4);
 function captured(name: string, id: number) {
   const sys = (CONTENT[name] || "").split("\n").slice(0, 3).join("\n");
   let user = "How do I increase the rate limit on the free plan?";
   let out = previewFor(name);
-  if (id % 9 === 0) user = "My account is jordan.lee@northwind.io — why was I double charged?";
-  if (id % 23 === 0) out = "Use the admin key sk-live-9f2ab7c41de83b6072aa to rotate it via the API.";
+  if (id % 9 === 0) user = `My account is ${maskPII(PII_EMAIL)} — why was I double charged?`;
+  if (id % 23 === 0) out = `Use the admin key ${maskPII(PII_KEY)} to rotate it via the API.`;
   return { input_text: `System:\n${sys}\n\nUser: ${user}`, output_text: out };
 }
 function invocationDetail(id: number) {
@@ -277,8 +335,8 @@ function invocationDetail(id: number) {
 }
 function scanResp(id: number) {
   const out: any = { input: [], output: [], total: 0, has_secret: false, worst_severity: null };
-  if (id % 9 === 0) out.input.push({ type: "email", category: "pii", severity: "medium", count: 1, sample: "••••••••northwind.io" });
-  if (id % 23 === 0) { out.output.push({ type: "openai_api_key", category: "secret", severity: "high", count: 1, sample: "••••••••72aa" }); out.has_secret = true; }
+  if (id % 9 === 0) out.input.push({ type: "email", category: "pii", severity: "medium", count: 1, sample: maskPII(PII_EMAIL) });
+  if (id % 23 === 0) { out.output.push({ type: "openai_api_key", category: "secret", severity: "high", count: 1, sample: maskPII(PII_KEY) }); out.has_secret = true; }
   out.total = out.input.length + out.output.length;
   out.worst_severity = out.has_secret ? "high" : out.total ? "medium" : null;
   return out;
@@ -381,6 +439,8 @@ const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => a
   [/^\/api\/models\/([^/]+)$/, () => ({ versions: [{ model_version: "gpt-4o-mini", run_count: 9 }, { model_version: "claude-haiku-4-5", run_count: 7 }, { model_version: "gpt-4o", run_count: 4 }] })],
   [/^\/api\/cost\/coverage$/, (_m, q) => ({ days: +(q.get("days") || 14), models_seen: 3, uncosted: [], uncosted_calls: 0 })],
   [/^\/api\/cost$/, (_m, q) => costResp(+(q.get("days") || 14), q.get("name"), q.get("model"))],
+  [/^\/api\/feedback\/stats$/, (_m, q) => feedbackStats(+(q.get("days") || 30))],
+  [/^\/api\/feedback$/, (_m, q) => feedbackList(q)],
   [/^\/api\/config$/, () => CONFIG],
   [/^\/api\/budgets$/, () => ({ budgets: [
     { id: 1, scope: "global", target: null, period: "monthly", limit_usd: 3000, spend: 2247.6, pct: 74.9, breached: false },
@@ -394,8 +454,16 @@ const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => a
     const name = q.get("name"); if (name) rows = rows.filter((r) => r.prompt_name === name);
     if (q.get("captured_only") === "true") rows = rows.filter((r) => r.has_capture);
     const minR = q.get("min_rating"); if (minR != null) rows = rows.filter((r) => r.rating != null && r.rating <= +minR);
-    rows.sort((a, b) => q.get("order") === "cost" ? (b.cost || 0) - (a.cost || 0) : new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    return { invocations: rows.slice(0, +(q.get("limit") || 100)) };
+    const sort = q.get("sort");
+    if (sort) {
+      const dir = q.get("direction") === "asc" ? 1 : -1;
+      const key = (r: any) => sort === "created_at" ? new Date(r.created_at).getTime() : (r[sort] ?? -Infinity);
+      rows.sort((a, b) => (key(a) - key(b)) * dir);
+    } else {
+      rows.sort((a, b) => q.get("order") === "cost" ? (b.cost || 0) - (a.cost || 0) : new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }
+    const offset = +(q.get("offset") || 0), limit = +(q.get("limit") || 100);
+    return { invocations: rows.slice(offset, offset + limit) };
   }],
 ];
 

@@ -491,12 +491,22 @@ class SQLiteStorage(BaseStorage):
                 for r in cur.fetchall()
             ]
 
+    # sortable columns -> SQL expression (metadata fields live in a JSON blob)
+    _INV_SORT = {
+        "created_at": "id",  # id tracks insertion order == recency, no tz parsing
+        "cost": "CAST(json_extract(metadata,'$.cost') AS REAL)",
+        "latency_ms": "CAST(json_extract(metadata,'$.latency_ms') AS REAL)",
+        "tokens_in": "CAST(COALESCE(json_extract(metadata,'$.tokens_in'), json_extract(metadata,'$.prompt_tokens')) AS REAL)",
+        "tokens_out": "CAST(COALESCE(json_extract(metadata,'$.tokens_out'), json_extract(metadata,'$.completion_tokens')) AS REAL)",
+    }
+
     def list_invocations(self, name: str | None = None, days: int = 7, limit: int = 100,
-                         captured_only: bool = False, order: str = "recent",
+                         offset: int = 0, captured_only: bool = False, order: str = "recent",
+                         sort: str | None = None, direction: str = "desc",
                          min_rating: float | None = None) -> list[dict]:
-        """Invocations for the trace/cost lists. order='recent' (newest) or
-        'cost' (most expensive first). Joins the latest feedback rating per
-        request_id so lists can show how a call was rated."""
+        """Invocations for the trace/cost lists, paged via limit/offset. Sorting
+        is server-side: pass sort=<column> + direction=asc|desc, or the legacy
+        order='recent'|'cost'. Joins the latest feedback rating per request_id."""
         import json as _json
         clauses = ["created_at >= datetime('now', ? || ' days')"]
         params: list = [f"-{days}"]
@@ -505,17 +515,21 @@ class SQLiteStorage(BaseStorage):
             params.append(name)
         if captured_only:
             clauses.append("(input_text IS NOT NULL OR output_text IS NOT NULL)")
-        order_sql = (
-            "ORDER BY CAST(json_extract(metadata,'$.cost') AS REAL) DESC, id DESC"
-            if order == "cost" else "ORDER BY id DESC"
-        )
-        params.append(limit)
+        if sort and sort in self._INV_SORT:
+            d = "ASC" if str(direction).lower() == "asc" else "DESC"
+            order_sql = f"ORDER BY {self._INV_SORT[sort]} {d}, id DESC"
+        else:
+            order_sql = (
+                "ORDER BY CAST(json_extract(metadata,'$.cost') AS REAL) DESC, id DESC"
+                if order == "cost" else "ORDER BY id DESC"
+            )
+        params += [limit, offset]
         with self._lock:
             cur = self._conn.execute(
                 f"""SELECT id, prompt_name, prompt_version, metadata, created_at,
                            input_text, output_text, request_id
                     FROM invocations WHERE {' AND '.join(clauses)}
-                    {order_sql} LIMIT ?""",
+                    {order_sql} LIMIT ? OFFSET ?""",
                 params,
             )
             rows = cur.fetchall()
@@ -605,6 +619,108 @@ class SQLiteStorage(BaseStorage):
             )
             self._conn.commit()
             return cur.lastrowid
+
+    def list_feedback(self, name: str | None = None, days: int = 30, limit: int = 50,
+                      offset: int = 0, only_comments: bool = False,
+                      min_rating: float | None = None, q: str | None = None) -> list[dict]:
+        """End-user feedback rows for the Feedback view, each linked back to the
+        invocation that produced the response (id + model) so a row can open the
+        trace. Newest-first, paged via limit/offset; q searches comment + prompt
+        name (LIKE); min_rating keeps only ratings <= that."""
+        import json as _json
+        clauses = ["f.created_at >= datetime('now', ? || ' days')"]
+        params: list = [f"-{days}"]
+        if name:
+            clauses.append("f.prompt_name = ?")
+            params.append(name)
+        if only_comments:
+            clauses.append("f.comment IS NOT NULL AND TRIM(f.comment) != ''")
+        if min_rating is not None:
+            clauses.append("f.rating IS NOT NULL AND f.rating <= ?")
+            params.append(min_rating)
+        if q:
+            clauses.append("(f.comment LIKE ? OR f.prompt_name LIKE ?)")
+            params += [f"%{q}%", f"%{q}%"]
+        params += [limit, offset]
+        with self._lock:
+            cur = self._conn.execute(
+                f"""SELECT f.id, f.request_id, f.prompt_name, f.rating, f.comment,
+                           f.source, f.created_at,
+                           (SELECT i.id FROM invocations i WHERE i.request_id = f.request_id
+                            ORDER BY i.id DESC LIMIT 1) AS invocation_id,
+                           (SELECT i.metadata FROM invocations i WHERE i.request_id = f.request_id
+                            ORDER BY i.id DESC LIMIT 1) AS metadata
+                    FROM feedback f
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY f.id DESC LIMIT ? OFFSET ?""",
+                params,
+            )
+            rows = cur.fetchall()
+        out = []
+        for r in rows:
+            meta = _json.loads(r["metadata"]) if r["metadata"] else {}
+            out.append({
+                "id": r["id"], "request_id": r["request_id"], "prompt_name": r["prompt_name"],
+                "rating": r["rating"], "comment": r["comment"], "source": r["source"],
+                "created_at": r["created_at"], "invocation_id": r["invocation_id"],
+                "model": meta.get("model"),
+            })
+        return out
+
+    def get_feedback_stats(self, days: int = 30, positive_at: float = 0.7,
+                           negative_at: float = 0.4) -> dict:
+        """Aggregate feedback health over the window: satisfaction (share of
+        rated feedback that's positive), counts, a per-prompt breakdown, and a
+        daily positive-rate sparkline."""
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT rating, comment, prompt_name, substr(created_at, 1, 10) AS day
+                   FROM feedback WHERE created_at >= datetime('now', ? || ' days')""",
+                (f"-{days}",),
+            )
+            rows = cur.fetchall()
+        total = len(rows)
+        rated = [r["rating"] for r in rows if r["rating"] is not None]
+        positive = sum(1 for v in rated if v >= positive_at)
+        negative = sum(1 for v in rated if v <= negative_at)
+        with_comments = sum(1 for r in rows if r["comment"] and r["comment"].strip())
+        by_prompt: dict[str, dict] = {}
+        for r in rows:
+            if r["rating"] is None:
+                continue
+            e = by_prompt.setdefault(r["prompt_name"] or "(unknown)", {"name": r["prompt_name"] or "(unknown)", "count": 0, "sum": 0.0, "neg": 0})
+            e["count"] += 1
+            e["sum"] += r["rating"]
+            if r["rating"] <= negative_at:
+                e["neg"] += 1
+        by_day: dict[str, list] = {}
+        for r in rows:
+            if r["rating"] is None:
+                continue
+            by_day.setdefault(r["day"], []).append(r["rating"])
+        spark = [
+            round(sum(1 for v in vs if v >= positive_at) / len(vs), 3)
+            for _, vs in sorted(by_day.items())
+        ]
+        return {
+            "days": days,
+            "total": total,
+            "rated": len(rated),
+            "positive": positive,
+            "negative": negative,
+            "neutral": len(rated) - positive - negative,
+            "with_comments": with_comments,
+            "positive_rate": round(positive / len(rated), 4) if rated else None,
+            "avg_rating": round(sum(rated) / len(rated), 4) if rated else None,
+            # all prompts (worst first) so the UI can search the full catalog
+            "by_prompt": sorted(
+                ({"name": e["name"], "count": e["count"],
+                  "avg_rating": round(e["sum"] / e["count"], 3),
+                  "negative": e["neg"]} for e in by_prompt.values()),
+                key=lambda x: (-x["negative"], -x["count"]),
+            ),
+            "sparkline": spark[-14:],
+        }
 
     def bisect_regression(self, suite_name: str) -> dict:
         """Find the first eval run where the suite went from passing to
@@ -943,7 +1059,11 @@ class SQLiteStorage(BaseStorage):
             )
             rows = cur.fetchall()
 
-        from promptry.pricing import cache_savings as _cache_savings
+        from promptry.pricing import (
+            cache_savings as _cache_savings,
+            calculate_cost as _calc_cost,
+            resolve_model as _resolve_model,
+        )
 
         total_cost = 0.0
         total_calls = 0
@@ -989,6 +1109,21 @@ class SQLiteStorage(BaseStorage):
             row_name = row["name"]
             # extract date portion from created_at (format: "YYYY-MM-DD HH:MM:SS")
             date_str = row["created_at"][:10] if row["created_at"] else ""
+
+            # Honor provider reroutes: a retired slug (e.g.
+            # grok-4-1-fast-non-reasoning on/after 2026-05-15) bills at its
+            # replacement's rate. Recompute from tokens so the dashboard is
+            # correct even for rows whose stored cost predates the reroute —
+            # the served model (if logged) already prices right and isn't in
+            # REROUTES, so it's unaffected.
+            if _resolve_model(row_model, date_str) != row_model:
+                rc = _calc_cost(
+                    row_model, tokens_in=tokens_in, tokens_out=tokens_out,
+                    cached_tokens=cached_tokens, cache_write_tokens=cache_write_tokens,
+                    when=date_str,
+                )
+                if rc is not None:
+                    cost = rc
 
             savings = 0.0
             if row_model and cached_tokens:

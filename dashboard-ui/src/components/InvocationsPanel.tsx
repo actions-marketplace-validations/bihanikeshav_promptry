@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { relTime } from "../utils";
 import { listInvocations, getInvocation } from "../api/client";
-import { useCached, prefetch } from "../lib/cache";
+import { prefetch } from "../lib/cache";
 import type { InvocationRow } from "../api/types";
 
+const PAGE = 50;
 const fmtCost = (n: number | null) => (n == null ? "—" : "$" + n.toFixed(n < 0.01 ? 5 : 4));
 const fmtMs = (n: number | null) => (n == null ? "—" : n >= 1000 ? (n / 1000).toFixed(1) + "s" : Math.round(n) + "ms");
 
@@ -16,8 +17,9 @@ function ratingChip(r: number | null) {
   return <span className="chip mono" style={{ fontSize: 10, color, borderColor: color }}>★ {r <= 1 ? (r * 5).toFixed(1) : r.toFixed(0)}</span>;
 }
 
-/** Reusable invocation list with sortable columns. Clicking a row opens the
- *  shared /invocations/:id page. `order` sets the default sort. */
+/** Reusable invocation list. Sorting + paging are server-side: column clicks
+ *  set sort/direction and refetch; scrolling lazy-loads the next page. Clicking
+ *  a row opens the shared /invocations/:id page. */
 export function InvocationsPanel({
   name,
   order = "recent",
@@ -32,35 +34,47 @@ export function InvocationsPanel({
   crumbs?: { label: string; to?: string }[];
 }) {
   const nav = useNavigate();
-  const { data, loading } = useCached(
-    `inv:${name ?? "*"}:${order}:${days}`,
-    () => listInvocations({ name, order, days, limit: 200 }),
-  );
-  const rows = data?.invocations ?? [];
   const [sortKey, setSortKey] = useState<SortKey>(order === "cost" ? "cost" : "created_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [rows, setRows] = useState<InvocationRow[]>([]);
+  const [done, setDone] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const sentinel = useRef<HTMLDivElement>(null);
+  const scrollBox = useRef<HTMLDivElement>(null);
+
+  // reset + first page whenever the query (name/window/sort) changes
+  useEffect(() => {
+    let cancelled = false;
+    setRows([]); setDone(false); setLoading(true);
+    listInvocations({ name, days, limit: PAGE, offset: 0, sort: sortKey, direction: sortDir })
+      .then((r) => { if (!cancelled) { setRows(r.invocations); setDone(r.invocations.length < PAGE); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setRows([]); setDone(true); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [name, days, sortKey, sortDir]);
+
+  const loadMore = useCallback(() => {
+    if (loading || done) return;
+    setLoading(true);
+    listInvocations({ name, days, limit: PAGE, offset: rows.length, sort: sortKey, direction: sortDir })
+      .then((r) => { setRows((prev) => [...prev, ...r.invocations]); setDone(r.invocations.length < PAGE); setLoading(false); })
+      .catch(() => { setDone(true); setLoading(false); });
+  }, [name, days, sortKey, sortDir, rows.length, loading, done]);
+
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el) return;
+    const io = new IntersectionObserver((e) => { if (e[0].isIntersecting) loadMore(); }, { root: scrollBox.current, rootMargin: "250px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [loadMore]);
 
   function toggleSort(k: SortKey) {
     if (k === sortKey) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
-    else { setSortKey(k); setSortDir(k === "created_at" ? "desc" : "desc"); }
+    else { setSortKey(k); setSortDir("desc"); }
   }
 
-  const sorted = useMemo(() => {
-    const val = (r: InvocationRow): number => {
-      if (sortKey === "created_at") return new Date(r.created_at).getTime();
-      const v = r[sortKey];
-      return v == null ? -Infinity : (v as number);
-    };
-    const arr = [...rows].sort((a, b) => val(a) - val(b));
-    return sortDir === "desc" ? arr.reverse() : arr;
-  }, [rows, sortKey, sortDir]);
-
   const Th = ({ k, label, align = "right" }: { k: SortKey; label: string; align?: "left" | "right" }) => (
-    <th
-      onClick={() => toggleSort(k)}
-      className={align === "right" ? "r" : ""}
-      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
-    >
+    <th onClick={() => toggleSort(k)} className={align === "right" ? "r" : ""} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
       {label}
       <span style={{ display: "inline-block", width: 0, overflow: "visible", paddingLeft: 4, color: sortKey === k ? "var(--accent)" : "transparent", fontSize: 9 }}>
         {sortKey === k ? (sortDir === "desc" ? "▼" : "▲") : "▼"}
@@ -70,6 +84,7 @@ export function InvocationsPanel({
 
   return (
     <div className="card" style={{ overflow: "hidden", height: "fit-content" }}>
+      <div ref={scrollBox} style={{ maxHeight: 540, overflowY: "auto" }}>
       <table className="pr">
         <thead>
           <tr>
@@ -83,7 +98,7 @@ export function InvocationsPanel({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((r) => (
+          {rows.map((r) => (
             <tr
               key={r.id}
               onMouseEnter={() => prefetch(`invocation:${r.id}`, () => getInvocation(r.id))}
@@ -110,13 +125,16 @@ export function InvocationsPanel({
               <td className="r mono" style={{ fontSize: 11, color: "var(--secondary)", whiteSpace: "nowrap" }}>{relTime(r.created_at)}</td>
             </tr>
           ))}
-          {sorted.length === 0 && (
+          {rows.length === 0 && (
             <tr><td colSpan={7} style={{ textAlign: "center", padding: 36, color: "var(--muted)", fontSize: 12.5 }}>
               {loading ? "Loading…" : emptyHint || "No invocations in this window."}
             </td></tr>
           )}
         </tbody>
       </table>
+      {!done && rows.length > 0 && <div ref={sentinel} style={{ padding: 12, textAlign: "center", color: "var(--muted)", fontSize: 11.5 }}>{loading ? "Loading…" : "Scroll for more"}</div>}
+      {done && rows.length > 0 && <div style={{ padding: 10, textAlign: "center", color: "var(--secondary)", fontSize: 11 }}>{rows.length} shown · end of list</div>}
+      </div>
     </div>
   );
 }

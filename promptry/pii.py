@@ -69,6 +69,21 @@ def _redact(match: str) -> str:
     return ("•" * min(8, max(4, len(match) - 4))) + tail
 
 
+def redact_text(text: str | None) -> str | None:
+    """Return text with every detected secret/PII span masked in place, so a
+    captured request/response can be shown in the dashboard without re-exposing
+    what the scanner flagged. Clean text passes through unchanged."""
+    if not text:
+        return text
+    out = text
+    for typ, _category, _severity, pattern in _PATTERNS:
+        if typ == "credit_card":
+            out = pattern.sub(lambda m: _redact(m.group(0).strip()) if _luhn_ok(m.group(0)) else m.group(0), out)
+        else:
+            out = pattern.sub(lambda m: _redact(m.group(0).strip()), out)
+    return out
+
+
 def scan_text(text: str | None) -> list[PiiFinding]:
     """Scan a blob of text and return redacted, de-duplicated findings."""
     if not text:

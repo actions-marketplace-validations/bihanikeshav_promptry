@@ -17,6 +17,8 @@ import type {
   CostCoverage,
   LintFinding,
   InvocationRow,
+  FeedbackRow,
+  FeedbackStats,
   InvocationDetail,
   BisectResult,
   BudgetStatus,
@@ -187,15 +189,34 @@ export async function deleteBudget(id: number) {
   return res.json();
 }
 
-export function listInvocations(params: { name?: string; days?: number; limit?: number; capturedOnly?: boolean; order?: "recent" | "cost"; minRating?: number } = {}): Promise<{ invocations: InvocationRow[] }> {
+export function listInvocations(params: { name?: string; days?: number; limit?: number; offset?: number; capturedOnly?: boolean; order?: "recent" | "cost"; sort?: string; direction?: "asc" | "desc"; minRating?: number } = {}): Promise<{ invocations: InvocationRow[] }> {
   const q = new URLSearchParams();
   if (params.name) q.set("name", params.name);
   q.set("days", String(params.days ?? 7));
   q.set("limit", String(params.limit ?? 100));
+  if (params.offset) q.set("offset", String(params.offset));
   if (params.capturedOnly) q.set("captured_only", "true");
   if (params.order) q.set("order", params.order);
+  if (params.sort) q.set("sort", params.sort);
+  if (params.direction) q.set("direction", params.direction);
   if (params.minRating != null) q.set("min_rating", String(params.minRating));
   return fetchJson(`/api/invocations?${q.toString()}`);
+}
+
+export function listFeedback(params: { name?: string; days?: number; limit?: number; offset?: number; onlyComments?: boolean; minRating?: number; q?: string } = {}): Promise<{ feedback: FeedbackRow[] }> {
+  const p = new URLSearchParams();
+  if (params.name) p.set("name", params.name);
+  p.set("days", String(params.days ?? 30));
+  p.set("limit", String(params.limit ?? 50));
+  if (params.offset) p.set("offset", String(params.offset));
+  if (params.onlyComments) p.set("only_comments", "true");
+  if (params.minRating != null) p.set("min_rating", String(params.minRating));
+  if (params.q) p.set("q", params.q);
+  return fetchJson(`/api/feedback?${p.toString()}`);
+}
+
+export function getFeedbackStats(days = 30): Promise<FeedbackStats> {
+  return fetchJson(`/api/feedback/stats?days=${days}`);
 }
 
 export function getInvocation(id: number): Promise<InvocationDetail> {

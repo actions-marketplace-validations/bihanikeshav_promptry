@@ -246,6 +246,30 @@ export interface ProjectConfig {
   path: string;
 }
 
+export interface FeedbackRow {
+  id: number;
+  request_id: string | null;
+  prompt_name: string | null;
+  rating: number | null;
+  comment: string | null;
+  source: string | null;
+  created_at: string;
+  invocation_id: number | null;
+  model: string | null;
+}
+export interface FeedbackStats {
+  days: number;
+  total: number;
+  rated: number;
+  positive: number;
+  negative: number;
+  neutral: number;
+  with_comments: number;
+  positive_rate: number | null;
+  avg_rating: number | null;
+  by_prompt: { name: string; count: number; avg_rating: number; negative: number }[];
+  sparkline: number[];
+}
 export interface BudgetStatus {
   id: number;
   scope: string;

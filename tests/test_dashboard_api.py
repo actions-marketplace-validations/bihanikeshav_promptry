@@ -284,3 +284,60 @@ class TestCost:
         data = resp.json()
         assert data["summary"]["total_calls"] == 3
         assert data["summary"]["total_cost"] == pytest.approx(0.15)
+
+
+# ---- Feedback ----
+
+class TestFeedback:
+    def _seed(self, storage):
+        # 3 positive, 2 negative (one with a note); link each to an invocation
+        ratings = [(0.95, None), (0.9, "great"), (0.8, None), (0.4, "wrong policy"), (0.2, None)]
+        for i, (rating, comment) in enumerate(ratings):
+            rid = f"req-{i}"
+            storage.record_invocation(
+                "rag.answer",
+                metadata={"model": "gpt-4o-mini", "cost": 0.001, "tokens_in": 900, "tokens_out": 80},
+                prompt_version=1, request_id=rid,
+            )
+            storage.save_feedback(rid, rating=rating, comment=comment, source="web-widget")
+
+    def test_list_links_to_invocation(self, client, storage):
+        self._seed(storage)
+        resp = client.get("/api/feedback")
+        assert resp.status_code == 200
+        rows = resp.json()["feedback"]
+        assert len(rows) == 5
+        # newest-first, each carries the invocation id + model for the trace link
+        assert rows[0]["invocation_id"] is not None
+        assert rows[0]["model"] == "gpt-4o-mini"
+
+    def test_filters(self, client, storage):
+        self._seed(storage)
+        assert len(client.get("/api/feedback?only_comments=true").json()["feedback"]) == 2
+        assert len(client.get("/api/feedback?min_rating=0.5").json()["feedback"]) == 2  # the two negatives
+
+    def test_pagination(self, client, storage):
+        self._seed(storage)
+        page1 = client.get("/api/feedback?limit=2&offset=0").json()["feedback"]
+        page2 = client.get("/api/feedback?limit=2&offset=2").json()["feedback"]
+        assert len(page1) == 2 and len(page2) == 2
+        assert {r["id"] for r in page1}.isdisjoint({r["id"] for r in page2})  # no overlap
+
+    def test_search(self, client, storage):
+        self._seed(storage)
+        rows = client.get("/api/feedback?q=policy").json()["feedback"]
+        assert len(rows) == 1 and "policy" in rows[0]["comment"]
+
+    def test_stats(self, client, storage):
+        self._seed(storage)
+        data = client.get("/api/feedback/stats").json()
+        assert data["total"] == 5 and data["rated"] == 5
+        assert data["positive"] == 3 and data["negative"] == 2
+        assert data["positive_rate"] == pytest.approx(0.6)
+        assert data["with_comments"] == 2
+        assert data["by_prompt"][0]["name"] == "rag.answer"
+
+    def test_empty(self, client):
+        data = client.get("/api/feedback/stats").json()
+        assert data["total"] == 0 and data["positive_rate"] is None
+        assert client.get("/api/feedback").json()["feedback"] == []

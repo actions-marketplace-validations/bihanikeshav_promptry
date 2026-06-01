@@ -235,6 +235,8 @@ function OverviewLevel({ s, data, coverage, modules, moduleMax, onModule }: any)
 function ModuleLevel({ module, data, moduleOf, onPrompt }: any) {
   const prompts = data.by_name.filter((b: any) => moduleOf(b.name) === module);
   const sort = useSort(prompts, "cost");
+  const [q, setQ] = useState("");
+  const shown = sort.sorted.filter((p: any) => p.name.toLowerCase().includes(q.trim().toLowerCase()));
   const max = Math.max(1e-9, ...prompts.map((p: any) => p.cost));
   const totals = prompts.reduce((acc: any, p: any) => ({ cost: acc.cost + p.cost, calls: acc.calls + p.calls }), { cost: 0, calls: 0 });
   return (
@@ -245,7 +247,14 @@ function ModuleLevel({ module, data, moduleOf, onPrompt }: any) {
         <KPI label="Avg $/call" value={"$" + (totals.calls ? totals.cost / totals.calls : 0).toFixed(5)} accent="var(--text-dim)" sub="" />
       </div>
       <div className="card" style={{ overflow: "hidden" }}>
-        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", fontSize: 13, fontWeight: 600 }}>Prompts by spend</div>
+        <div style={{ padding: "11px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Prompts by spend</span>
+          {prompts.length > 8 && (
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search prompts…"
+              style={{ background: "var(--bg-elev)", border: "1px solid var(--border)", borderRadius: 6, padding: "5px 10px", color: "var(--text)", fontSize: 12, outline: "none", width: 180 }} />
+          )}
+        </div>
+        <div style={{ maxHeight: 560, overflowY: "auto" }}>
         <table className="pr">
           <thead><tr>
             <SortTh label="Prompt" k="name" sort={sort} align="left" />
@@ -257,7 +266,7 @@ function ModuleLevel({ module, data, moduleOf, onPrompt }: any) {
             <th className="r"></th>
           </tr></thead>
           <tbody>
-            {sort.sorted.map((p: any) => (
+            {shown.map((p: any) => (
               <tr key={p.name} onClick={() => onPrompt(p.name)} style={{ cursor: "pointer" }}>
                 <td style={{ fontWeight: 600, fontSize: 13 }}><span style={{ color: "var(--muted)" }}>{module}.</span>{p.name.slice(p.name.indexOf(".") + 1)}</td>
                 <td className="r mono" style={{ color: "var(--text-dim)" }}>{p.calls.toLocaleString()}</td>
@@ -270,6 +279,7 @@ function ModuleLevel({ module, data, moduleOf, onPrompt }: any) {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </>
   );

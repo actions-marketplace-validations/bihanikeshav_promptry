@@ -10,6 +10,7 @@ import PromptDetail from "./pages/PromptDetail";
 import Models from "./pages/Models";
 import Cost from "./pages/Cost";
 import Invocation from "./pages/Invocation";
+import Feedback from "./pages/Feedback";
 import Playground from "./pages/Playground";
 import Settings from "./pages/Settings";
 
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/models" element={<Models />} />
         <Route path="/cost" element={<Cost />} />
         <Route path="/invocations/:id" element={<Invocation />} />
+        <Route path="/feedback" element={<Feedback />} />
         <Route path="/playground" element={<Playground />} />
         <Route path="/settings" element={<Settings />} />
       </Route>

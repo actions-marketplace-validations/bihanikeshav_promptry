@@ -97,6 +97,19 @@ const BASE_ITEMS: NavItem[] = [
     ),
   },
   {
+    to: "/feedback",
+    label: "Feedback",
+    icon: (
+      <path
+        d="M2 3.5h12v7H6l-3 2.5V10.5H2z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        fill="none"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+  {
     to: "/playground",
     label: "Playground",
     icon: (

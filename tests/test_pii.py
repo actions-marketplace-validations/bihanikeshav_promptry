@@ -1,7 +1,7 @@
 """Regression tests for promptry.pii — the secret/PII tripwire over captured text."""
 from __future__ import annotations
 
-from promptry.pii import scan_text, scan_invocation, _luhn_ok
+from promptry.pii import scan_text, scan_invocation, redact_text, _luhn_ok
 
 
 def _types(text):
@@ -60,6 +60,25 @@ class TestScanText:
         findings = scan_text("alice@acme.io bob@beta.dev carol@gamma.net")
         email = next(f for f in findings if f.type == "email")
         assert email.count == 3
+
+
+class TestRedactText:
+    def test_masks_email_in_place(self):
+        out = redact_text("contact jane.doe@acme.com please")
+        assert "jane.doe@acme.com" not in out
+        assert "contact" in out and "please" in out  # surrounding text preserved
+
+    def test_masks_secret_in_place(self):
+        out = redact_text("key sk-abcdefghij1234567890WXYZ here")
+        assert "sk-abcdefghij1234567890WXYZ" not in out
+        assert "•" in out and out.endswith("here")
+
+    def test_clean_text_unchanged(self):
+        assert redact_text("a normal helpful answer") == "a normal helpful answer"
+
+    def test_empty(self):
+        assert redact_text("") == ""
+        assert redact_text(None) is None
 
 
 class TestLuhn:
