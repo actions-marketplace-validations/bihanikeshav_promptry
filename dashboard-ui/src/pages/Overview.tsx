@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { KPI, PageHeader, Sparkline, StatusPill } from "../components/ui";
-import { pct, relTime, usd, formatTokens, scoreColor } from "../utils";
-import { getCostData, listBudgets, listInvocations } from "../api/client";
+import { pct, relTime, usd, scoreColor } from "../utils";
+import { getCostData, listBudgets, listFeedback, getFeedbackStats } from "../api/client";
 import type { LayoutContext } from "../components/Layout";
-import type { CostResponse, BudgetStatus, InvocationRow } from "../api/types";
+import type { CostResponse, BudgetStatus, FeedbackRow, FeedbackStats } from "../api/types";
 
 /* one-line clamp that fades instead of cutting with an ellipsis */
 const fade: React.CSSProperties = {
@@ -13,9 +13,9 @@ const fade: React.CSSProperties = {
   WebkitMaskImage: "linear-gradient(90deg,#000 78%,transparent)",
 };
 
-function SectionCard({ title, sub, action, children }: { title: string; sub?: string; action?: ReactNode; children: ReactNode }) {
+function SectionCard({ title, sub, action, children, style }: { title: string; sub?: string; action?: ReactNode; children: ReactNode; style?: React.CSSProperties }) {
   return (
-    <div className="card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
+    <div className="card" style={{ overflow: "hidden", display: "flex", flexDirection: "column", ...style }}>
       <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
@@ -36,12 +36,14 @@ export default function Overview() {
   const navigate = useNavigate();
   const [cost, setCost] = useState<CostResponse | null>(null);
   const [budgets, setBudgets] = useState<BudgetStatus[]>([]);
-  const [recent, setRecent] = useState<InvocationRow[]>([]);
+  const [fbStats, setFbStats] = useState<FeedbackStats | null>(null);
+  const [recentFb, setRecentFb] = useState<FeedbackRow[]>([]);
 
   useEffect(() => {
     getCostData(30).then(setCost).catch(() => setCost(null));
     listBudgets().then((r) => setBudgets(r.budgets)).catch(() => setBudgets([]));
-    listInvocations({ limit: 9, order: "recent" }).then((r) => setRecent(r.invocations)).catch(() => setRecent([]));
+    getFeedbackStats(30).then(setFbStats).catch(() => setFbStats(null));
+    listFeedback({ days: 30, limit: 5 }).then((r) => setRecentFb(r.feedback)).catch(() => setRecentFb([]));
   }, []);
 
   const evalKpis = useMemo(() => {
@@ -100,35 +102,26 @@ export default function Overview() {
         description="Eval health and spend at a glance. Dive into Evals or Cost for detail."
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
-        <KPI
-          label="Suites passing"
-          value={`${evalKpis.passing}/${suites.length}`}
-          accent="var(--success)"
-          sub={evalKpis.regressions > 0 ? `${evalKpis.regressions} regression${evalKpis.regressions > 1 ? "s" : ""}` : "all green"}
-        />
-        <KPI label="Drifting" value={evalKpis.drifting} accent={evalKpis.drifting ? "var(--warning)" : "var(--text)"} sub={evalKpis.drifting ? "negative slope" : "all stable"} />
-        <KPI
-          label="Spend · 30d"
-          value={cs ? usd(cs.total_cost, 2) : "—"}
-          accent="var(--text)"
-          sub={
-            cs
-              ? `${cs.total_calls.toLocaleString()} calls${wow != null ? `  ·  ${wow >= 0 ? "▲" : "▼"}${Math.abs(wow * 100).toFixed(0)}% wk/wk` : ""}`
-              : ""
-          }
-        />
-        <KPI
-          label="Avg $/call"
-          value={cs ? "$" + (cs.avg_cost ?? 0).toFixed(5) : "—"}
-          accent="var(--accent)"
-          sub={cs ? `${formatTokens(cs.total_tokens_in)} in · ${formatTokens(cs.total_tokens_out)} out` : ""}
-        />
-      </div>
-
-      {/* health + budget governance */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 16, marginBottom: 16 }}>
-        <SectionCard title="Suite health" sub="weakest first" action={<button className="btn" onClick={() => navigate("/evals")}>All evals ›</button>}>
+      {/* eval-health hero + cost KPIs + budget governance */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 16, marginBottom: 16, alignItems: "stretch" }}>
+        {/* Suite health hero: summary stat band + weakest-first list */}
+        <div className="card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Suite health</div>
+            <button className="btn" onClick={() => navigate("/evals")}>All evals ›</button>
+          </div>
+          <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+            {[
+              { v: `${evalKpis.passing}/${suites.length}`, l: "passing", c: "var(--success)" },
+              { v: evalKpis.drifting, l: "drifting", c: evalKpis.drifting ? "var(--warning)" : "var(--muted)" },
+              { v: evalKpis.regressions, l: evalKpis.regressions === 1 ? "regression" : "regressions", c: evalKpis.regressions ? "var(--error)" : "var(--muted)" },
+            ].map((st, i) => (
+              <div key={i} style={{ flex: 1, padding: "13px 16px", borderRight: i < 2 ? "1px solid var(--border)" : "none" }}>
+                <div className="mono" style={{ fontSize: 23, fontWeight: 600, color: st.c, lineHeight: 1 }}>{st.v}</div>
+                <div style={{ fontSize: 11, color: "var(--secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 6 }}>{st.l}</div>
+              </div>
+            ))}
+          </div>
           {health.length === 0 ? (
             <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>No eval suites yet.</div>
           ) : (
@@ -150,39 +143,58 @@ export default function Overview() {
               </tbody>
             </table>
           )}
-        </SectionCard>
+        </div>
 
-        <SectionCard
-          title="Budgets"
-          sub={breachedCount > 0 ? `${breachedCount} over budget` : "all within cap"}
-          action={<button className="btn" onClick={() => navigate("/cost")}>Manage ›</button>}
-        >
-          {budgets.length === 0 ? (
-            <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>No budgets set.</div>
-          ) : (
-            <div style={{ padding: "13px 16px" }}>
-              {budgets.map((b) => {
-                const label = b.scope === "global" ? "All prompts" : b.scope === "module" ? `module: ${b.target}` : b.target;
-                const color = b.breached ? "var(--error)" : b.pct >= 80 ? "var(--warning)" : "var(--accent)";
-                return (
-                  <div key={b.id} style={{ marginBottom: 13 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                      <span className="mono" style={{ fontSize: 12 }}>
-                        {label}<span style={{ color: "var(--muted)" }}> · {b.period}</span>
-                      </span>
-                      <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: b.breached ? "var(--error)" : "var(--text)" }}>
-                        ${b.spend.toFixed(0)} / ${b.limit_usd.toFixed(0)} ({b.pct.toFixed(0)}%)
-                      </span>
+        {/* right column: cost KPIs stacked over budgets */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <KPI
+              label="Spend · 30d"
+              value={cs ? usd(cs.total_cost, 2) : "—"}
+              accent="var(--text)"
+              sub={cs ? `${cs.total_calls.toLocaleString()} calls${wow != null ? `  ·  ${wow >= 0 ? "▲" : "▼"}${Math.abs(wow * 100).toFixed(0)}% wk/wk` : ""}` : ""}
+            />
+            <KPI
+              label="Satisfaction"
+              value={fbStats?.positive_rate != null ? pct(fbStats.positive_rate, 0) : "—"}
+              accent="var(--success)"
+              sub={fbStats ? `${fbStats.rated.toLocaleString()} ratings${fbStats.negative ? `  ·  ${fbStats.negative} flagged` : ""}` : ""}
+              spark={fbStats?.sparkline?.length ? fbStats.sparkline : undefined}
+            />
+          </div>
+          <SectionCard
+            title="Budgets"
+            sub={breachedCount > 0 ? `${breachedCount} over budget` : "all within cap"}
+            action={<button className="btn" onClick={() => navigate("/cost")}>Manage ›</button>}
+            style={{ flex: 1 }}
+          >
+            {budgets.length === 0 ? (
+              <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>No budgets set.</div>
+            ) : (
+              <div style={{ padding: "13px 16px" }}>
+                {budgets.map((b) => {
+                  const label = b.scope === "global" ? "All prompts" : b.scope === "module" ? `module: ${b.target}` : b.target;
+                  const color = b.breached ? "var(--error)" : b.pct >= 80 ? "var(--warning)" : "var(--accent)";
+                  return (
+                    <div key={b.id} style={{ marginBottom: 13 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                        <span className="mono" style={{ fontSize: 12 }}>
+                          {label}<span style={{ color: "var(--muted)" }}> · {b.period}</span>
+                        </span>
+                        <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: b.breached ? "var(--error)" : "var(--text)" }}>
+                          ${b.spend.toFixed(0)} / ${b.limit_usd.toFixed(0)} ({b.pct.toFixed(0)}%)
+                        </span>
+                      </div>
+                      <div style={{ height: 5, background: "var(--bg-elev)", borderRadius: 3, overflow: "hidden", border: "1px solid var(--border)" }}>
+                        <div style={{ width: Math.min(100, b.pct) + "%", height: "100%", background: color }} />
+                      </div>
                     </div>
-                    <div style={{ height: 5, background: "var(--bg-elev)", borderRadius: 3, overflow: "hidden", border: "1px solid var(--border)" }}>
-                      <div style={{ width: Math.min(100, b.pct) + "%", height: "100%", background: color }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </SectionCard>
+                  );
+                })}
+              </div>
+            )}
+          </SectionCard>
+        </div>
       </div>
 
       {/* spend by module + live activity */}
@@ -209,30 +221,34 @@ export default function Overview() {
           )}
         </SectionCard>
 
-        <SectionCard title="Recent activity" sub="latest production calls">
-          {recent.length === 0 ? (
-            <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>No traffic captured yet.</div>
+        <SectionCard title="Recent feedback" sub="what end-users are saying" action={<button className="btn" onClick={() => navigate("/feedback")}>All feedback ›</button>}>
+          {recentFb.length === 0 ? (
+            <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>No feedback captured yet.</div>
           ) : (
-            <table className="pr">
+            <table className="pr" style={{ tableLayout: "fixed", width: "100%" }}>
               <tbody>
-                {recent.map((r) => (
-                  <tr key={r.id} onClick={() => navigate(`/invocations/${r.id}`)}>
-                    <td className="mono" style={{ color: "var(--secondary)", fontSize: 11, whiteSpace: "nowrap" }}>{relTime(r.created_at)}</td>
-                    <td><span className="mono" style={{ ...fade, fontSize: 12.5 }}>{r.prompt_name}</span></td>
-                    <td>
-                      {r.model && (
-                        <span className="mono" style={{ fontSize: 10.5, color: "var(--secondary)", background: "var(--bg-elev)", border: "1px solid var(--border)", borderRadius: 4, padding: "1px 6px" }}>
-                          {r.model}
-                        </span>
-                      )}
+                {recentFb.map((r) => (
+                  <tr key={r.id} onClick={() => r.invocation_id && navigate(`/invocations/${r.invocation_id}`, { state: { from: [{ label: "feedback", to: "/feedback" }] } })} style={{ cursor: r.invocation_id ? "pointer" : "default" }}>
+                    <td style={{ width: 26, paddingRight: 0 }}>
+                      <span title={r.rating != null ? `rating ${r.rating}` : "no rating"} style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: ratingColor(r.rating) }} />
                     </td>
-                    <td className="r mono" style={{ fontSize: 12, color: "var(--accent)", whiteSpace: "nowrap" }}>{r.cost != null ? usd(r.cost, 4) : "—"}</td>
-                    <td className="r mono" style={{ fontSize: 11, color: "var(--secondary)", whiteSpace: "nowrap" }}>{r.latency_ms != null ? `${r.latency_ms}ms` : "—"}</td>
-                    <td className="c"><span title={r.rating != null ? `rating ${r.rating}` : "no feedback"} style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: ratingColor(r.rating) }} /></td>
+                    <td style={{ width: "30%" }}><span className="mono" style={{ ...fade, fontSize: 12 }}>{r.prompt_name}</span></td>
+                    <td style={{ fontSize: 12.5, color: r.comment ? "var(--text)" : "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.comment?.trim() || <span style={{ fontStyle: "italic" }}>rated, no note</span>}
+                    </td>
+                    <td className="r mono" style={{ width: 64, paddingRight: 16, fontSize: 11, color: "var(--secondary)", whiteSpace: "nowrap" }}>{relTime(r.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          )}
+          {recentFb.length > 0 && fbStats && fbStats.total > 5 && (
+            <div
+              onClick={() => navigate("/feedback")}
+              style={{ padding: "9px 16px", borderTop: "1px solid var(--border)", cursor: "pointer", fontSize: 11.5, color: "var(--secondary)" }}
+            >
+              … {(fbStats.total - 5).toLocaleString()} more
+            </div>
           )}
         </SectionCard>
       </div>

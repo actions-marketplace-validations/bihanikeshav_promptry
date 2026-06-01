@@ -74,6 +74,9 @@ button { font-family: inherit; color: inherit; }
     radial-gradient(1200px 600px at 10% -10%, oklch(0.78 0.14 82 / 0.06), transparent 60%),
     radial-gradient(800px 400px at 100% 0%, rgba(122, 162, 255, 0.04), transparent 60%),
     var(--bg);
+  /* anchor the glow to the viewport, not the (variably tall) body — otherwise
+     the top-left blob rises out of view on long, scrolling pages */
+  background-attachment: fixed;
 }
 
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

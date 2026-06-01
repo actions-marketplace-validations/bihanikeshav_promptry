@@ -19,11 +19,14 @@ export default function Evals() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<Sort>("status");
+  const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
     let arr = suites.slice();
     if (filter === "regressions") arr = arr.filter((s) => !s.passed);
     if (filter === "drifting") arr = arr.filter((s) => s.drift_status === "drifting");
+    const qq = query.trim().toLowerCase();
+    if (qq) arr = arr.filter((s) => s.name.toLowerCase().includes(qq));
     arr.sort((a, b) => {
       if (sort === "status") {
         const aw = !a.passed ? 0 : a.drift_status === "drifting" ? 1 : 2;
@@ -34,7 +37,7 @@ export default function Evals() {
       return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
     });
     return arr;
-  }, [suites, filter, sort]);
+  }, [suites, filter, sort, query]);
 
   const kpis = useMemo(() => {
     const passing = suites.filter((s) => s.passed).length;
@@ -123,6 +126,12 @@ export default function Evals() {
           ))}
         </div>
         <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search suites…"
+            style={{ background: "var(--bg-elev)", border: "1px solid var(--border)", borderRadius: 6, padding: "5px 10px", color: "var(--text)", fontSize: 12, outline: "none", width: 170 }}
+          />
           <span style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
             Sort
           </span>
@@ -140,6 +149,7 @@ export default function Evals() {
       </div>
 
       <div className="card" style={{ overflow: "hidden" }}>
+        <div style={{ maxHeight: 600, overflowY: "auto" }}>
         <table className="pr">
           <thead>
             <tr>
@@ -239,6 +249,7 @@ export default function Evals() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

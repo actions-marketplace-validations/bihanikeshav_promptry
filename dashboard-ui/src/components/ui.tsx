@@ -372,38 +372,42 @@ export function KPI({
   spark?: number[];
 }) {
   return (
-    <div className="card-elev" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6, minHeight: 102 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--secondary)" }}>
-          {label}
+    <div className="card-elev" style={{ padding: "14px 16px", display: "flex", gap: 12, minHeight: 102 }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--secondary)" }}>
+            {label}
+          </div>
+          {trend && (
+            <span
+              className="mono"
+              style={{
+                fontSize: 11,
+                color:
+                  trend.dir === "up"
+                    ? "var(--success)"
+                    : trend.dir === "down"
+                      ? "var(--error)"
+                      : "var(--secondary)",
+              }}
+            >
+              {trend.dir === "up" ? "▲" : trend.dir === "down" ? "▼" : "·"} {trend.label}
+            </span>
+          )}
         </div>
-        {trend && (
-          <span
-            className="mono"
-            style={{
-              fontSize: 11,
-              color:
-                trend.dir === "up"
-                  ? "var(--success)"
-                  : trend.dir === "down"
-                    ? "var(--error)"
-                    : "var(--secondary)",
-            }}
-          >
-            {trend.dir === "up" ? "▲" : trend.dir === "down" ? "▼" : "·"} {trend.label}
-          </span>
-        )}
+        <div
+          className="mono"
+          style={{ fontSize: 28, fontWeight: 600, lineHeight: 1.1, color: accent || "var(--text)" }}
+        >
+          {value}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: "auto" }}>{sub}</div>
       </div>
-      <div
-        className="mono"
-        style={{ fontSize: 28, fontWeight: 600, lineHeight: 1.1, color: accent || "var(--text)" }}
-      >
-        {value}
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
-        <div style={{ fontSize: 11, color: "var(--muted)" }}>{sub}</div>
-        {spark && <Sparkline scores={spark} width={80} height={20} />}
-      </div>
+      {spark && (
+        <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+          <Sparkline scores={spark} width={116} height={46} />
+        </div>
+      )}
     </div>
   );
 }
