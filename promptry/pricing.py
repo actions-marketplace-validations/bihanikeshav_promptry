@@ -41,7 +41,76 @@ RATES = {
     "grok-4-1-fast":                  {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
     "grok-4-1-fast-non-reasoning":    {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
     "grok-4-1-fast-reasoning":        {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    # grok-4.3: as of 2026-05-15 xAI retired the grok-4*-fast slugs and routes
+    # them here (https://docs.x.ai/developers/migration/may-15-retirement).
+    # MUST be an explicit entry: the fuzzy prefix match would otherwise resolve
+    # "grok-4.3"/"grok-4-3" to the "grok-4" tier ($3/$15) and badly overcount.
+    # Published rate is in/out only; cached_read assumed 0.25x (xAI fast-tier
+    # ratio), cache_write == in. Verify cached price against an invoice.
+    "grok-4.3":                       {"in": 1.25, "cached": 0.31, "cache_write": 1.25, "out": 2.50},
+    "grok-4-3":                       {"in": 1.25, "cached": 0.31, "cache_write": 1.25, "out": 2.50},
 }
+
+
+# Models a provider RETIRED and now silently serves as a different (priced)
+# model from a date onward. The requested slug keeps resolving, so the only way
+# to cost it correctly is to know the reroute: on/after the effective date, the
+# slug bills at its replacement's rate. slug -> (effective_date, replacement).
+# xAI, 2026-05-15: https://docs.x.ai/developers/migration/may-15-retirement
+REROUTES = {
+    "grok-4-fast":                 ("2026-05-15", "grok-4.3"),
+    "grok-4-fast-non-reasoning":   ("2026-05-15", "grok-4.3"),
+    "grok-4-fast-reasoning":       ("2026-05-15", "grok-4.3"),
+    "grok-4-1-fast":               ("2026-05-15", "grok-4.3"),
+    "grok-4-1-fast-non-reasoning": ("2026-05-15", "grok-4.3"),
+    "grok-4-1-fast-reasoning":     ("2026-05-15", "grok-4.3"),
+    "grok-4-0709":                 ("2026-05-15", "grok-4.3"),
+    "grok-3":                      ("2026-05-15", "grok-4.3"),
+    # Omitted until priced: grok-code-fast-1 -> grok-build-0.1 (xAI published no
+    # rate for grok-build-0.1; rerouting to an unpriced model would silently
+    # read $0, which is worse than leaving the slug at its own rate).
+}
+
+
+def _as_date(when):
+    """Coerce a date / datetime / 'YYYY-MM-DD...' string to a date, else None."""
+    from datetime import date, datetime
+    if when is None:
+        return None
+    if isinstance(when, datetime):
+        return when.date()
+    if isinstance(when, date):
+        return when
+    s = str(when).strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+
+def resolve_model(model: str, when=None) -> str:
+    """Map a requested slug to the model that ACTUALLY bills, honoring provider
+    reroutes. `when` is the call's date; on/after a reroute's effective date the
+    slug bills at its replacement. Without `when` we can't know which side of the
+    cutoff a call is on, so no reroute is applied (back-compatible)."""
+    if not model or when is None:
+        return model
+    reroute = REROUTES.get(model)
+    if reroute is None:  # fuzzy: dated variants (grok-4-1-fast-non-reasoning-xxxx)
+        for key in sorted(REROUTES, key=len, reverse=True):
+            if model.startswith(key):
+                reroute = REROUTES[key]
+                break
+    if reroute is None:
+        return model
+    eff, target = reroute
+    d = _as_date(when)
+    return target if (d is not None and d >= _as_date(eff)) else model
 
 
 def calculate_cost(
@@ -50,13 +119,18 @@ def calculate_cost(
     tokens_out: int = 0,
     cached_tokens: int = 0,
     cache_write_tokens: int = 0,
+    when=None,
 ) -> float | None:
     """Return USD cost for a call, or None if model isn't in the rate table.
 
     tokens_in includes cached_tokens (the total input). We subtract to get
     uncached input before applying the standard rate.
+
+    `when` (the call's date) activates provider reroutes: a retired slug billed
+    at its replacement's rate on/after the reroute date (see REROUTES). Omit it
+    and pricing is by the requested model name only.
     """
-    rates = _lookup_rates(model)
+    rates = _lookup_rates(resolve_model(model, when))
     if rates is None:
         return None
 

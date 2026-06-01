@@ -150,9 +150,12 @@ def track(content: str, name: str, tag=None, metadata=None) -> str:
     h = PromptRegistry.content_hash(content)
     cache_key = f"{name}:{h}"
 
-    # auto-compute cost when caller provided tokens + model but no explicit cost
+    # auto-compute cost when caller provided tokens + model but no explicit cost.
+    # Prefer served_model (the model the provider actually ran) so a silently
+    # rerouted slug is priced at the real model — see track_invocation().
     if metadata is not None and isinstance(metadata, dict):
-        if "cost" not in metadata and metadata.get("model"):
+        _cost_model = metadata.get("served_model") or metadata.get("model")
+        if "cost" not in metadata and _cost_model:
             try:
                 from promptry.pricing import calculate_cost
 
@@ -165,12 +168,14 @@ def track(content: str, name: str, tag=None, metadata=None) -> str:
                 cached_tokens = int(metadata.get("cached_tokens", 0) or 0)
                 cache_write_tokens = int(metadata.get("cache_write_tokens", 0) or 0)
                 if tokens_in or tokens_out:
+                    from datetime import datetime, timezone
                     auto_cost = calculate_cost(
-                        metadata["model"],
+                        _cost_model,
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
                         cached_tokens=cached_tokens,
                         cache_write_tokens=cache_write_tokens,
+                        when=metadata.get("date") or datetime.now(timezone.utc),
                     )
                     if auto_cost is not None:
                         metadata = {**metadata, "cost": auto_cost}
@@ -253,7 +258,12 @@ def track_invocation(
 
     # Auto-cost: same logic as track(), inlined to avoid coupling the
     # two paths so changes to one don't silently break the other.
-    if "cost" not in meta and meta.get("model"):
+    # Price off served_model (what the provider actually ran) when the caller
+    # supplied it — a retired slug silently rerouted to a pricier model (e.g.
+    # xAI grok-4*-fast -> grok-4.3) must be costed at the real model, not the
+    # requested one. Falls back to the requested model otherwise.
+    cost_model = meta.get("served_model") or meta.get("model")
+    if "cost" not in meta and cost_model:
         try:
             from promptry.pricing import calculate_cost
 
@@ -270,12 +280,16 @@ def track_invocation(
             cached_tokens = int(meta.get("cached_tokens", 0) or 0)
             cache_write_tokens = int(meta.get("cache_write_tokens", 0) or 0)
             if tokens_in or tokens_out:
+                from datetime import datetime, timezone
                 auto_cost = calculate_cost(
-                    meta["model"],
+                    cost_model,
                     tokens_in=tokens_in,
                     tokens_out=tokens_out,
                     cached_tokens=cached_tokens,
                     cache_write_tokens=cache_write_tokens,
+                    # price by the call's date so a retired slug bills at its
+                    # replacement's rate even when served_model wasn't captured
+                    when=meta.get("date") or datetime.now(timezone.utc),
                 )
                 if auto_cost is not None:
                     meta["cost"] = auto_cost

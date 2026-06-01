@@ -1,5 +1,5 @@
 import pytest
-from promptry.registry import PromptRegistry, track, track_context
+from promptry.registry import PromptRegistry, track, track_invocation, track_context
 
 
 class TestPromptRegistry:
@@ -69,6 +69,43 @@ class TestTrack:
         track("Content", "test", tag="prod")
         record = storage.get_prompt("test")
         assert "prod" in storage.get_tags(record.id)
+
+
+class TestServedModelCost:
+    """A silently rerouted slug (xAI grok-4*-fast -> grok-4.3 on 2026-05-15)
+    must be costed at the model the provider actually ran (served_model),
+    not the cheap requested slug."""
+
+    def _patch_registry(self, monkeypatch, storage):
+        monkeypatch.setattr(
+            "promptry.registry._default_registry",
+            PromptRegistry(storage=storage),
+        )
+
+    def test_prices_off_served_model(self, storage, monkeypatch):
+        from promptry.pricing import calculate_cost
+        self._patch_registry(monkeypatch, storage)
+        track_invocation("rag.answer", metadata={
+            "model": "grok-4-fast-non-reasoning",   # requested (retired) slug
+            "served_model": "grok-4.3",              # what xAI actually ran
+            "tokens_in": 10_000, "tokens_out": 500,
+        })
+        row = storage.list_invocations(name="rag.answer", days=1)[0]
+        assert row["cost"] == pytest.approx(
+            calculate_cost("grok-4.3", tokens_in=10_000, tokens_out=500))
+        # and decidedly NOT the cheap fast-tier price
+        assert row["cost"] != pytest.approx(
+            calculate_cost("grok-4-fast-non-reasoning", tokens_in=10_000, tokens_out=500))
+
+    def test_falls_back_to_requested_model_when_no_served(self, storage, monkeypatch):
+        from promptry.pricing import calculate_cost
+        self._patch_registry(monkeypatch, storage)
+        track_invocation("rag.answer", metadata={
+            "model": "gpt-4o-mini", "tokens_in": 1000, "tokens_out": 200,
+        })
+        row = storage.list_invocations(name="rag.answer", days=1)[0]
+        assert row["cost"] == pytest.approx(
+            calculate_cost("gpt-4o-mini", tokens_in=1000, tokens_out=200))
 
 
 class TestTrackContext:

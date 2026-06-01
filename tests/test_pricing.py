@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import pytest
 
+from datetime import datetime, timezone
+
 from promptry.pricing import (
     RATES,
+    REROUTES,
     calculate_cost,
     cache_hit_rate,
     cache_savings,
+    resolve_model,
     _lookup_rates,
 )
 
@@ -33,6 +37,84 @@ class TestLookupRates:
 
     def test_empty_model(self):
         assert _lookup_rates("") is None
+
+
+class TestGrok43Retirement:
+    """Regression: xAI retired grok-4*-fast on 2026-05-15 -> grok-4.3.
+    grok-4.3 MUST resolve to its own $1.25/$2.50 tier, not the grok-4 $3/$15
+    tier the fuzzy prefix match would otherwise pick."""
+
+    def test_grok_43_exact_dot_form(self):
+        assert _lookup_rates("grok-4.3") == {"in": 1.25, "cached": 0.31, "cache_write": 1.25, "out": 2.50}
+
+    def test_grok_43_dash_form(self):
+        assert _lookup_rates("grok-4-3") == RATES["grok-4.3"]
+
+    def test_grok_43_not_misresolved_to_grok4_tier(self):
+        # the bug we're guarding: prefix match -> "grok-4" ($3/$15)
+        assert _lookup_rates("grok-4.3") != RATES["grok-4"]
+        assert _lookup_rates("grok-4.3")["out"] == 2.50  # not 15.00
+
+    def test_grok_43_dated_suffix_prefix_match(self):
+        # a served name like "grok-4.3-2026xx" still resolves to the 4.3 tier
+        assert _lookup_rates("grok-4.3-20260515") == RATES["grok-4.3"]
+
+    def test_retired_fast_slug_still_cheap(self):
+        # the requested slug itself is unchanged/cheap; the reroute cost only
+        # shows up once you price off the served model
+        assert _lookup_rates("grok-4-fast-non-reasoning")["in"] == 0.20
+
+    def test_reroute_cost_multiple(self):
+        # same tokens, fast-rate vs grok-4.3: ~6x in, 5x out
+        toks = dict(tokens_in=1_000_000, tokens_out=1_000_000)
+        fast = calculate_cost("grok-4-fast-non-reasoning", **toks)
+        real = calculate_cost("grok-4.3", **toks)
+        assert real / fast == pytest.approx((1.25 + 2.50) / (0.20 + 0.50), rel=1e-6)
+
+
+class TestDateAwareReroute:
+    """After 2026-05-15 the retired grok-4*-fast slugs bill at grok-4.3's rate,
+    keyed on the call's date (the slug itself never changes)."""
+
+    SLUG = "grok-4-1-fast-non-reasoning"
+
+    def test_resolves_to_replacement_after_cutoff(self):
+        assert resolve_model(self.SLUG, "2026-05-20") == "grok-4.3"
+
+    def test_unchanged_before_cutoff(self):
+        assert resolve_model(self.SLUG, "2026-05-10") == self.SLUG
+
+    def test_cutoff_day_is_inclusive(self):
+        assert resolve_model(self.SLUG, "2026-05-15") == "grok-4.3"
+
+    def test_no_date_means_no_reroute(self):
+        # back-compatible: without a date we can't know which side of the cutoff
+        assert resolve_model(self.SLUG, None) == self.SLUG
+
+    def test_accepts_datetime_and_iso_string(self):
+        assert resolve_model(self.SLUG, datetime(2026, 5, 20, tzinfo=timezone.utc)) == "grok-4.3"
+        assert resolve_model(self.SLUG, "2026-05-20 14:00:00") == "grok-4.3"
+
+    def test_dated_variant_prefix_matches(self):
+        assert resolve_model("grok-4-1-fast-non-reasoning-0709", "2026-05-20") == "grok-4.3"
+
+    def test_non_rerouted_model_untouched(self):
+        assert resolve_model("gpt-4o", "2026-05-20") == "gpt-4o"
+        assert resolve_model("grok-4.3", "2026-05-20") == "grok-4.3"
+
+    def test_calculate_cost_is_date_aware(self):
+        toks = dict(tokens_in=1_000_000, tokens_out=1_000_000)
+        after = calculate_cost(self.SLUG, when="2026-05-20", **toks)
+        before = calculate_cost(self.SLUG, when="2026-05-10", **toks)
+        assert after == pytest.approx(1.25 + 2.50)    # grok-4.3 rate
+        assert before == pytest.approx(0.20 + 0.50)   # old fast rate
+        # omitting `when` stays back-compatible (no reroute)
+        assert calculate_cost(self.SLUG, **toks) == pytest.approx(0.20 + 0.50)
+
+    def test_every_reroute_target_is_priced(self):
+        # a reroute pointing at a model with no rate would silently cost $0
+        for _slug, (_eff, target) in REROUTES.items():
+            assert _lookup_rates(target) is not None, f"{target} missing from RATES"
 
 
 class TestCalculateCostOpenAI:
