@@ -39,8 +39,6 @@ def main() -> None:
     ap.add_argument("--max", type=int, default=None, help="cap total interactions")
     ap.add_argument("--db", type=str, default=None, help="override promptry DB path")
     ap.add_argument("--workers", type=int, default=4, help="parallel Ollama calls")
-    ap.add_argument("--big-model-share", type=float, default=0.2,
-                    help="fraction of traffic to qwen3:4b-thinking (rest to qwen3:1.7b)")
     args = ap.parse_args()
 
     if args.db:
@@ -59,6 +57,15 @@ def main() -> None:
     captures_dir = Path(args.db).parent / "captures" if args.db else Path(".promptry/captures")
     cap = get_recorder("rag-lab", dir=captures_dir)
 
+    # Pre-warm the sentence-transformers embedder in the main thread.
+    # If we let worker threads race to initialize it, torch's meta-device
+    # lazy init throws "Cannot copy out of meta tensor" and every call
+    # fails. A single warm-up query forces the model to fully materialize
+    # before the pool starts.
+    print("  warming embedder...")
+    from mockdb.rag_lab.rag import retrieve as _warm_retrieve
+    _warm_retrieve("warmup", k=1)
+
     total = sum(len(u.messages) for u in USERS)
     if args.max:
         total = min(total, args.max)
@@ -66,19 +73,44 @@ def main() -> None:
     t0 = time.perf_counter()
     print(f"Simulating {total} interactions across {len(USERS)} users...")
 
-    # Build the full job list up front so we can shuffle + parallelize.
-    jobs: list[tuple[int, str, str, str, str, str, datetime]] = []
+    # Build a balanced job list:
+    #   - Small model: every user message (full ~318 simulation).
+    #   - Big model:  N user messages PER PROMPT, sampled from across users,
+    #                 so each (model x prompt) cell has at least N data points.
+    # This costs ~318 small calls + (N * 15 prompts) big calls.
+    SMALL_LABEL, SMALL_NAME = MODEL_LABELS[0], MODEL_NAMES[0]
+    BIG_LABEL,   BIG_NAME   = MODEL_LABELS[1], MODEL_NAMES[1]
+    BIG_PER_PROMPT = 5  # 5 big-model calls per prompt = 75 big calls total
+
+    jobs: list[tuple[int, str, str, str, str, str, str]] = []
+    pairs: list[tuple[str, str, str, str]] = []  # (uid, persona, msg, pid)
     for user in USERS:
         for msg in user.messages:
             pid = rng.choice(PROMPT_IDS)
-            big = rng.random() < args.big_model_share
-            label = MODEL_LABELS[1] if big else MODEL_LABELS[0]
-            mname = MODEL_NAMES[1] if big else MODEL_NAMES[0]
-            jobs.append((len(jobs), user.id, user.persona, msg, pid, label, mname))
+            pairs.append((user.id, user.persona, msg, pid))
+
+    # Pass 1: small model — every (user, msg) pair as before.
+    for uid, persona, msg, pid in pairs:
+        jobs.append((len(jobs), uid, persona, msg, pid, SMALL_LABEL, SMALL_NAME))
+
+    # Pass 2: big model — exactly BIG_PER_PROMPT picks per prompt id, sampled
+    # without replacement from pairs that share that prompt.
+    by_pid: dict[str, list] = {p: [] for p in PROMPT_IDS}
+    for tup in pairs:
+        by_pid[tup[3]].append(tup)
+    for pid in PROMPT_IDS:
+        bucket = by_pid[pid]
+        rng.shuffle(bucket)
+        for tup in bucket[:BIG_PER_PROMPT]:
+            uid, persona, msg, _ = tup
+            jobs.append((len(jobs), uid, persona, msg, pid, BIG_LABEL, BIG_NAME))
+
     if args.max:
         jobs = jobs[: args.max]
     total = len(jobs)
-    print(f"  workers={args.workers}  big_model_share={args.big_model_share}")
+    n_small = sum(1 for j in jobs if j[5] == SMALL_LABEL)
+    n_big = total - n_small
+    print(f"  workers={args.workers}  jobs={total}  ({n_small} small + {n_big} big)")
 
     # Pre-track all 15 prompt-response slots so they get version 1+ in DB.
     for pid in PROMPT_IDS:
@@ -95,47 +127,60 @@ def main() -> None:
                    "completion_tokens": 0, "latency_ms": 0, "from_cache": False}
         return idx, uid, persona, msg, pid, label, mname, out
 
+    # Run in two passes (one per model) so Ollama doesn't thrash on swaps.
+    def consume(fut):
+        idx, uid, persona, msg, pid, label, mname, out = fut.result()
+        ts = sched_start + timedelta(
+            seconds=int((idx / max(total, 1)) * 14 * 86400)
+            + rng.randint(-300, 300)
+        )
+        meta = {
+            "model_version": label,
+            "user_id": uid,
+            "persona": persona,
+            "tokens_in": out.get("prompt_tokens", 0),
+            "tokens_out": out.get("completion_tokens", 0),
+            "latency_ms": out.get("latency_ms", 0),
+            "cached": out.get("from_cache", False),
+            "ts": ts.isoformat(),
+        }
+        resp = out["response"]
+        track(resp, name=f"{pid}-response", metadata=meta)
+        cap.write(
+            input={"user_msg": msg, "user_id": uid, "prompt_id": pid, "model": label},
+            output=resp,
+            metadata=meta,
+            duration_ms=float(out.get("latency_ms", 0)),
+            tokens_in=int(out.get("prompt_tokens", 0)),
+            tokens_out=int(out.get("completion_tokens", 0)),
+        )
+        with counter["lock"]:
+            counter["done"] += 1
+            return counter["done"], uid, pid, label
+
     try:
-        with ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futures = [ex.submit(work, j) for j in jobs]
-            for fut in as_completed(futures):
-                idx, uid, persona, msg, pid, label, mname, out = fut.result()
-                ts = sched_start + timedelta(
-                    seconds=int((idx / max(total, 1)) * 14 * 86400)
-                    + rng.randint(-300, 300)
-                )
-                meta = {
-                    "model_version": label,
-                    "user_id": uid,
-                    "persona": persona,
-                    "tokens_in": out.get("prompt_tokens", 0),
-                    "tokens_out": out.get("completion_tokens", 0),
-                    "latency_ms": out.get("latency_ms", 0),
-                    "cached": out.get("from_cache", False),
-                    "ts": ts.isoformat(),
-                }
-                resp = out["response"]
-                track(resp, name=f"{pid}-response", metadata=meta)
-                cap.write(
-                    input={"user_msg": msg, "user_id": uid, "prompt_id": pid, "model": label},
-                    output=resp,
-                    metadata=meta,
-                    duration_ms=float(out.get("latency_ms", 0)),
-                    tokens_in=int(out.get("prompt_tokens", 0)),
-                    tokens_out=int(out.get("completion_tokens", 0)),
-                )
-                with counter["lock"]:
-                    counter["done"] += 1
-                    done = counter["done"]
-                if done % 10 == 0 or done == total:
-                    rate = done / (time.perf_counter() - t0)
-                    eta = (total - done) / max(rate, 0.001)
-                    print(
-                        f"  [{done:>3}/{total}] {uid} -> {pid} -> {label} "
-                        f"({rate:.1f}/s, eta {eta:.0f}s)"
-                    )
-                    flush_cache()
-        done = counter["done"]
+        # Pass 1: small model. Use more workers since calls are cheap.
+        small_jobs = [j for j in jobs if j[5] == MODEL_LABELS[0]]
+        big_jobs = [j for j in jobs if j[5] == MODEL_LABELS[1]]
+        for label_pass, pass_jobs, workers_for_pass in [
+            (MODEL_LABELS[0], small_jobs, args.workers),
+            # Big model: cap workers since each call holds the GPU much longer
+            # and 4 parallel thinking-model calls push way past a typical VRAM budget
+            (MODEL_LABELS[1], big_jobs, max(2, args.workers // 2)),
+        ]:
+            print(f"\n  --- Pass: {label_pass}  ({len(pass_jobs)} jobs, {workers_for_pass} workers) ---")
+            with ThreadPoolExecutor(max_workers=workers_for_pass) as ex:
+                futures = [ex.submit(work, j) for j in pass_jobs]
+                for fut in as_completed(futures):
+                    done, uid, pid, label = consume(fut)
+                    if done % 10 == 0 or done == total:
+                        rate = done / (time.perf_counter() - t0)
+                        eta = (total - done) / max(rate, 0.001)
+                        print(
+                            f"  [{done:>3}/{total}] {uid} -> {pid} -> {label} "
+                            f"({rate:.2f}/s, eta {eta:.0f}s)"
+                        )
+                        flush_cache()
     finally:
         flush_cache()
 
