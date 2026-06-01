@@ -1,9 +1,10 @@
 # Changelog
 
-## 1.0.0 (2026-05-26)
+## 0.10.0 (2026-06-01)
 
-First stable release — the library, CLI, dashboard, GitHub Action, and MCP
-server are feature-complete around a single local SQLite store.
+First broad public release. The library, CLI, dashboard, GitHub Action, and MCP
+server work end to end around a single local SQLite store. Numbered 0.10.0, not
+1.0 — the API may still shift before a stable 1.0.
 
 ### Prompts
 
@@ -35,6 +36,17 @@ server are feature-complete around a single local SQLite store.
   tracking; pricing auto-refresh + uncosted-model coverage report.
 - Opt-in **trace capture** + end-user **feedback ingest** by `request_id`;
   **PII/secret scanning** of captured traces (regex tripwire, masked findings).
+- **Reroute-aware pricing** — when a provider retires a slug and silently serves
+  a pricier model (e.g. xAI's 2026-05-15 grok-4*-fast → grok-4.3 at ~6x), the
+  cost engine prices by the model that actually billed (`served_model` + call
+  date), instead of undercounting at the requested slug's old rate.
+- **PII-safe trace viewer** — captured request/response text is redacted in
+  place before the dashboard serves it, so the viewer can't re-expose what the
+  scanner flagged.
+- **Configurable capture/judge limits** — trace capture length defaults to 50k
+  chars and is tunable via `[capture] max_chars` (`0` = unlimited); the
+  regression-explanation judge prompt cap is tunable via `[judge]
+  max_prompt_chars`.
 
 ### Dashboard & config
 
@@ -44,6 +56,11 @@ server are feature-complete around a single local SQLite store.
   and pricing overrides; API keys stay in env.
 - A clickable **live demo** of the dashboard and an **agent integration guide**
   (`docs/INTEGRATION.md`).
+- **Feedback view** — satisfaction rate, per-prompt breakdown, and a daily
+  positive-rate sparkline over end-user feedback, each row linking back to the
+  invocation that produced the response.
+- **Server-side paging + sorting** for the invocation/cost lists (limit/offset +
+  sort column/direction), plus a suite search box on the Evals list.
 
 ### Agents & capture
 
