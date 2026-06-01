@@ -206,6 +206,153 @@ def refresh_rates_from_litellm() -> int:
     return updated
 
 
+# --------------------------------------------------------------------------
+# Price feed: bundled snapshot + opt-in refresh, no hosted service.
+#
+# The bundled RATES above ship with the package. A user can refresh them from
+# a STATIC published feed (a plain JSON file the maintainer commits/publishes)
+# or from a locally-installed litellm. A refresh writes the result to
+# ~/.promptry/prices.json, which is loaded on import to override the bundled
+# snapshot. Nothing phones home unless the user runs `promptry prices --refresh`.
+# --------------------------------------------------------------------------
+
+# Provenance of the rates currently in RATES. Updated when a feed is applied.
+PRICES_META: dict = {"version": "2026-06-01", "source": "bundled", "updated": None}
+
+# Conventional location of the maintainer-published feed. Override with --url.
+DEFAULT_FEED_URL = "https://raw.githubusercontent.com/bihanikeshav/promptry/main/prices.json"
+
+
+def prices_file_path():
+    """Where a refreshed price feed is persisted. Honors PROMPTRY_PRICES_FILE
+    (handy for tests); defaults to ~/.promptry/prices.json."""
+    import os
+    from pathlib import Path
+    override = os.environ.get("PROMPTRY_PRICES_FILE")
+    if override:
+        return Path(override)
+    return Path.home() / ".promptry" / "prices.json"
+
+
+def _normalize_rate(r: dict) -> dict:
+    """Coerce a feed rate (which may carry only in/out) to promptry's full
+    {in,cached,cache_write,out} shape, mirroring the litellm fallback ratios."""
+    inp = float(r["in"])
+    out = float(r["out"])
+    cached = float(r["cached"]) if r.get("cached") is not None else round(inp * 0.5, 6)
+    cw = float(r["cache_write"]) if r.get("cache_write") is not None else inp
+    return {"in": inp, "cached": cached, "cache_write": cw, "out": out}
+
+
+def validate_feed(data: dict) -> None:
+    """Raise ValueError unless `data` is a well-formed price feed: a dict with a
+    `rates` mapping of model -> rate, each rate carrying numeric `in` and `out`
+    (cached/cache_write optional), and an optional `reroutes` mapping of
+    slug -> [effective_date, replacement]."""
+    if not isinstance(data, dict):
+        raise ValueError("feed must be a JSON object")
+    rates = data.get("rates")
+    if not isinstance(rates, dict) or not rates:
+        raise ValueError("feed.rates must be a non-empty object")
+    for name, r in rates.items():
+        if not isinstance(r, dict):
+            raise ValueError(f"rate for {name!r} must be an object")
+        for k in ("in", "out"):
+            if not isinstance(r.get(k), (int, float)):
+                raise ValueError(f"rate for {name!r} is missing numeric {k!r}")
+    reroutes = data.get("reroutes", {})
+    if not isinstance(reroutes, dict):
+        raise ValueError("feed.reroutes must be an object")
+    for slug, pair in reroutes.items():
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2
+                or not all(isinstance(x, str) for x in pair)):
+            raise ValueError(f"reroute for {slug!r} must be [effective_date, replacement]")
+
+
+def export_feed() -> dict:
+    """Serialize the current rate table as a feed the maintainer can publish.
+    `promptry prices --export prices.json` then commit it; clients refresh from
+    its raw URL. Reroutes are emitted as [effective_date, replacement] lists."""
+    return {
+        "version": PRICES_META.get("version"),
+        "updated": PRICES_META.get("updated"),
+        "rates": {k: dict(v) for k, v in RATES.items()},
+        "reroutes": {k: [eff, target] for k, (eff, target) in REROUTES.items()},
+    }
+
+
+def diff_rates(old: dict, new: dict) -> dict:
+    """Compare two model->rate maps. Returns added/removed model names and a list
+    of (model, field, old_value, new_value) for changed rate fields."""
+    added = sorted(set(new) - set(old))
+    removed = sorted(set(old) - set(new))
+    changed = []
+    for name in sorted(set(old) & set(new)):
+        o, n = old[name], new[name]
+        for field in ("in", "cached", "cache_write", "out"):
+            if o.get(field) != n.get(field):
+                changed.append((name, field, o.get(field), n.get(field)))
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def apply_feed(data: dict) -> int:
+    """Merge a validated feed into RATES/REROUTES and update PRICES_META.
+    Returns the number of rates applied. Existing models are overwritten;
+    models absent from the feed are left untouched (feeds are additive)."""
+    validate_feed(data)
+    for name, r in data["rates"].items():
+        RATES[name] = _normalize_rate(r)
+    for slug, pair in data.get("reroutes", {}).items():
+        REROUTES[slug] = (pair[0], pair[1])
+    if data.get("version"):
+        PRICES_META["version"] = data["version"]
+    PRICES_META["source"] = data.get("source", "feed")
+    PRICES_META["updated"] = data.get("updated") or PRICES_META.get("updated")
+    return len(data["rates"])
+
+
+def _http_get(url: str) -> str:
+    """Fetch a URL's body as text. Isolated so tests can inject a fetcher."""
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=15) as resp:  # noqa: S310 (user-invoked)
+        return resp.read().decode("utf-8")
+
+
+def refresh_from_feed(url: str | None = None, fetcher=None, persist: bool = True) -> dict:
+    """Opt-in refresh: fetch a static JSON price feed, validate it, apply it,
+    and (by default) persist it to prices_file_path() so it survives restarts.
+    `fetcher(url) -> str` is injectable for tests. Returns a result dict with the
+    source url, count, and a diff vs the rates that were in effect before."""
+    import json as _json
+    url = url or DEFAULT_FEED_URL
+    fetch = fetcher or _http_get
+    before = {k: dict(v) for k, v in RATES.items()}
+    raw = fetch(url)
+    data = raw if isinstance(raw, dict) else _json.loads(raw)
+    validate_feed(data)
+    count = apply_feed(data)
+    if persist:
+        path = prices_file_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_json.dumps(data, indent=2), encoding="utf-8")
+    return {"url": url, "count": count, "diff": diff_rates(before, {k: dict(v) for k, v in RATES.items()})}
+
+
+def load_persisted_prices() -> int:
+    """Apply a previously-refreshed ~/.promptry/prices.json if it exists, so
+    refreshed rates take effect on import. Returns the number applied (0 if no
+    file or it's unreadable — a bad cache must never break cost computation)."""
+    import json as _json
+    try:
+        path = prices_file_path()
+        if not path.is_file():
+            return 0
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        return apply_feed(data)
+    except Exception:
+        return 0
+
+
 def cache_hit_rate(cached_tokens: int, tokens_in: int) -> float:
     """Fraction of input tokens served from cache. 0 if tokens_in is 0."""
     return cached_tokens / tokens_in if tokens_in > 0 else 0.0
@@ -224,3 +371,8 @@ def cache_savings(
         return None
     delta_per_token = (rates["in"] - rates["cached"]) / 1_000_000
     return max(0.0, round(cached_tokens * delta_per_token, 6))
+
+
+# Apply a previously-refreshed feed (if any) so the bundled snapshot is updated
+# the moment pricing is imported. Guarded — a bad cache never breaks costing.
+load_persisted_prices()

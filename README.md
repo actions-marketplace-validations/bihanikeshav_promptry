@@ -76,6 +76,7 @@ Overall: PASS  score: 0.891
 | **Model comparison** | Statistical comparison against the historical baseline, not snapshot-to-snapshot. |
 | **Invocations ledger** | Every call recorded: tokens, cost, latency, model. Opt-in sampled request/response trace capture; per-call ratings/feedback via `POST /api/feedback`. |
 | **Cost tracking** | Per-model pricing with module → prompt → call drill-down, per-call template-vs-payload split, and a coverage check that flags un-priced models. Cache-aware, across OpenAI, Anthropic, Gemini, Grok. |
+| **Price feed** | Bundled, reroute-aware price table you refresh on your terms: `promptry prices` lists rates, `--refresh` pulls a static published feed or your local litellm into `~/.promptry/prices.json`, `--check` flags un-priced ledger models. No hosted service, no phone-home. |
 | **Budgets** | Daily and monthly spend caps with breach alerts. |
 | **PII / secret scanning** | Captured request/response text is scanned for API keys, private keys, JWTs, emails, SSNs, and card numbers; the dashboard warns with masked findings. |
 | **Safety suite** | 25 jailbreak / injection / PII / encoding templates across 6 categories. Extensible via `templates.toml`. |
@@ -200,6 +201,15 @@ The [full guide](docs/guide.md) covers all assertions, cost tracking, model comp
 Promptry is local-first by design. If you need a hosted, always-on observability product for production traffic with team seats and SSO, use LangSmith or Arize — different product category. Promptry runs against one SQLite file on your machine: wire it into CI so a bad prompt change never reaches production, manage your live prompts from the dashboard, and keep a per-call ledger of cost and traces without sending anything to a vendor.
 
 Shipped: everything in the feature table above, across Python + JS + CLI + dashboard + MCP + GitHub Action — including the live prompt CMS with environment promotion, the per-call invocations ledger with opt-in request/response capture and feedback ingest, cost-by-module drill-down with budgets, and regression bisect.
+
+Reroute-aware pricing ships in 0.10: when a provider retires a slug and silently
+serves a pricier model (e.g. xAI's 2026-05-15 grok-4-fast → grok-4.3 at ~6x), the
+cost engine prices by the model that actually billed, not the requested name.
+Prices are a bundled snapshot you refresh on your terms — `promptry prices` lists
+them, `promptry prices --refresh` pulls a static published feed (or your local
+litellm) into `~/.promptry/prices.json`, and `promptry prices --check` flags
+ledger models with no rate. No hosted service, no daily phone-home: nothing leaves
+your machine unless you ask it to.
 
 On the roadmap: agent trajectory analysis and LLM-powered root cause.
 

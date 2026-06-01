@@ -1364,6 +1364,129 @@ def cost_report_cmd(
         console.print(date_table)
 
 
+def _print_prices_table():
+    """Render the current rate table + provenance + active reroutes."""
+    from promptry import pricing
+    meta = pricing.PRICES_META
+    updated = meta.get("updated") or "—"
+    console.print(
+        f"\n[bold]Model prices[/bold]  "
+        f"[dim](source: {meta.get('source')}, version: {meta.get('version')}, "
+        f"updated: {updated})[/dim]\n"
+    )
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Model")
+    table.add_column("Input", justify="right")
+    table.add_column("Cached", justify="right")
+    table.add_column("Output", justify="right")
+    for name in sorted(pricing.RATES):
+        r = pricing.RATES[name]
+        table.add_row(name, f"${r['in']:.2f}", f"${r['cached']:.2f}", f"${r['out']:.2f}")
+    console.print(table)
+    console.print("[dim]Per 1M tokens, USD.[/dim]")
+    if pricing.REROUTES:
+        console.print("\n[bold]Active reroutes[/bold] [dim](retired slug → billed model on/after date)[/dim]")
+        for slug, (eff, target) in sorted(pricing.REROUTES.items()):
+            console.print(f"  {slug} → {target}  [dim](from {eff})[/dim]")
+
+
+def _print_price_diff(diff: dict):
+    """Show what a refresh changed."""
+    from promptry import pricing  # noqa
+    if not (diff["added"] or diff["removed"] or diff["changed"]):
+        console.print("[dim]No changes — rates already current.[/dim]")
+        return
+    if diff["added"]:
+        console.print(f"[green]+ {len(diff['added'])} new:[/green] {', '.join(diff['added'][:12])}"
+                      + (" …" if len(diff["added"]) > 12 else ""))
+    if diff["removed"]:
+        console.print(f"[red]- {len(diff['removed'])} removed:[/red] {', '.join(diff['removed'][:12])}")
+    for name, field, old, new in diff["changed"][:20]:
+        console.print(f"  ~ {name}.{field}: {old} → {new}")
+    if len(diff["changed"]) > 20:
+        console.print(f"  [dim]… and {len(diff['changed']) - 20} more changes[/dim]")
+
+
+def _prices_coverage():
+    """Flag models recorded in the ledger that have no price (they cost $0)."""
+    from promptry import pricing
+    from promptry.storage import get_storage
+    storage = get_storage()
+    if not hasattr(storage, "list_invocations"):
+        console.print("[yellow]No invocation ledger available.[/yellow]")
+        return
+    rows = storage.list_invocations(days=365, limit=500)
+    models = sorted({r["model"] for r in rows if r.get("model")})
+    if not models:
+        console.print("[yellow]No models recorded in the ledger yet.[/yellow]")
+        return
+    unknown = [m for m in models if not pricing.is_known_model(m)]
+    known = [m for m in models if pricing.is_known_model(m)]
+    console.print(f"\n[bold]Price coverage[/bold] ({len(known)}/{len(models)} models priced)\n")
+    for m in known:
+        console.print(f"  [green]✓[/green] {m}")
+    for m in unknown:
+        console.print(f"  [red]✗ {m}[/red]  [dim](no rate — these calls cost $0)[/dim]")
+    if unknown:
+        console.print("\nAdd rates via [bold]promptry prices --refresh[/bold] or a "
+                      "[pricing.<model>] block in .promptry/config.toml.")
+
+
+@app.command("prices")
+def prices_cmd(
+    refresh: bool = typer.Option(False, "--refresh", help="Refresh rates from a static published feed (opt-in network)."),
+    use_litellm: bool = typer.Option(False, "--litellm", help="Refresh from a locally-installed litellm instead of the feed (no network)."),
+    url: Optional[str] = typer.Option(None, "--url", help="Feed URL to refresh from (default: the published promptry feed)."),
+    export: Optional[Path] = typer.Option(None, "--export", help="Write the current rates as a publishable feed JSON to this path."),
+    check: bool = typer.Option(False, "--check", help="List models seen in the ledger that have no price."),
+):
+    """Inspect and refresh model prices.
+
+    Prices ship bundled with promptry. `--refresh` pulls a newer static feed
+    (a plain JSON file the maintainer publishes) or, with `--litellm`, your
+    local litellm install, and writes the result to ~/.promptry/prices.json.
+    Nothing leaves your machine unless you pass --refresh.
+    """
+    from promptry import pricing
+
+    if export is not None:
+        export.write_text(json.dumps(pricing.export_feed(), indent=2), encoding="utf-8")
+        console.print(f"[green]Wrote {len(pricing.RATES)} rates[/green] to {export}")
+        console.print("Commit/publish it; clients refresh with: "
+                      "[bold]promptry prices --refresh --url <raw-url>[/bold]")
+        raise typer.Exit(0)
+
+    if check:
+        _prices_coverage()
+        raise typer.Exit(0)
+
+    if refresh or use_litellm:
+        if use_litellm:
+            before = {k: dict(v) for k, v in pricing.RATES.items()}
+            n = pricing.refresh_rates_from_litellm()
+            if n == 0:
+                console.print("[yellow]litellm not installed or exposes no model_cost map; nothing refreshed.[/yellow]")
+                raise typer.Exit(1)
+            after = {k: dict(v) for k, v in pricing.RATES.items()}
+            path = pricing.prices_file_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(pricing.export_feed(), indent=2), encoding="utf-8")
+            console.print(f"[green]Refreshed {n} rates from litellm[/green] → {path}")
+            _print_price_diff(pricing.diff_rates(before, after))
+        else:
+            try:
+                res = pricing.refresh_from_feed(url)
+            except Exception as e:
+                console.print(f"[red]Refresh failed:[/red] {e}")
+                console.print(f"[dim]Feed URL: {url or pricing.DEFAULT_FEED_URL}[/dim]")
+                raise typer.Exit(1)
+            console.print(f"[green]Refreshed {res['count']} rates[/green] from {res['url']}")
+            _print_price_diff(res["diff"])
+        raise typer.Exit(0)
+
+    _print_prices_table()
+
+
 @app.command("dashboard")
 def dashboard_cmd(
     port: int = typer.Option(8420, "--port", "-p", help="Port to serve on."),

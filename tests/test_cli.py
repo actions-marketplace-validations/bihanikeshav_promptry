@@ -269,3 +269,58 @@ class TestCompare:
         # Should exit with code 1 (error) because no baseline data exists, not crash
         assert result.exit_code == 1
         assert "Error" in result.output or "No baseline" in result.output or "No runs" in result.output
+
+
+class TestPricesCLI:
+    """`promptry prices` — list, export, refresh (opt-in), and coverage."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_prices(self, tmp_path, monkeypatch):
+        # never touch the real ~/.promptry/prices.json
+        monkeypatch.setenv("PROMPTRY_PRICES_FILE", str(tmp_path / "prices.json"))
+        from promptry import pricing
+        rates = {k: dict(v) for k, v in pricing.RATES.items()}
+        reroutes = dict(pricing.REROUTES)
+        meta = dict(pricing.PRICES_META)
+        yield
+        pricing.RATES.clear(); pricing.RATES.update(rates)
+        pricing.REROUTES.clear(); pricing.REROUTES.update(reroutes)
+        pricing.PRICES_META.clear(); pricing.PRICES_META.update(meta)
+
+    def test_list_shows_known_models(self):
+        result = runner.invoke(app, ["prices"])
+        assert result.exit_code == 0
+        assert "gpt-4o" in result.output
+        assert "Model prices" in result.output
+
+    def test_export_writes_feed(self, tmp_path):
+        import json
+        out = tmp_path / "feed.json"
+        result = runner.invoke(app, ["prices", "--export", str(out)])
+        assert result.exit_code == 0
+        feed = json.loads(out.read_text(encoding="utf-8"))
+        assert "gpt-4o" in feed["rates"]
+        assert feed["reroutes"]["grok-3"] == ["2026-05-15", "grok-4.3"]
+
+    def test_refresh_from_file_url_applies_and_persists(self, tmp_path):
+        import json
+        from promptry import pricing
+        feed = {"version": "2026-09-09",
+                "rates": {"cli-new-model": {"in": 1.0, "out": 2.0}}, "reroutes": {}}
+        fp = tmp_path / "feed.json"
+        fp.write_text(json.dumps(feed), encoding="utf-8")
+        result = runner.invoke(app, ["prices", "--refresh", "--url", fp.as_uri()])
+        assert result.exit_code == 0
+        assert "cli-new-model" in result.output
+        assert pricing.is_known_model("cli-new-model")
+        assert (tmp_path / "prices.json").is_file()
+
+    def test_refresh_bad_url_exits_nonzero(self):
+        result = runner.invoke(app, ["prices", "--refresh", "--url", "file:///no/such/feed.json"])
+        assert result.exit_code == 1
+        assert "Refresh failed" in result.output
+
+    def test_check_with_empty_ledger(self):
+        result = runner.invoke(app, ["prices", "--check"])
+        assert result.exit_code == 0
+        assert "No models recorded" in result.output or "coverage" in result.output.lower()
