@@ -11,6 +11,7 @@ Layout::
 
       [judge]
       model = "gpt-4o-mini"
+      max_prompt_chars = 8000  # cap judge-prompt size (token-spend guard); 0 = off
 
       [slo]                  # CI fails the run if a budget is breached
       max_latency_ms = 8000  # no single test slower than this
@@ -104,7 +105,7 @@ def _dump_toml(data: dict) -> str:
     if judge:
         lines.append("[judge]")
         for k, v in judge.items():
-            lines.append(f'{k} = "{_toml_escape(v)}"')
+            lines.append(f"{k} = {_val(v)}")
         lines.append("")
     slo = data.get("slo", {})
     if slo:

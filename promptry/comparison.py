@@ -231,9 +231,15 @@ def explain_regression(
         failure_lines=failure_lines,
     )
 
-    # hard truncation guard -- keep well under 2000 tokens (~8000 chars)
-    if len(prompt) > 8000:
-        prompt = prompt[:8000] + "\n...(truncated)"
+    # Cap the judge prompt to bound token spend on this paid call. Tunable via
+    # [judge] max_prompt_chars (default 8000 ~= 2000 tokens); 0 disables the cap.
+    from promptry.projectconfig import load_project_config
+    try:
+        max_prompt_chars = int(load_project_config().get("judge", {}).get("max_prompt_chars", 8000))
+    except (TypeError, ValueError):
+        max_prompt_chars = 8000
+    if max_prompt_chars > 0 and len(prompt) > max_prompt_chars:
+        prompt = prompt[:max_prompt_chars] + "\n...(truncated)"
 
     try:
         raw = judge(prompt)

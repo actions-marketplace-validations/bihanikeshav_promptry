@@ -218,7 +218,7 @@ def track_invocation(
     output_text: str | None = None,
     capture: bool = False,
     sample_rate: float = 1.0,
-    max_capture_chars: int = 8000,
+    max_capture_chars: int | None = None,
     request_id: str | None = None,
 ) -> None:
     """Record one LLM invocation, separate from prompt-template versioning.
@@ -234,8 +234,10 @@ def track_invocation(
     output equivalents).
 
     Pass ``capture=True`` (optionally with ``sample_rate`` < 1.0) to persist
-    a truncated copy of ``input_text``/``output_text`` for the trace viewer.
-    Redact before passing — promptry stores what it's given.
+    a copy of ``input_text``/``output_text`` for the trace viewer, truncated to
+    ``max_capture_chars``. When that is ``None`` (the default) the limit comes
+    from config (``[capture] max_chars``, default 50k); ``0`` stores the full
+    text. Redact before passing — promptry stores what it's given.
     """
     from promptry.config import get_config
 
@@ -245,15 +247,20 @@ def track_invocation(
 
     meta = dict(metadata) if metadata else {}
 
-    # Decide whether to keep the captured text on this row.
+    # Decide whether to keep the captured text on this row. The cap defaults to
+    # config ([capture] max_chars / PROMPTRY_CAPTURE_MAX_CHARS) when the caller
+    # doesn't pass one explicitly; 0 (or negative) means store the full text.
+    limit = config.capture.max_chars if max_capture_chars is None else max_capture_chars
+    def _cap(text: str) -> str:
+        return text if limit is None or limit <= 0 else text[:limit]
     cap_in = cap_out = None
     if capture and (input_text is not None or output_text is not None):
         import random
         if sample_rate >= 1.0 or random.random() < sample_rate:
             if input_text is not None:
-                cap_in = input_text[:max_capture_chars]
+                cap_in = _cap(input_text)
             if output_text is not None:
-                cap_out = output_text[:max_capture_chars]
+                cap_out = _cap(output_text)
             meta["captured"] = True
 
     # Auto-cost: same logic as track(), inlined to avoid coupling the

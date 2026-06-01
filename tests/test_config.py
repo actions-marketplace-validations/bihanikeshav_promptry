@@ -8,6 +8,7 @@ from promptry.config import (
     Config,
     StorageConfig,
     TrackingConfig,
+    CaptureConfig,
     ModelConfig,
     MonitorConfig,
     NotificationsConfig,
@@ -40,6 +41,11 @@ class TestDefaults:
         cfg = Config()
         assert cfg.model.embedding_model == "all-MiniLM-L6-v2"
         assert cfg.model.semantic_threshold == 0.8
+
+    def test_capture_defaults(self):
+        cfg = Config()
+        # generous default so long outputs aren't silently clipped
+        assert cfg.capture.max_chars == 50_000
 
     def test_monitor_defaults(self):
         cfg = Config()
@@ -134,6 +140,11 @@ smtp_password = "pass"
         if found is not None:
             assert found.is_file()
 
+    def test_capture_max_chars_from_toml(self):
+        cfg = Config()
+        _apply_toml(cfg, {"capture": {"max_chars": 1234}})
+        assert cfg.capture.max_chars == 1234
+
     def test_apply_toml_partial(self):
         """Only the sections present in the TOML dict should be applied."""
         cfg = Config()
@@ -176,6 +187,18 @@ class TestEnvVarOverrides:
         cfg = Config()
         _apply_env_overrides(cfg)
         assert cfg.model.semantic_threshold == 0.8  # default unchanged
+
+    def test_capture_max_chars_override(self, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_CAPTURE_MAX_CHARS", "99")
+        cfg = Config()
+        _apply_env_overrides(cfg)
+        assert cfg.capture.max_chars == 99
+
+    def test_invalid_capture_max_chars_keeps_default(self, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_CAPTURE_MAX_CHARS", "lots")
+        cfg = Config()
+        _apply_env_overrides(cfg)
+        assert cfg.capture.max_chars == 50_000  # default unchanged
 
     def test_webhook_url_override(self, monkeypatch):
         monkeypatch.setenv("PROMPTRY_WEBHOOK_URL", "https://example.com/hook")

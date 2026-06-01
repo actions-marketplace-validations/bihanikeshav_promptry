@@ -137,6 +137,34 @@ def test_explain_calls_judge_on_regression(monkeypatch):
     assert "test_citations" in seen_prompt["prompt"]
 
 
+def test_explain_caps_judge_prompt_via_config(monkeypatch):
+    """The judge prompt is truncated to [judge] max_prompt_chars to bound the
+    token spend of this paid call."""
+    seen = {}
+
+    def fake_judge(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return "ok"
+
+    set_judge(fake_judge)
+
+    from promptry import projectconfig
+    monkeypatch.setattr(
+        projectconfig, "load_project_config",
+        lambda: {"judge": {"max_prompt_chars": 50}},
+    )
+
+    explain_regression(
+        current=_regression_suite(),
+        baseline_run=_FakeBaselineRun(),
+        comparisons=_regression_comparisons(),
+        hints=[RootCauseHint(cause="Prompt changed", detail="v1 -> v2")],
+    )
+
+    assert seen["prompt"].endswith("\n...(truncated)")
+    assert len(seen["prompt"]) == 50 + len("\n...(truncated)")
+
+
 def test_explain_swallows_judge_exceptions():
     def exploding_judge(prompt: str) -> str:
         raise RuntimeError("network down")

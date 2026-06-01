@@ -45,6 +45,14 @@ class TrackingConfig:
 
 
 @dataclass
+class CaptureConfig:
+    # Max chars of captured request/response text kept per invocation row.
+    # 0 means unlimited (store the whole thing). Default is generous; raise it
+    # for long-context apps or set 0 if you want full fidelity in the trace view.
+    max_chars: int = 50_000
+
+
+@dataclass
 class ModelConfig:
     embedding_model: str = "all-MiniLM-L6-v2"
     semantic_threshold: float = 0.8
@@ -71,6 +79,7 @@ class NotificationsConfig:
 class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
+    capture: CaptureConfig = field(default_factory=CaptureConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
@@ -106,6 +115,11 @@ def _apply_toml(config: Config, data: dict):
             config.tracking.sample_rate = float(t["sample_rate"])
         if "context_sample_rate" in t:
             config.tracking.context_sample_rate = float(t["context_sample_rate"])
+
+    if "capture" in data:
+        c = data["capture"]
+        if "max_chars" in c:
+            config.capture.max_chars = int(c["max_chars"])
 
     if "model" in data:
         m = data["model"]
@@ -148,6 +162,14 @@ def _apply_env_overrides(config: Config):
         config.storage.endpoint = endpoint
     if api_key := os.environ.get("PROMPTRY_API_KEY"):
         config.storage.api_key = api_key
+    if cap := os.environ.get("PROMPTRY_CAPTURE_MAX_CHARS"):
+        try:
+            config.capture.max_chars = int(cap)
+        except ValueError:
+            import logging
+            logging.getLogger("promptry").warning(
+                "Invalid PROMPTRY_CAPTURE_MAX_CHARS=%r, using default", cap
+            )
     if model := os.environ.get("PROMPTRY_EMBEDDING_MODEL"):
         config.model.embedding_model = model
     if threshold := os.environ.get("PROMPTRY_SEMANTIC_THRESHOLD"):

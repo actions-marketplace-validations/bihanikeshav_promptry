@@ -108,6 +108,52 @@ class TestServedModelCost:
             calculate_cost("gpt-4o-mini", tokens_in=1000, tokens_out=200))
 
 
+class TestCaptureTruncation:
+    """Captured request/response text is truncated to a configurable cap so the
+    trace viewer stays bounded. The cap comes from config by default, an explicit
+    arg overrides it, and 0 means store the full text."""
+
+    def _patch_registry(self, monkeypatch, storage):
+        monkeypatch.setattr(
+            "promptry.registry._default_registry",
+            PromptRegistry(storage=storage),
+        )
+
+    def _set_capture_limit(self, monkeypatch, n):
+        from promptry import config as cfgmod
+        cfg = cfgmod.Config()
+        cfg.capture.max_chars = n
+        monkeypatch.setattr(cfgmod, "get_config", lambda: cfg)
+
+    def _captured(self, storage, name):
+        row = storage.list_invocations(name=name, days=1)[0]
+        return storage.get_invocation(row["id"])
+
+    def test_explicit_arg_truncates(self, storage, monkeypatch):
+        self._patch_registry(monkeypatch, storage)
+        track_invocation("cap.explicit", capture=True,
+                         input_text="x" * 100, output_text="y" * 100,
+                         max_capture_chars=10)
+        rec = self._captured(storage, "cap.explicit")
+        assert len(rec["input_text"]) == 10
+        assert len(rec["output_text"]) == 10
+
+    def test_default_comes_from_config(self, storage, monkeypatch):
+        self._set_capture_limit(monkeypatch, 20)
+        self._patch_registry(monkeypatch, storage)
+        track_invocation("cap.config", capture=True,
+                         input_text="x" * 100)  # no explicit max_capture_chars
+        rec = self._captured(storage, "cap.config")
+        assert len(rec["input_text"]) == 20
+
+    def test_zero_means_unlimited(self, storage, monkeypatch):
+        self._patch_registry(monkeypatch, storage)
+        track_invocation("cap.full", capture=True,
+                         input_text="x" * 5000, max_capture_chars=0)
+        rec = self._captured(storage, "cap.full")
+        assert len(rec["input_text"]) == 5000
+
+
 class TestTrackContext:
 
     def _patch_registry(self, monkeypatch, storage):
