@@ -5,6 +5,8 @@ to see if anything got worse. If it did, try to explain why.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from promptry.models import SuiteResult, ComparisonResult, RootCauseHint
 
 
@@ -102,6 +104,60 @@ def compare_with_baseline(
         ))
 
     return comparisons, hints
+
+
+def load_baseline_dict(storage, current, baseline_tag: Optional[str] = None) -> Optional[dict]:
+    """Fetch the most recent baseline run from storage and build a dict
+    matching the ``_suite_result_to_dict`` shape, for Markdown rendering.
+
+    Returns ``None`` when no prior run exists.
+    """
+    # Prefer the tagged prompt's run if --compare was used, otherwise fall
+    # back to the most recent previous run of this suite.
+    baseline_run = None
+    if baseline_tag and current.prompt_name:
+        tagged = storage.get_prompt_by_tag(current.prompt_name, baseline_tag)
+        if tagged:
+            for run in storage.get_eval_runs(current.suite_name, limit=100):
+                if run.prompt_version == tagged.version and run.id != current.run_id:
+                    baseline_run = run
+                    break
+
+    if baseline_run is None:
+        for run in storage.get_eval_runs(current.suite_name, limit=10):
+            if run.id != current.run_id:
+                baseline_run = run
+                break
+
+    if baseline_run is None:
+        return None
+
+    results = storage.get_eval_results(baseline_run.id)
+    # Group assertions by test_name.
+    tests_by_name: dict[str, dict] = {}
+    for r in results:
+        t = tests_by_name.setdefault(r.test_name, {
+            "test_name": r.test_name,
+            "passed": True,
+            "latency_ms": r.latency_ms or 0.0,
+            "error": None,
+            "assertions": [],
+        })
+        t["assertions"].append({
+            "assertion_type": r.assertion_type,
+            "passed": r.passed,
+            "score": r.score,
+            "details": r.details,
+        })
+        if not r.passed:
+            t["passed"] = False
+
+    return {
+        "suite_name": baseline_run.suite_name,
+        "overall_pass": baseline_run.overall_pass,
+        "overall_score": baseline_run.overall_score or 0.0,
+        "tests": list(tests_by_name.values()),
+    }
 
 
 def format_comparison(comparisons, hints=None, *, explanation: str | None = None) -> str:

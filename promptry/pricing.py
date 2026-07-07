@@ -490,6 +490,30 @@ def load_persisted_prices() -> int:
         return 0
 
 
+def build_cost_report(
+    storage,
+    days: int = 7,
+    name: str | None = None,
+    model: str | None = None,
+) -> dict:
+    """Aggregate cost data for the `cost-report` CLI/dashboard: storage's
+    summary/by_name/by_date breakdown, plus a count of calls on un-priced
+    models (which silently cost $0 and are worth flagging).
+    """
+    data = storage.get_cost_data(days=days, name=name, model=model)
+
+    unpriced_calls = 0
+    if hasattr(storage, "list_invocations"):
+        inv_rows = storage.list_invocations(name=name, days=days, limit=100000)
+        if model:
+            inv_rows = [r for r in inv_rows if r.get("model") == model]
+        unpriced_calls = sum(
+            1 for r in inv_rows if r.get("model") and not is_known_model(r["model"])
+        )
+    data["unpriced_calls"] = unpriced_calls
+    return data
+
+
 def cache_hit_rate(cached_tokens: int, tokens_in: int) -> float:
     """Fraction of input tokens served from cache. 0 if tokens_in is 0."""
     return cached_tokens / tokens_in if tokens_in > 0 else 0.0
