@@ -127,6 +127,13 @@ class BaseStorage(ABC):
         ...
 
     @abstractmethod
+    def list_latest_contents(self, limit: int = 500) -> list[tuple[str, str]]:
+        """(name, content) for the latest version of every prompt name, in a
+        single query. Used by prompt_search to avoid an N+1 of
+        list_prompt_summaries() + get_prompt() per name."""
+        ...
+
+    @abstractmethod
     def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
         """Delete all but the newest keep_last versions of a prompt. Returns
         the number deleted. For collapsing legacy baked-prompt churn."""

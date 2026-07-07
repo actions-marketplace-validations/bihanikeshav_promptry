@@ -16,6 +16,8 @@ class _Rec:
 
 
 class _Stub:
+    """No list_latest_contents — exercises the N+1 fallback path."""
+
     def __init__(self, prompts):
         self._p = prompts  # {name: content}
 
@@ -23,6 +25,28 @@ class _Stub:
         return [{"name": n} for n in self._p]
 
     def get_prompt(self, name, version=None):
+        return _Rec(self._p[name])
+
+
+class _BatchStub:
+    """Implements list_latest_contents — the fast path prompt_search should
+    prefer whenever storage supports it."""
+
+    def __init__(self, prompts):
+        self._p = prompts  # {name: content}
+        self.batch_calls = 0
+        self.get_prompt_calls = 0
+
+    def list_latest_contents(self, limit=500):
+        self.batch_calls += 1
+        return list(self._p.items())[:limit]
+
+    # present but must not be used when list_latest_contents is available
+    def list_prompt_summaries(self, limit=500):
+        return [{"name": n} for n in self._p]
+
+    def get_prompt(self, name, version=None):
+        self.get_prompt_calls += 1
         return _Rec(self._p[name])
 
 
@@ -70,3 +94,32 @@ class TestSearch:
 
     def test_no_prompts(self):
         assert prompt_search.search_prompts(_Stub({}), "anything")["results"] == []
+
+
+class TestLatestContentsBatchPath:
+    """perf: storages implementing list_latest_contents() must be used via
+    that single query, never the list_prompt_summaries()+get_prompt() N+1."""
+
+    def test_prefers_list_latest_contents_and_skips_get_prompt(self):
+        stub = _BatchStub(PROMPTS)
+        out = prompt_search._latest_contents(stub)
+        assert dict(out) == PROMPTS
+        assert stub.batch_calls == 1
+        assert stub.get_prompt_calls == 0
+
+    def test_same_results_as_the_fallback_path(self):
+        """Equivalence: batch path and N+1 fallback must produce the same
+        (name, content) pairs for the same underlying data."""
+        batch_out = sorted(prompt_search._latest_contents(_BatchStub(PROMPTS)))
+        fallback_out = sorted(prompt_search._latest_contents(_Stub(PROMPTS)))
+        assert batch_out == fallback_out
+
+    def test_search_and_near_duplicates_work_over_the_batch_path(self, monkeypatch):
+        monkeypatch.setattr(prompt_search, "_embeddings", lambda texts: None)
+        stub = _BatchStub(PROMPTS)
+        dup = prompt_search.near_duplicates(stub, threshold=0.7)
+        assert frozenset(("rag.answer", "rag.answer_v2")) in {
+            frozenset((p["a"], p["b"])) for p in dup["pairs"]
+        }
+        search = prompt_search.search_prompts(stub, "helpful assistant context", top_k=3)
+        assert search["results"][0]["name"].startswith("rag.answer")
