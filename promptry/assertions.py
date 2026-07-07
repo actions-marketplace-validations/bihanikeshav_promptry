@@ -329,11 +329,11 @@ def assert_llm(
         AssertionError: If the score is below threshold.
         RuntimeError: If no judge is configured.
     """
-    judge_fn = judge or _judge
+    judge_fn = judge or get_judge()
     if judge_fn is None:
         raise RuntimeError(
-            "No LLM judge configured. Call set_judge(fn) first, "
-            "or pass judge=fn to assert_llm()."
+            "No LLM judge configured. Call set_judge(fn), add a [judge] "
+            "block to promptry.toml, or pass judge=fn to assert_llm()."
         )
 
     grading_prompt = _GRADING_PROMPT.format(
@@ -655,11 +655,11 @@ def assert_grounded(
         AssertionError: If the score is below threshold.
         RuntimeError: If no judge is configured.
     """
-    judge_fn = judge or _judge
+    judge_fn = judge or get_judge()
     if judge_fn is None:
         raise RuntimeError(
-            "No LLM judge configured. Call set_judge(fn) first, "
-            "or pass judge=fn to assert_grounded()."
+            "No LLM judge configured. Call set_judge(fn), add a [judge] "
+            "block to promptry.toml, or pass judge=fn to assert_grounded()."
         )
 
     prompt = _GROUNDING_PROMPT.format(

@@ -171,3 +171,52 @@ class TestAssertionsGetJudgeFallback:
 
         monkeypatch.setattr(llm, "load_project_config", lambda: {"judge": {}})
         assert assertions.get_judge() is None
+
+
+class TestAssertLlmUsesConfigJudge:
+    """assert_llm/assert_grounded must resolve via get_judge(), not the
+    raw _judge global, so a config-only [judge] block (no set_judge call)
+    is enough to satisfy them."""
+
+    def test_assert_llm_with_only_config_judge(self, monkeypatch):
+        import sys
+        import types
+
+        import promptry.assertions as assertions
+
+        def completion(**kwargs):
+            content = '{"score": 0.9, "reason": "looks good"}'
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=content))]
+            )
+
+        monkeypatch.setitem(sys.modules, "litellm", types.SimpleNamespace(completion=completion))
+        monkeypatch.setattr(
+            llm, "load_project_config", lambda: {"judge": {"model": "gpt-4o-mini"}}
+        )
+
+        score = assertions.assert_llm(
+            "Photosynthesis converts sunlight into energy.",
+            criteria="Accurately describes photosynthesis",
+        )
+        assert score == pytest.approx(0.9)
+
+    def test_assert_grounded_with_only_config_judge(self, monkeypatch):
+        import sys
+        import types
+
+        import promptry.assertions as assertions
+
+        def completion(**kwargs):
+            content = '{"score": 1.0, "claims": [{"claim": "x", "verdict": "grounded", "reason": "ok"}]}'
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=content))]
+            )
+
+        monkeypatch.setitem(sys.modules, "litellm", types.SimpleNamespace(completion=completion))
+        monkeypatch.setattr(
+            llm, "load_project_config", lambda: {"judge": {"model": "gpt-4o-mini"}}
+        )
+
+        score = assertions.assert_grounded("response text", "source text")
+        assert score == pytest.approx(1.0)
