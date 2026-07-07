@@ -4,13 +4,20 @@ export { Promptry } from './promptry';
 export type {
   PromptryOptions,
   TrackOptions,
+  InvocationOptions,
+  FeedbackOptions,
   TelemetryEvent,
   EventBatch,
   OfflineStore,
 } from './types';
 
 import { Promptry } from './promptry';
-import type { PromptryOptions, TrackOptions } from './types';
+import type {
+  FeedbackOptions,
+  InvocationOptions,
+  PromptryOptions,
+  TrackOptions,
+} from './types';
 
 let _instance: Promptry | null = null;
 
@@ -41,6 +48,15 @@ export function track(
   return getInstance().track(content, name, opts);
 }
 
+/** Track a prompt via the global singleton (alias of track). */
+export function trackPrompt(
+  content: string,
+  name: string,
+  opts?: TrackOptions,
+): string {
+  return getInstance().trackPrompt(content, name, opts);
+}
+
 /** Track context chunks via the global singleton. Returns chunks unchanged. */
 export function trackContext(
   chunks: string[],
@@ -48,6 +64,16 @@ export function trackContext(
   opts?: TrackOptions,
 ): string[] {
   return getInstance().trackContext(chunks, name, opts);
+}
+
+/** Track one LLM invocation (cost/latency/tokens) via the global singleton. */
+export function trackInvocation(opts: InvocationOptions): void {
+  getInstance().trackInvocation(opts);
+}
+
+/** Track end-user feedback via the global singleton. */
+export function trackFeedback(opts: FeedbackOptions): void {
+  getInstance().trackFeedback(opts);
 }
 
 /** Flush all pending events from the global singleton. */

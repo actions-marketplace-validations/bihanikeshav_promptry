@@ -1,7 +1,7 @@
 {
   "name": "promptry-js",
-  "version": "0.1.0",
-  "description": "Lightweight JS/TS client for promptry telemetry — ships prompt tracking events to your ingest endpoint",
+  "version": "1.0.0",
+  "description": "Lightweight JS/TS client for promptry telemetry — ships prompt, invocation, and feedback events to your self-hosted ingest endpoint",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.5",
+    "ajv": "^8.17.1",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "^2.0.0"
