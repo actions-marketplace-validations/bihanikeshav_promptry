@@ -210,6 +210,81 @@ class AsyncWriter(BaseStorage):
     def get_vote_stats(self, prompt_name=None, days=30):
         return self._storage.get_vote_stats(prompt_name, days)
 
+    # ---- optional capabilities (direct passthrough) ----
+    #
+    # BaseStorage now declares these with NotImplementedError defaults, so
+    # they resolve on this class via normal MRO lookup instead of falling
+    # through to __getattr__ above. Proxy explicitly so AsyncWriter honestly
+    # reports (via supports()) whatever the wrapped storage supports.
+
+    def supports(self, capability: str) -> bool:
+        return self._storage.supports(capability)
+
+    def set_prompt_env(self, name, version, env):
+        return self._storage.set_prompt_env(name, version, env)
+
+    def get_runs_for_prompt(self, prompt_name, limit=50):
+        return self._storage.get_runs_for_prompt(prompt_name, limit=limit)
+
+    def list_invocations(self, name=None, days=7, limit=100, offset=0,
+                         captured_only=False, order="recent", sort=None,
+                         direction="desc", min_rating=None):
+        return self._storage.list_invocations(
+            name=name, days=days, limit=limit, offset=offset,
+            captured_only=captured_only, order=order, sort=sort,
+            direction=direction, min_rating=min_rating,
+        )
+
+    def get_invocation(self, invocation_id):
+        return self._storage.get_invocation(invocation_id)
+
+    def get_invocation_models(self, days=30):
+        return self._storage.get_invocation_models(days=days)
+
+    def count_invocations(self) -> int:
+        return self._storage.count_invocations()
+
+    def save_feedback(self, request_id, rating=None, comment=None, source=None):
+        return self._storage.save_feedback(request_id, rating=rating, comment=comment, source=source)
+
+    def list_feedback(self, name=None, days=30, limit=50, offset=0,
+                      only_comments=False, min_rating=None, q=None):
+        return self._storage.list_feedback(
+            name=name, days=days, limit=limit, offset=offset,
+            only_comments=only_comments, min_rating=min_rating, q=q,
+        )
+
+    def get_feedback_stats(self, days=30, positive_at=0.7, negative_at=0.4):
+        return self._storage.get_feedback_stats(days=days, positive_at=positive_at, negative_at=negative_at)
+
+    def bisect_regression(self, suite_name):
+        return self._storage.bisect_regression(suite_name)
+
+    def save_budget(self, scope, period, limit_usd, target=None) -> int:
+        return self._storage.save_budget(scope, period, limit_usd, target=target)
+
+    def delete_budget(self, budget_id) -> None:
+        return self._storage.delete_budget(budget_id)
+
+    def list_budgets(self):
+        return self._storage.list_budgets()
+
+    def get_budget_status(self):
+        return self._storage.get_budget_status()
+
+    def add_golden_example(self, prompt_name, input_text, reference_output=None,
+                           source_invocation_id=None, model=None) -> int:
+        return self._storage.add_golden_example(
+            prompt_name, input_text, reference_output=reference_output,
+            source_invocation_id=source_invocation_id, model=model,
+        )
+
+    def list_golden_examples(self, prompt_name):
+        return self._storage.list_golden_examples(prompt_name)
+
+    def delete_golden_example(self, example_id) -> bool:
+        return self._storage.delete_golden_example(example_id)
+
     def close(self):
         self._running = False
         self.flush()

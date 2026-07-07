@@ -182,3 +182,108 @@ class BaseStorage(ABC):
     @abstractmethod
     def close(self):
         ...
+
+    # ---- capability probing ----
+
+    def supports(self, capability: str) -> bool:
+        """Whether this backend actually implements `capability` (vs. just
+        inheriting BaseStorage's NotImplementedError default)."""
+        base_attr = getattr(BaseStorage, capability, None)
+        if base_attr is None:
+            return False
+        return getattr(type(self), capability, None) is not base_attr
+
+    # ---- prompt promotion / linkage (optional capability) ----
+
+    def set_prompt_env(self, name: str, version: int, env: str) -> bool:
+        """Point an environment tag at a specific prompt version. Optional."""
+        raise NotImplementedError
+
+    def get_runs_for_prompt(self, prompt_name: str, limit: int = 50) -> list[dict]:
+        """Eval runs that exercised a given prompt, newest first. Optional."""
+        raise NotImplementedError
+
+    def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
+        """Delete all but the newest keep_last versions of a prompt. Optional."""
+        raise NotImplementedError
+
+    # ---- invocations ledger (optional capability) ----
+
+    def list_invocations(self, name: str | None = None, days: int = 7, limit: int = 100,
+                         offset: int = 0, captured_only: bool = False, order: str = "recent",
+                         sort: str | None = None, direction: str = "desc",
+                         min_rating: float | None = None) -> list[dict]:
+        """Paged per-call invocations, optionally filtered/sorted. Optional."""
+        raise NotImplementedError
+
+    def get_invocation(self, invocation_id: int) -> dict | None:
+        """Full invocation incl. captured text and feedback. Optional."""
+        raise NotImplementedError
+
+    def get_invocation_models(self, days: int = 30) -> list[dict]:
+        """Distinct models seen in the invocations ledger with call counts. Optional."""
+        raise NotImplementedError
+
+    def count_invocations(self) -> int:
+        """Total rows in the per-call ledger (all time). Optional."""
+        raise NotImplementedError
+
+    # ---- feedback (optional capability) ----
+
+    def save_feedback(self, request_id: str, rating: float | None = None,
+                      comment: str | None = None, source: str | None = None) -> int:
+        """Store an end-user rating/comment for an invocation. Optional."""
+        raise NotImplementedError
+
+    def list_feedback(self, name: str | None = None, days: int = 30, limit: int = 50,
+                      offset: int = 0, only_comments: bool = False,
+                      min_rating: float | None = None, q: str | None = None) -> list[dict]:
+        """End-user feedback rows, newest first. Optional."""
+        raise NotImplementedError
+
+    def get_feedback_stats(self, days: int = 30, positive_at: float = 0.7,
+                           negative_at: float = 0.4) -> dict:
+        """Aggregate feedback satisfaction/counts/breakdown over a window. Optional."""
+        raise NotImplementedError
+
+    # ---- eval bisection (optional capability) ----
+
+    def bisect_regression(self, suite_name: str) -> dict:
+        """Find the first eval run where a suite regressed from passing to
+        failing. Returns {found, run, previous} or {found: False}. Optional."""
+        raise NotImplementedError
+
+    # ---- budgets (optional capability) ----
+
+    def save_budget(self, scope: str, period: str, limit_usd: float, target: str | None = None) -> int:
+        """Create a spend budget for a scope/period. Optional."""
+        raise NotImplementedError
+
+    def delete_budget(self, budget_id: int) -> None:
+        """Delete a budget by id. Optional."""
+        raise NotImplementedError
+
+    def list_budgets(self) -> list[dict]:
+        """List all budgets. Optional."""
+        raise NotImplementedError
+
+    def get_budget_status(self) -> list[dict]:
+        """Each budget with its current-period spend, % used, and breach flag. Optional."""
+        raise NotImplementedError
+
+    # ---- golden examples (optional capability) ----
+
+    def add_golden_example(self, prompt_name: str, input_text: str,
+                           reference_output: str | None = None,
+                           source_invocation_id: int | None = None,
+                           model: str | None = None) -> int:
+        """Promote a captured invocation into a golden example. Optional."""
+        raise NotImplementedError
+
+    def list_golden_examples(self, prompt_name: str) -> list[dict]:
+        """Golden examples for a prompt, newest first. Optional."""
+        raise NotImplementedError
+
+    def delete_golden_example(self, example_id: int) -> bool:
+        """Delete a golden example by id. Optional."""
+        raise NotImplementedError
