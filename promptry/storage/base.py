@@ -116,6 +116,11 @@ class BaseStorage(ABC):
         ...
 
     @abstractmethod
+    def get_model_cost_summary(self, model: str, days: int = 30) -> dict:
+        """SQL-side cost/latency rollup for one model: {cost, calls, avg_latency}."""
+        ...
+
+    @abstractmethod
     def list_prompt_summaries(self, offset: int = 0, limit: int = 200) -> list[dict]:
         """One row per prompt name: {name, latest_version, tags}. For the
         registry list view (so heavily-versioned prompts don't hide others)."""

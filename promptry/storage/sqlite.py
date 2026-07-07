@@ -162,7 +162,62 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         )""",
         "CREATE INDEX IF NOT EXISTS idx_golden_prompt ON golden_examples(prompt_name)",
     ]),
+    (8, "typed metric columns on invocations + backfill + indexes", [
+        # Promote the hot cost/latency fields out of the JSON metadata blob
+        # into real columns so cost/stats/budget readers aggregate in SQL
+        # (SUM/COUNT/AVG/GROUP BY) instead of a Python full scan with a
+        # json.loads per row. metadata stays for full fidelity + rare fields
+        # (cached_tokens, cache_write_tokens) that the readers still json_extract.
+        "ALTER TABLE invocations ADD COLUMN cost REAL",
+        "ALTER TABLE invocations ADD COLUMN tokens_in INTEGER",
+        "ALTER TABLE invocations ADD COLUMN tokens_out INTEGER",
+        "ALTER TABLE invocations ADD COLUMN model TEXT",
+        "ALTER TABLE invocations ADD COLUMN latency_ms REAL",
+        # Backfill from metadata, accepting the three token spellings seen in
+        # the wild (promptry / Anthropic / OpenAI), matching get_cost_data.
+        """UPDATE invocations SET
+               cost = json_extract(metadata, '$.cost'),
+               tokens_in = COALESCE(json_extract(metadata, '$.tokens_in'),
+                                    json_extract(metadata, '$.input_tokens'),
+                                    json_extract(metadata, '$.prompt_tokens')),
+               tokens_out = COALESCE(json_extract(metadata, '$.tokens_out'),
+                                     json_extract(metadata, '$.output_tokens'),
+                                     json_extract(metadata, '$.completion_tokens')),
+               model = json_extract(metadata, '$.model'),
+               latency_ms = json_extract(metadata, '$.latency_ms')
+           WHERE metadata IS NOT NULL""",
+        "CREATE INDEX IF NOT EXISTS idx_invocations_model_created ON invocations(model, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_invocations_created_cost ON invocations(created_at, cost)",
+    ]),
 ]
+
+
+def _metric_columns_from_metadata(metadata: dict | None) -> tuple:
+    """Derive the typed invocation columns (cost, tokens_in, tokens_out,
+    model, latency_ms) from a metadata dict, using the same token spellings
+    and precedence as the migration-8 backfill so stored and backfilled rows
+    are identical."""
+    meta = metadata or {}
+
+    def _first(*keys):
+        for k in keys:
+            v = meta.get(k)
+            if v is not None:
+                return v
+        return None
+
+    cost = meta.get("cost")
+    tokens_in = _first("tokens_in", "input_tokens", "prompt_tokens")
+    tokens_out = _first("tokens_out", "output_tokens", "completion_tokens")
+    model = meta.get("model")
+    latency_ms = meta.get("latency_ms")
+    return (
+        float(cost) if cost is not None else None,
+        int(tokens_in) if tokens_in is not None else None,
+        int(tokens_out) if tokens_out is not None else None,
+        model,
+        float(latency_ms) if latency_ms is not None else None,
+    )
 
 
 class SQLiteStorage(BaseStorage):
@@ -373,29 +428,26 @@ class SQLiteStorage(BaseStorage):
         min/avg/p50/p95/max for input tokens, output tokens, cost and
         latency, and a histogram of input-token size for a distribution
         curve. All derived from the invocations ledger."""
-        import json as _json
-
         with self._lock:
             cur = self._conn.execute(
-                """SELECT metadata FROM invocations
+                """SELECT tokens_in, tokens_out, cost, latency_ms FROM invocations
                    WHERE prompt_name = ? AND created_at >= datetime('now', ? || ' days')""",
                 (name, f"-{days}"),
             )
             rows = cur.fetchall()
 
+        # Distribution (percentiles + histogram) needs the raw per-row values,
+        # so we read the typed columns directly — no json.loads per row.
         series = {"tokens_in": [], "tokens_out": [], "cost": [], "latency_ms": []}
         for r in rows:
-            meta = _json.loads(r["metadata"]) if r["metadata"] else {}
-            ti = meta.get("tokens_in", meta.get("prompt_tokens"))
-            to = meta.get("tokens_out", meta.get("completion_tokens"))
-            if ti is not None:
-                series["tokens_in"].append(float(ti))
-            if to is not None:
-                series["tokens_out"].append(float(to))
-            if meta.get("cost") is not None:
-                series["cost"].append(float(meta["cost"]))
-            if meta.get("latency_ms") is not None:
-                series["latency_ms"].append(float(meta["latency_ms"]))
+            if r["tokens_in"] is not None:
+                series["tokens_in"].append(float(r["tokens_in"]))
+            if r["tokens_out"] is not None:
+                series["tokens_out"].append(float(r["tokens_out"]))
+            if r["cost"] is not None:
+                series["cost"].append(float(r["cost"]))
+            if r["latency_ms"] is not None:
+                series["latency_ms"].append(float(r["latency_ms"]))
 
         def _pct(sorted_vals, p):
             if not sorted_vals:
@@ -494,10 +546,11 @@ class SQLiteStorage(BaseStorage):
     # sortable columns -> SQL expression (metadata fields live in a JSON blob)
     _INV_SORT = {
         "created_at": "id",  # id tracks insertion order == recency, no tz parsing
-        "cost": "CAST(json_extract(metadata,'$.cost') AS REAL)",
-        "latency_ms": "CAST(json_extract(metadata,'$.latency_ms') AS REAL)",
-        "tokens_in": "CAST(COALESCE(json_extract(metadata,'$.tokens_in'), json_extract(metadata,'$.prompt_tokens')) AS REAL)",
-        "tokens_out": "CAST(COALESCE(json_extract(metadata,'$.tokens_out'), json_extract(metadata,'$.completion_tokens')) AS REAL)",
+        # typed columns (migration 8) — indexable, no per-row JSON parsing
+        "cost": "cost",
+        "latency_ms": "latency_ms",
+        "tokens_in": "tokens_in",
+        "tokens_out": "tokens_out",
     }
 
     def list_invocations(self, name: str | None = None, days: int = 7, limit: int = 100,
@@ -520,7 +573,7 @@ class SQLiteStorage(BaseStorage):
             order_sql = f"ORDER BY {self._INV_SORT[sort]} {d}, id DESC"
         else:
             order_sql = (
-                "ORDER BY CAST(json_extract(metadata,'$.cost') AS REAL) DESC, id DESC"
+                "ORDER BY cost DESC, id DESC"
                 if order == "cost" else "ORDER BY id DESC"
             )
         params += [limit, offset]
@@ -781,27 +834,31 @@ class SQLiteStorage(BaseStorage):
     def get_budget_status(self) -> list[dict]:
         """Each budget with its current-period spend, % used, and breach flag.
         Spend is summed from the invocations ledger over the period window."""
-        import json as _json
         budgets = self.list_budgets()
         if not budgets:
             return []
-        # Pull invocations for the longest needed window (monthly = 30d).
-        need_days = 30 if any(b["period"] == "monthly" for b in budgets) else 1
-        with self._lock:
-            cur = self._conn.execute(
-                """SELECT prompt_name, metadata, created_at FROM invocations
-                   WHERE created_at >= datetime('now', ? || ' days')""",
-                (f"-{need_days}",),
-            )
-            rows = [(r["prompt_name"], _json.loads(r["metadata"]) if r["metadata"] else {}, r["created_at"]) for r in cur.fetchall()]
 
         import datetime as _dt
         now = _dt.datetime.utcnow()
         day_start = now.strftime("%Y-%m-%d")
         month_start = now.strftime("%Y-%m")
 
-        def in_period(created_at: str, period: str) -> bool:
-            return created_at.startswith(day_start) if period == "daily" else created_at.startswith(month_start)
+        # One pass over the ledger: per-prompt daily + monthly spend from the
+        # typed cost column. Budgets are then satisfied from this small
+        # per-prompt table in Python (no per-budget re-scan, no json.loads).
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT prompt_name AS name,
+                          COALESCE(SUM(CASE WHEN created_at LIKE ? || '%'
+                                            THEN COALESCE(cost, 0) ELSE 0 END), 0) AS day_spend,
+                          COALESCE(SUM(CASE WHEN created_at LIKE ? || '%'
+                                            THEN COALESCE(cost, 0) ELSE 0 END), 0) AS month_spend
+                   FROM invocations
+                   WHERE created_at >= datetime('now', '-31 days')
+                   GROUP BY prompt_name""",
+                (day_start, month_start),
+            )
+            per_prompt = [(r["name"], float(r["day_spend"]), float(r["month_spend"])) for r in cur.fetchall()]
 
         def matches(name: str, scope: str, target: str | None) -> bool:
             if scope == "global":
@@ -812,9 +869,9 @@ class SQLiteStorage(BaseStorage):
         out = []
         for b in budgets:
             spend = 0.0
-            for name, meta, created in rows:
-                if in_period(created, b["period"]) and matches(name, b["scope"], b["target"]):
-                    spend += float(meta.get("cost") or 0)
+            for name, day_spend, month_spend in per_prompt:
+                if matches(name, b["scope"], b["target"]):
+                    spend += day_spend if b["period"] == "daily" else month_spend
             limit = b["limit_usd"] or 0
             pct = (spend / limit * 100) if limit > 0 else 0
             out.append({
@@ -828,21 +885,36 @@ class SQLiteStorage(BaseStorage):
     def get_invocation_models(self, days: int = 30) -> list[dict]:
         """Distinct models seen in the invocations ledger over the window,
         with call counts. Used to flag models that have no pricing entry."""
-        import json as _json
         with self._lock:
             cur = self._conn.execute(
-                """SELECT metadata FROM invocations
-                   WHERE created_at >= datetime('now', ? || ' days')""",
+                """SELECT model, COUNT(*) AS calls FROM invocations
+                   WHERE created_at >= datetime('now', ? || ' days')
+                     AND model IS NOT NULL AND model != ''
+                   GROUP BY model
+                   ORDER BY calls DESC, MIN(id) ASC""",
                 (f"-{days}",),
             )
-            rows = cur.fetchall()
-        counts: dict[str, int] = {}
-        for r in rows:
-            meta = _json.loads(r["metadata"]) if r["metadata"] else {}
-            model = meta.get("model")
-            if model:
-                counts[model] = counts.get(model, 0) + 1
-        return [{"model": m, "calls": c} for m, c in sorted(counts.items(), key=lambda x: -x[1])]
+            return [{"model": r["model"], "calls": int(r["calls"])} for r in cur.fetchall()]
+
+    def get_model_cost_summary(self, model: str, days: int = 30) -> dict:
+        """SQL-side cost/latency rollup for a single model over the window.
+        Returns {cost, calls, avg_latency}. Used by model_compare instead of
+        scanning the whole ledger twice with days=3650."""
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT COALESCE(SUM(cost), 0.0) AS cost,
+                          COUNT(*) AS calls,
+                          AVG(latency_ms) AS avg_latency
+                   FROM invocations
+                   WHERE model = ? AND created_at >= datetime('now', ? || ' days')""",
+                (model, f"-{days}"),
+            )
+            r = cur.fetchone()
+        return {
+            "cost": float(r["cost"] or 0.0),
+            "calls": int(r["calls"] or 0),
+            "avg_latency": float(r["avg_latency"]) if r["avg_latency"] is not None else 0.0,
+        }
 
     def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
         """Delete all but the newest *keep_last* versions of a prompt.
@@ -1037,188 +1109,178 @@ class SQLiteStorage(BaseStorage):
             return self._row_to_eval_run(row)
 
     def get_cost_data(self, days: int = 7, name: str | None = None, model: str | None = None) -> dict:
-        with self._lock:
-            params: list = [f"-{days}"]
-            name_filter = ""
-            if name is not None:
-                name_filter = " AND prompt_name = ?"
-                params.append(name)
-
-            # Cost lives in the invocations ledger — one row per LLM call.
-            # (The prompts table holds versioned templates, not per-call
-            # telemetry, so it must not contribute to cost or calls would be
-            # double-counted against template versions.)
-            cur = self._conn.execute(
-                f"""
-                SELECT prompt_name AS name, metadata, created_at FROM invocations
-                WHERE created_at >= datetime('now', ? || ' days')
-                {name_filter}
-                ORDER BY created_at ASC
-                """,
-                params,
-            )
-            rows = cur.fetchall()
-
         from promptry.pricing import (
+            REROUTES,
             cache_savings as _cache_savings,
             calculate_cost as _calc_cost,
             resolve_model as _resolve_model,
         )
 
-        total_cost = 0.0
-        total_calls = 0
-        total_tokens_in = 0
-        total_tokens_out = 0
-        total_cached_tokens = 0
-        total_cache_write_tokens = 0
-        total_savings = 0.0
+        where = ["created_at >= datetime('now', ? || ' days')"]
+        params: list = [f"-{days}"]
+        if name is not None:
+            where.append("prompt_name = ?")
+            params.append(name)
+        if model is not None:
+            # Original matched meta.get("model", "") == model, so a row with
+            # no model never matches a model filter.
+            where.append("COALESCE(model, '') = ?")
+            params.append(model)
+        where_sql = " AND ".join(where)
 
-        # by_name aggregation
-        by_name_map: dict[str, dict] = {}
-        # by_date aggregation
-        by_date_map: dict[str, dict] = {}
+        # cached_tokens / cache_write_tokens were not promoted to columns, so
+        # they are still json_extract'd — but SQL-side (in C), never a Python
+        # json.loads per row.
+        cached_expr = "CAST(COALESCE(json_extract(metadata, '$.cached_tokens'), 0) AS INTEGER)"
+        cwrite_expr = "CAST(COALESCE(json_extract(metadata, '$.cache_write_tokens'), 0) AS INTEGER)"
 
-        for row in rows:
-            try:
-                meta = json.loads(row["metadata"]) if row["metadata"] else {}
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
+        # Cost lives in the invocations ledger — one row per LLM call. (The
+        # prompts table holds versioned templates, not per-call telemetry, so
+        # it must not contribute to cost or calls would be double-counted.)
+        with self._lock:
+            by_name_rows = self._conn.execute(
+                f"""SELECT prompt_name AS name,
+                           COUNT(*) AS calls,
+                           COALESCE(SUM(tokens_in), 0) AS tokens_in,
+                           COALESCE(SUM(tokens_out), 0) AS tokens_out,
+                           COALESCE(SUM({cached_expr}), 0) AS cached_tokens,
+                           COALESCE(SUM({cwrite_expr}), 0) AS cache_write_tokens,
+                           COALESCE(SUM(cost), 0.0) AS cost,
+                           GROUP_CONCAT(DISTINCT model) AS models
+                    FROM invocations WHERE {where_sql}
+                    GROUP BY prompt_name""",
+                params,
+            ).fetchall()
+            by_date_rows = self._conn.execute(
+                f"""SELECT substr(created_at, 1, 10) AS date,
+                           COUNT(*) AS calls,
+                           COALESCE(SUM(tokens_in), 0) AS tokens_in,
+                           COALESCE(SUM(tokens_out), 0) AS tokens_out,
+                           COALESCE(SUM({cached_expr}), 0) AS cached_tokens,
+                           COALESCE(SUM(cost), 0.0) AS cost
+                    FROM invocations
+                    WHERE {where_sql} AND created_at IS NOT NULL AND created_at != ''
+                    GROUP BY substr(created_at, 1, 10)
+                    ORDER BY date ASC""",
+                params,
+            ).fetchall()
+            # Cached tokens grouped per (prompt, model) so cache-savings pricing
+            # is applied per model, not per row.
+            savings_rows = self._conn.execute(
+                f"""SELECT prompt_name AS name, model,
+                           COALESCE(SUM({cached_expr}), 0) AS cached_tokens
+                    FROM invocations
+                    WHERE {where_sql} AND model IS NOT NULL AND model != ''
+                    GROUP BY prompt_name, model""",
+                params,
+            ).fetchall()
+            # Per-row detail for rerouted-slug rows only, fetched inside the
+            # same lock/window so the reroute adjustment below stays consistent
+            # with the aggregates above. Skipped entirely when no reroutes are
+            # configured (the common case) so non-xAI deployments pay nothing.
+            reroute_rows: list = []
+            if REROUTES:
+                reroute_keys = sorted(REROUTES)
+                qmarks = ",".join("?" * len(reroute_keys))
+                reroute_rows = self._conn.execute(
+                    f"""SELECT prompt_name AS name, model, tokens_in, tokens_out,
+                               created_at, cost,
+                               json_extract(metadata, '$.cached_tokens') AS cached_tokens,
+                               json_extract(metadata, '$.cache_write_tokens') AS cache_write_tokens
+                        FROM invocations
+                        WHERE {where_sql} AND model IN ({qmarks})""",
+                    params + reroute_keys,
+                ).fetchall()
 
-            row_model = meta.get("model", "")
-            if model is not None and row_model != model:
+        # cache savings per (name, model) group -> per-name totals.
+        savings_by_name: dict[str, float] = {}
+        for sr in savings_rows:
+            cached = int(sr["cached_tokens"] or 0)
+            if not cached:
                 continue
+            s = _cache_savings(sr["model"], cached)
+            if s:
+                savings_by_name[sr["name"]] = savings_by_name.get(sr["name"], 0.0) + s
+        total_savings = sum(savings_by_name.values())
 
-            # Accept the three key spellings we've seen in the wild:
-            # - tokens_in / tokens_out (promptry's documented names)
-            # - input_tokens / output_tokens (Anthropic SDK style)
-            # - prompt_tokens / completion_tokens (OpenAI SDK style — common
-            #   when an integration just forwards the LLM response object)
-            tokens_in = int(
-                meta.get("tokens_in",
-                         meta.get("input_tokens",
-                                  meta.get("prompt_tokens", 0))) or 0
-            )
-            tokens_out = int(
-                meta.get("tokens_out",
-                         meta.get("output_tokens",
-                                  meta.get("completion_tokens", 0))) or 0
-            )
-            cached_tokens = int(meta.get("cached_tokens", 0) or 0)
-            cache_write_tokens = int(meta.get("cache_write_tokens", 0) or 0)
-            cost = float(meta.get("cost", 0) or 0)
-            row_name = row["name"]
-            # extract date portion from created_at (format: "YYYY-MM-DD HH:MM:SS")
-            date_str = row["created_at"][:10] if row["created_at"] else ""
+        by_name = []
+        for r in by_name_rows:
+            ti = int(r["tokens_in"])
+            cached = int(r["cached_tokens"])
+            models_csv = r["models"]
+            models = sorted({m for m in (models_csv.split(",") if models_csv else []) if m})
+            by_name.append({
+                "name": r["name"],
+                "calls": int(r["calls"]),
+                "tokens_in": ti,
+                "tokens_out": int(r["tokens_out"]),
+                "cached_tokens": cached,
+                "cache_write_tokens": int(r["cache_write_tokens"]),
+                "cost": float(r["cost"]),
+                "cache_savings": round(savings_by_name.get(r["name"], 0.0), 6),
+                "cache_hit_rate": (cached / ti if ti > 0 else 0.0),
+                "models": models,
+            })
+        by_name.sort(key=lambda x: x["cost"], reverse=True)
 
-            # Honor provider reroutes: a retired slug (e.g.
-            # grok-4-1-fast-non-reasoning on/after 2026-05-15) bills at its
-            # replacement's rate. Recompute from tokens so the dashboard is
-            # correct even for rows whose stored cost predates the reroute —
-            # the served model (if logged) already prices right and isn't in
-            # REROUTES, so it's unaffected.
-            if _resolve_model(row_model, date_str) != row_model:
+        by_date = [
+            {
+                "date": r["date"],
+                "calls": int(r["calls"]),
+                "tokens_in": int(r["tokens_in"]),
+                "tokens_out": int(r["tokens_out"]),
+                "cached_tokens": int(r["cached_tokens"]),
+                "cost": float(r["cost"]),
+            }
+            for r in by_date_rows
+        ]
+
+        # Honor provider reroutes: a retired slug (e.g.
+        # grok-4-1-fast-non-reasoning on/after 2026-05-15) bills at its
+        # replacement's rate. The SQL aggregates above trust the stored cost;
+        # for rerouted-slug rows we recompute from tokens so the dashboard is
+        # correct even for rows whose stored cost predates the reroute — the
+        # served model (if logged) already prices right and isn't in REROUTES,
+        # so it's unaffected. Applied as a per-row delta against the stored cost
+        # (COALESCE 0) so only rerouted rows move; everything else keeps the
+        # SQL-summed value byte-for-byte.
+        if reroute_rows:
+            by_name_by_key = {e["name"]: e for e in by_name}
+            by_date_by_key = {e["date"]: e for e in by_date}
+            for rr in reroute_rows:
+                row_model = rr["model"] or ""
+                date_str = rr["created_at"][:10] if rr["created_at"] else ""
+                if _resolve_model(row_model, date_str) == row_model:
+                    continue
                 rc = _calc_cost(
-                    row_model, tokens_in=tokens_in, tokens_out=tokens_out,
-                    cached_tokens=cached_tokens, cache_write_tokens=cache_write_tokens,
+                    row_model,
+                    tokens_in=int(rr["tokens_in"] or 0),
+                    tokens_out=int(rr["tokens_out"] or 0),
+                    cached_tokens=int(rr["cached_tokens"] or 0),
+                    cache_write_tokens=int(rr["cache_write_tokens"] or 0),
                     when=date_str,
                 )
-                if rc is not None:
-                    cost = rc
+                if rc is None:
+                    continue
+                delta = rc - float(rr["cost"] or 0.0)
+                ne = by_name_by_key.get(rr["name"])
+                if ne is not None:
+                    ne["cost"] += delta
+                de = by_date_by_key.get(date_str)
+                if de is not None:
+                    de["cost"] += delta
 
-            savings = 0.0
-            if row_model and cached_tokens:
-                s = _cache_savings(row_model, cached_tokens)
-                if s is not None:
-                    savings = s
-
-            total_calls += 1
-            total_cost += cost
-            total_tokens_in += tokens_in
-            total_tokens_out += tokens_out
-            total_cached_tokens += cached_tokens
-            total_cache_write_tokens += cache_write_tokens
-            total_savings += savings
-
-            # by_name
-            if row_name not in by_name_map:
-                by_name_map[row_name] = {
-                    "calls": 0,
-                    "tokens_in": 0,
-                    "tokens_out": 0,
-                    "cached_tokens": 0,
-                    "cache_write_tokens": 0,
-                    "cost": 0.0,
-                    "cache_savings": 0.0,
-                    "models": set(),
-                }
-            entry = by_name_map[row_name]
-            entry["calls"] += 1
-            entry["tokens_in"] += tokens_in
-            entry["tokens_out"] += tokens_out
-            entry["cached_tokens"] += cached_tokens
-            entry["cache_write_tokens"] += cache_write_tokens
-            entry["cost"] += cost
-            entry["cache_savings"] += savings
-            if row_model:
-                entry["models"].add(row_model)
-
-            # by_date
-            if date_str:
-                if date_str not in by_date_map:
-                    by_date_map[date_str] = {
-                        "calls": 0,
-                        "tokens_in": 0,
-                        "tokens_out": 0,
-                        "cached_tokens": 0,
-                        "cost": 0.0,
-                    }
-                d_entry = by_date_map[date_str]
-                d_entry["calls"] += 1
-                d_entry["tokens_in"] += tokens_in
-                d_entry["tokens_out"] += tokens_out
-                d_entry["cached_tokens"] += cached_tokens
-                d_entry["cost"] += cost
+        total_cost = sum(e["cost"] for e in by_name)
+        total_calls = sum(e["calls"] for e in by_name)
+        total_tokens_in = sum(e["tokens_in"] for e in by_name)
+        total_tokens_out = sum(e["tokens_out"] for e in by_name)
+        total_cached_tokens = sum(e["cached_tokens"] for e in by_name)
+        total_cache_write_tokens = sum(e["cache_write_tokens"] for e in by_name)
 
         avg_cost = (total_cost / total_calls) if total_calls > 0 else 0.0
         overall_hit_rate = (
             total_cached_tokens / total_tokens_in if total_tokens_in > 0 else 0.0
         )
-
-        by_name = sorted(
-            [
-                {
-                    "name": n,
-                    "calls": v["calls"],
-                    "tokens_in": v["tokens_in"],
-                    "tokens_out": v["tokens_out"],
-                    "cached_tokens": v["cached_tokens"],
-                    "cache_write_tokens": v["cache_write_tokens"],
-                    "cost": v["cost"],
-                    "cache_savings": round(v["cache_savings"], 6),
-                    "cache_hit_rate": (
-                        v["cached_tokens"] / v["tokens_in"]
-                        if v["tokens_in"] > 0
-                        else 0.0
-                    ),
-                    "models": sorted(v["models"]),
-                }
-                for n, v in by_name_map.items()
-            ],
-            key=lambda x: x["cost"],
-            reverse=True,
-        )
-
-        by_date = [
-            {
-                "date": d,
-                "calls": v["calls"],
-                "tokens_in": v["tokens_in"],
-                "tokens_out": v["tokens_out"],
-                "cached_tokens": v["cached_tokens"],
-                "cost": v["cost"],
-            }
-            for d, v in sorted(by_date_map.items())
-        ]
 
         return {
             "summary": {
@@ -1360,10 +1422,14 @@ class SQLiteStorage(BaseStorage):
         """
         with self._lock:
             meta_json = json.dumps(metadata) if metadata else None
+            cost, tokens_in, tokens_out, model, latency_ms = _metric_columns_from_metadata(metadata)
             cur = self._conn.execute(
-                """INSERT INTO invocations (prompt_name, prompt_version, metadata, input_text, output_text, request_id)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (prompt_name, prompt_version, meta_json, input_text, output_text, request_id),
+                """INSERT INTO invocations
+                   (prompt_name, prompt_version, metadata, input_text, output_text, request_id,
+                    cost, tokens_in, tokens_out, model, latency_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (prompt_name, prompt_version, meta_json, input_text, output_text, request_id,
+                 cost, tokens_in, tokens_out, model, latency_ms),
             )
             self._conn.commit()
             return cur.lastrowid

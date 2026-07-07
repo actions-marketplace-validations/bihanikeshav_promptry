@@ -201,6 +201,9 @@ class AsyncWriter(BaseStorage):
     def get_cost_data(self, days: int = 7, name=None, model=None) -> dict:
         return self._storage.get_cost_data(days, name, model)
 
+    def get_model_cost_summary(self, model: str, days: int = 30) -> dict:
+        return self._storage.get_model_cost_summary(model, days=days)
+
     def get_votes(self, prompt_name=None, days=30, offset=0, limit=200):
         return self._storage.get_votes(prompt_name, days, offset=offset, limit=limit)
 

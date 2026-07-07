@@ -133,14 +133,16 @@ def _compute_model_stats(
 
 
 def _enrich_with_cost(stats: ModelStats, storage) -> None:
-    """Pull cost metadata from prompts table if available."""
+    """Pull historical cost for this model from the invocations ledger.
+
+    Uses a single SQL-side rollup (get_model_cost_summary) over a large
+    window instead of scanning the whole ledger twice with get_cost_data.
+    """
     try:
-        # Use a large window (10 years) to capture all historical cost data
-        data = storage.get_cost_data(days=3650, model=stats.model_version)
-        summary = data["summary"]
-        if summary["total_calls"] > 0 and summary["total_cost"] > 0:
-            stats.total_cost = summary["total_cost"]
-            stats.avg_cost_per_call = summary["avg_cost"]
+        summary = storage.get_model_cost_summary(stats.model_version, days=3650)
+        if summary["calls"] > 0 and summary["cost"] > 0:
+            stats.total_cost = summary["cost"]
+            stats.avg_cost_per_call = summary["cost"] / summary["calls"]
     except Exception:
         return
 
