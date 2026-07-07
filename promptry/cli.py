@@ -342,6 +342,24 @@ def _list_suite_names(suites) -> str:
     return ", ".join(s.name for s in suites) or "(none)"
 
 
+def _format_and_out(format: str) -> tuple[str, Console]:
+    """Validate --format and pick where progress/status text should go.
+
+    In json/junit mode nothing but the machine-readable payload may land on
+    stdout, so all the existing rich progress/table prints get routed to a
+    stderr-backed Console instead. In table mode (the default) behaviour is
+    unchanged.
+    """
+    fmt = (format or "table").lower()
+    if fmt not in ("table", "json", "junit"):
+        console.print(
+            f"[red]Error:[/red] Invalid --format '{format}'. Choose from: table, json, junit."
+        )
+        raise typer.Exit(2)
+    out = console if fmt == "table" else Console(stderr=True)
+    return fmt, out
+
+
 @app.command("run")
 def run_cmd(
     suite_name: str = typer.Argument(..., help="Suite to run."),
@@ -350,11 +368,14 @@ def run_cmd(
     prompt_name: Optional[str] = typer.Option(None, "--prompt-name"),
     prompt_version: Optional[int] = typer.Option(None, "--prompt-version"),
     model_version: Optional[str] = typer.Option(None, "--model-version"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write HTML report to file."),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write report to file (HTML for table format, JSON/JUnit XML for those formats)."),
     markdown: Optional[Path] = typer.Option(None, "--markdown", help="Write Markdown summary to file (for PR comments)."),
     explain: bool = typer.Option(False, "--explain", help="Generate an LLM explanation for regressions (requires judge configured via set_judge)."),
+    format: str = typer.Option("table", "--format", help="Output format: table|json|junit."),
 ):
     """Run an eval suite. Exit code 1 on regression."""
+    fmt, out = _format_and_out(format)
+
     _import_module(module)
 
     from promptry.runner import run_suite
@@ -363,7 +384,7 @@ def run_cmd(
 
     if get_suite(suite_name) is None:
         available = _list_suite_names(list_suites())
-        console.print(f"[red]Suite '{suite_name}' not found.[/red] Available: {available}")
+        out.print(f"[red]Suite '{suite_name}' not found.[/red] Available: {available}")
         raise typer.Exit(1)
 
     try:
@@ -374,21 +395,21 @@ def run_cmd(
             model_version=model_version,
         )
     except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        out.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
     for test in result.tests:
         status = "[green]PASS[/green]" if test.passed else "[red]FAIL[/red]"
-        console.print(f"  {status} {test.test_name} ({test.latency_ms:.0f}ms)")
+        out.print(f"  {status} {test.test_name} ({test.latency_ms:.0f}ms)")
         if test.error:
-            console.print(f"    {test.error}")
+            out.print(f"    {test.error}")
         for a in test.assertions:
             score_str = f" ({a.score:.3f})" if a.score is not None else ""
             a_status = "ok" if a.passed else "FAIL"
-            console.print(f"    {a.assertion_type}{score_str} {a_status}")
+            out.print(f"    {a.assertion_type}{score_str} {a_status}")
 
-    console.print()
-    console.print(
+    out.print()
+    out.print(
         f"Overall: {'[green]PASS[/green]' if result.overall_pass else '[red]FAIL[/red]'}"
         f"  score: {result.overall_score:.3f}"
     )
@@ -402,17 +423,17 @@ def run_cmd(
     slo_cfg = load_project_config().get("slo", {})
     slo_breaches = check_slos(result, slo_cfg) if slo_cfg else []
     if slo_cfg:
-        console.print()
-        console.print("SLOs:")
-        console.print(format_slo_breaches(slo_breaches))
+        out.print()
+        out.print("SLOs:")
+        out.print(format_slo_breaches(slo_breaches))
 
     if compare:
-        console.print()
-        console.print(f"Comparing against [bold]{compare}[/bold] baseline:")
+        out.print()
+        out.print(f"Comparing against [bold]{compare}[/bold] baseline:")
         comparisons, hints = compare_with_baseline(result, baseline_tag=compare)
 
         if not comparisons:
-            console.print("  [yellow]No baseline found to compare against.[/yellow]")
+            out.print("  [yellow]No baseline found to compare against.[/yellow]")
         else:
             explanation = None
             if explain and any(not c.passed for c in comparisons):
@@ -429,7 +450,7 @@ def run_cmd(
                     )
 
             fmt_output = format_comparison(comparisons, hints, explanation=explanation)
-            console.print(fmt_output)
+            out.print(fmt_output)
 
             if any(not c.passed for c in comparisons):
                 try:
@@ -441,14 +462,25 @@ def run_cmd(
                 raise typer.Exit(1)
 
     # Build results dict once for any report output.
-    results_dict = _suite_result_to_dict(result) if (output or markdown) else None
+    results_dict = (
+        _suite_result_to_dict(result) if (output or markdown or fmt != "table") else None
+    )
 
-    if output:
+    if fmt != "table":
+        from promptry.report import render_json, render_junit
+
+        content = render_json(results_dict) if fmt == "json" else render_junit(results_dict)
+        if output:
+            output.write_text(content, encoding="utf-8")
+            out.print(f"\n[green]Report written to[/green] {output}")
+        else:
+            print(content)
+    elif output:
         from promptry.report import render_run_report
 
         html_content = render_run_report(results_dict)
         output.write_text(html_content, encoding="utf-8")
-        console.print(f"\n[green]Report written to[/green] {output}")
+        out.print(f"\n[green]Report written to[/green] {output}")
 
     if markdown:
         from promptry.report import render_markdown_summary
@@ -456,7 +488,7 @@ def run_cmd(
         baseline_dict = _load_baseline_dict(result, compare)
         md_content = render_markdown_summary(results_dict, baseline_dict)
         markdown.write_text(md_content, encoding="utf-8")
-        console.print(f"[green]Markdown summary written to[/green] {markdown}")
+        out.print(f"[green]Markdown summary written to[/green] {markdown}")
 
     if not result.overall_pass or slo_breaches:
         raise typer.Exit(1)
@@ -547,16 +579,37 @@ def drift_cmd(
     module: str = typer.Option("evals", "--module", "-m", help="Python module with suite definitions (default: evals)."),
     window: Optional[int] = typer.Option(None, "--window", "-w"),
     threshold: Optional[float] = typer.Option(None, "--threshold"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write report to file (plain text for table format, JSON/JUnit XML for those formats)."),
+    format: str = typer.Option("table", "--format", help="Output format: table|json|junit."),
 ):
     """Check for score drift in a suite. Exit code 1 if drifting."""
+    fmt, out = _format_and_out(format)
+
     _import_module(module)
+
+    import dataclasses
 
     from promptry.drift import DriftMonitor, format_drift_report
 
     monitor = DriftMonitor()
     report = monitor.check(suite_name, window=window, threshold=threshold)
 
-    console.print(format_drift_report(report))
+    text_report = format_drift_report(report)
+    out.print(text_report)
+
+    if fmt != "table":
+        from promptry.report import render_json, render_junit
+
+        report_dict = dataclasses.asdict(report)
+        content = render_json(report_dict) if fmt == "json" else render_junit(report_dict)
+        if output:
+            output.write_text(content, encoding="utf-8")
+            out.print(f"\n[green]Report written to[/green] {output}")
+        else:
+            print(content)
+    elif output:
+        output.write_text(text_report, encoding="utf-8")
+        out.print(f"\n[green]Report written to[/green] {output}")
 
     if report.is_drifting:
         raise typer.Exit(1)
@@ -567,7 +620,8 @@ def compare_cmd(
     suite_name: str = typer.Argument(..., help="Suite to compare on."),
     candidate: str = typer.Option(..., "--candidate", help="Candidate model version."),
     baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline model version (auto-detected if omitted)."),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write HTML report to file."),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write report to file (HTML for table format, JSON/JUnit XML for those formats)."),
+    format: str = typer.Option("table", "--format", help="Output format: table|json|junit."),
 ):
     """Compare two models using historical eval data.
 
@@ -585,6 +639,8 @@ def compare_cmd(
         # compare
         promptry compare my-suite --candidate claude-sonnet-4
     """
+    fmt, out = _format_and_out(format)
+
     from promptry.model_compare import compare_models, format_model_compare
 
     try:
@@ -594,20 +650,30 @@ def compare_cmd(
             baseline=baseline,
         )
     except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        out.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
-    console.print()
-    console.print(format_model_compare(report))
-    console.print()
+    out.print()
+    out.print(format_model_compare(report))
+    out.print()
 
-    if output:
+    report_dict = _compare_report_to_dict(report)
+
+    if fmt != "table":
+        from promptry.report import render_json, render_junit
+
+        content = render_json(report_dict) if fmt == "json" else render_junit(report_dict)
+        if output:
+            output.write_text(content, encoding="utf-8")
+            out.print(f"[green]Report written to[/green] {output}")
+        else:
+            print(content)
+    elif output:
         from promptry.report import render_compare_report
 
-        report_dict = _compare_report_to_dict(report)
         html_content = render_compare_report(report_dict)
         output.write_text(html_content, encoding="utf-8")
-        console.print(f"[green]Report written to[/green] {output}")
+        out.print(f"[green]Report written to[/green] {output}")
 
     if report.verdict == "keep_baseline":
         raise typer.Exit(1)

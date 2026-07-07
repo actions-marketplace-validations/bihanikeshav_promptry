@@ -402,6 +402,130 @@ class TestRunCLI:
         assert "smoke" in result.output
 
 
+class TestRunCLIFormat:
+    """--format json / --format junit on `promptry run`."""
+
+    def _write_passing_module(self, tmp_path, monkeypatch, module_name="evals_pass"):
+        mod_file = tmp_path / f"{module_name}.py"
+        mod_file.write_text(
+            "from promptry.evaluator import suite\n"
+            "from promptry.assertions import assert_contains\n\n"
+            "@suite(\"smoke\")\n"
+            "def test_smoke():\n"
+            "    assert_contains(\"hello world\", [\"hello\"])\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.syspath_prepend(str(tmp_path))
+        import sys
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(module_name + "."):
+                sys.modules.pop(name, None)
+
+    def _write_failing_module(self, tmp_path, monkeypatch, module_name="evals_fail"):
+        mod_file = tmp_path / f"{module_name}.py"
+        mod_file.write_text(
+            "from promptry.evaluator import suite\n"
+            "from promptry.assertions import assert_contains\n\n"
+            "@suite(\"smoke\")\n"
+            "def test_smoke():\n"
+            "    assert_contains(\"hello world\", [\"goodbye\"])\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.syspath_prepend(str(tmp_path))
+        import sys
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(module_name + "."):
+                sys.modules.pop(name, None)
+
+    def test_json_stdout_is_pure_json(self, tmp_path, monkeypatch):
+        """Nothing but the JSON payload may land on stdout -- a consumer must
+        be able to json.loads(result.stdout) directly."""
+        import json
+
+        self._write_passing_module(tmp_path, monkeypatch)
+        result = CliRunner().invoke(
+            app, ["run", "smoke", "--module", "evals_pass", "--format", "json"]
+        )
+        assert result.exit_code == 0, result.stderr
+        data = json.loads(result.stdout)
+        assert data["suite_name"] == "smoke"
+        assert data["overall_pass"] is True
+
+    def test_json_matches_to_dict_schema(self, tmp_path, monkeypatch):
+        import json
+
+        self._write_passing_module(tmp_path, monkeypatch)
+        result = CliRunner().invoke(
+            app, ["run", "smoke", "--module", "evals_pass", "--format", "json"]
+        )
+        data = json.loads(result.stdout)
+        assert set(data.keys()) == {"suite_name", "overall_pass", "overall_score", "tests"}
+        assert data["tests"][0]["test_name"] == "smoke"
+
+    def test_json_failing_suite_still_exits_1(self, tmp_path, monkeypatch):
+        import json
+
+        self._write_failing_module(tmp_path, monkeypatch)
+        result = CliRunner().invoke(
+            app, ["run", "smoke", "--module", "evals_fail", "--format", "json"]
+        )
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["overall_pass"] is False
+
+    def test_junit_stdout_parses_as_xml(self, tmp_path, monkeypatch):
+        import xml.etree.ElementTree as ET
+
+        self._write_passing_module(tmp_path, monkeypatch)
+        result = CliRunner().invoke(
+            app, ["run", "smoke", "--module", "evals_pass", "--format", "junit"]
+        )
+        assert result.exit_code == 0, result.stderr
+        root = ET.fromstring(result.stdout)
+        suite = root.find("testsuite")
+        assert suite.get("name") == "smoke"
+        assert suite.get("tests") == "1"
+        assert suite.get("failures") == "0"
+
+    def test_junit_failing_suite_counts_match(self, tmp_path, monkeypatch):
+        import xml.etree.ElementTree as ET
+
+        self._write_failing_module(tmp_path, monkeypatch)
+        result = CliRunner().invoke(
+            app, ["run", "smoke", "--module", "evals_fail", "--format", "junit"]
+        )
+        assert result.exit_code == 1
+        root = ET.fromstring(result.stdout)
+        suite = root.find("testsuite")
+        assert suite.get("tests") == "1"
+        assert suite.get("failures") == "1"
+
+    def test_json_output_flag_writes_file_not_stdout(self, tmp_path, monkeypatch):
+        import json
+
+        self._write_passing_module(tmp_path, monkeypatch)
+        out_path = tmp_path / "report.json"
+        result = CliRunner().invoke(
+            app,
+            ["run", "smoke", "--module", "evals_pass", "--format", "json", "--output", str(out_path)],
+        )
+        assert result.exit_code == 0, result.stderr
+        assert out_path.exists()
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+        assert data["suite_name"] == "smoke"
+        # stdout must stay empty -- the "written to" note is routed to stderr
+        assert result.stdout.strip() == ""
+        assert "Report written to" in result.stderr
+
+    def test_invalid_format_rejected(self, tmp_path, monkeypatch):
+        self._write_passing_module(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["run", "smoke", "--module", "evals_pass", "--format", "yaml"])
+        assert result.exit_code == 2
+        assert "Invalid --format" in result.output
+
+
 class TestCompare:
 
     def test_compare_no_data(self):
@@ -410,6 +534,116 @@ class TestCompare:
         # Should exit with code 1 (error) because no baseline data exists, not crash
         assert result.exit_code == 1
         assert "Error" in result.output or "No baseline" in result.output or "No runs" in result.output
+
+
+class TestCompareCLIFormat:
+    """--format json / --format junit on `promptry compare`."""
+
+    def _seed(self, tmp_path, monkeypatch):
+        from promptry.storage import Storage
+
+        db_path = tmp_path / "test.db"
+        monkeypatch.setenv("PROMPTRY_DB", str(db_path))
+        from promptry.config import reset_config
+        from promptry.storage import reset_storage
+        reset_storage()
+        reset_config()
+
+        storage = Storage(db_path=db_path)
+        for _ in range(3):
+            run_id = storage.save_eval_run(
+                suite_name="cmp-suite", prompt_name=None, prompt_version=None,
+                model_version="model-a", overall_pass=True, overall_score=0.85,
+            )
+            storage.save_eval_result(
+                run_id=run_id, test_name="t1", assertion_type="semantic",
+                passed=True, score=0.85, details=None, latency_ms=100.0,
+            )
+        for _ in range(2):
+            run_id = storage.save_eval_run(
+                suite_name="cmp-suite", prompt_name=None, prompt_version=None,
+                model_version="model-b", overall_pass=True, overall_score=0.90,
+            )
+            storage.save_eval_result(
+                run_id=run_id, test_name="t1", assertion_type="semantic",
+                passed=True, score=0.90, details=None, latency_ms=80.0,
+            )
+        storage.close()
+
+    def test_json_stdout_matches_to_dict(self, tmp_path, monkeypatch):
+        import json
+
+        self._seed(tmp_path, monkeypatch)
+        result = CliRunner().invoke(
+            app,
+            ["compare", "cmp-suite", "--candidate", "model-b", "--baseline", "model-a", "--format", "json"],
+        )
+        assert result.exit_code == 0, result.stderr
+        data = json.loads(result.stdout)
+        assert data["baseline"]["model_version"] == "model-a"
+        assert data["candidate"]["model_version"] == "model-b"
+
+    def test_junit_stdout_parses_as_xml(self, tmp_path, monkeypatch):
+        import xml.etree.ElementTree as ET
+
+        self._seed(tmp_path, monkeypatch)
+        result = CliRunner().invoke(
+            app,
+            ["compare", "cmp-suite", "--candidate", "model-b", "--baseline", "model-a", "--format", "junit"],
+        )
+        assert result.exit_code == 0, result.stderr
+        root = ET.fromstring(result.stdout)
+        assert root.find("testsuite") is not None
+
+
+class TestDriftCLIFormat:
+    """--format json / --format junit on `promptry drift`."""
+
+    @pytest.fixture(autouse=True)
+    def isolated_db(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_DB", str(tmp_path / "test.db"))
+        from promptry.config import reset_config
+        from promptry.storage import reset_storage
+        reset_storage()
+        reset_config()
+        yield
+        reset_storage()
+        reset_config()
+
+    def test_json_stdout_is_pure_json(self):
+        import json
+
+        result = CliRunner().invoke(
+            app, ["drift", "no-such-suite", "--format", "json"]
+        )
+        assert result.exit_code == 0, result.stderr
+        data = json.loads(result.stdout)
+        assert data["suite_name"] == "no-such-suite"
+        assert data["is_drifting"] is False
+
+    def test_junit_stdout_parses_as_xml(self):
+        import xml.etree.ElementTree as ET
+
+        result = CliRunner().invoke(
+            app, ["drift", "no-such-suite", "--format", "junit"]
+        )
+        assert result.exit_code == 0, result.stderr
+        root = ET.fromstring(result.stdout)
+        suite = root.find("testsuite")
+        assert suite.get("failures") == "0"
+
+    def test_json_output_flag_writes_file(self, tmp_path):
+        import json
+
+        out_path = tmp_path / "drift.json"
+        result = CliRunner().invoke(
+            app, ["drift", "no-such-suite", "--format", "json", "--output", str(out_path)]
+        )
+        assert result.exit_code == 0, result.stderr
+        assert out_path.exists()
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+        assert data["suite_name"] == "no-such-suite"
+        assert result.stdout.strip() == ""
 
 
 class TestPricesCLI:
