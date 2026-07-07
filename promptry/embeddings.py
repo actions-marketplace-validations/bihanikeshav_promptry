@@ -102,12 +102,22 @@ def encode(texts: list[str]) -> np.ndarray:
     row is an independent copy -- mutating the result can't poison the
     cache.
     """
-    model_name = _current_model_name()
     n = len(texts)
     results: list[np.ndarray | None] = [None] * n
     miss_indices: list[int] = []
 
     with _lock:
+        # model_name and generation must be captured together, under the
+        # same lock acquisition that set_model() uses to mutate them. If
+        # model_name were read outside the lock (as it once was), a
+        # concurrent set_model() could run in the gap between that read and
+        # the generation read below: the name read would see the OLD name,
+        # but the generation read (now inside the lock, after the bump)
+        # would see the NEW generation -- making the stale check below
+        # powerless, since it only compares against itself. Reading both
+        # under one lock acquisition ties them to the same point in time:
+        # any set_model() call is fully before or fully after this block.
+        model_name = _current_model_name()
         generation = _generation
         for i, text in enumerate(texts):
             key = _cache_key(model_name, text)
