@@ -1097,6 +1097,13 @@ class SQLiteStorage(BaseStorage):
             )
             return [row[0] for row in cur.fetchall()]
 
+    def count_invocations(self) -> int:
+        """Total rows in the per-call ledger (all time). A cheap existence
+        check for onboarding — no window, no joins."""
+        with self._lock:
+            cur = self._conn.execute("SELECT COUNT(*) FROM invocations")
+            return int(cur.fetchone()[0])
+
     def get_eval_run_by_id(self, run_id: int) -> EvalRunRecord | None:
         with self._lock:
             cur = self._conn.execute(

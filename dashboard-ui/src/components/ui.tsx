@@ -412,6 +412,107 @@ export function KPI({
   );
 }
 
+/* ---------------- Clipboard helper ---------------- */
+// Shared copy logic: navigator.clipboard when available, textarea fallback for
+// insecure origins (a dashboard reached over plain http on a LAN/VM) or old
+// browsers. Returns [copied, copy] where `copied` flashes true for ~1.4s.
+export function useClipboard(): [boolean, (value: string) => void] {
+  const [copied, setCopied] = useState(false);
+  const copy = (value: string) => {
+    const done = () => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(value).then(done).catch(() => {});
+    } else {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = value;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        done();
+      } catch { /* clipboard unavailable — no-op */ }
+    }
+  };
+  return [copied, copy];
+}
+
+/* ---------------- CommandButton (compact click-to-copy pill) ---------------- */
+export function CommandButton({ value, label }: { value: string; label?: string }) {
+  const [copied, copy] = useClipboard();
+  return (
+    <button
+      type="button"
+      className="btn"
+      onClick={() => copy(value)}
+      title={`Copy: ${value}`}
+    >
+      <span aria-hidden style={{ color: "var(--accent)", fontWeight: 600 }}>+</span>
+      <span>{copied ? "copied ✓" : (label ?? value)}</span>
+    </button>
+  );
+}
+
+/* ---------------- CopyField (click-to-copy command / snippet) ---------------- */
+export function CopyField({
+  value,
+  display,
+  mono = true,
+}: {
+  value: string;
+  display?: ReactNode;
+  mono?: boolean;
+}) {
+  const [copied, copy] = useClipboard();
+  return (
+    <button
+      type="button"
+      onClick={() => copy(value)}
+      title="Copy to clipboard"
+      className={mono ? "mono" : undefined}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        width: "100%",
+        textAlign: "left",
+        padding: "9px 11px",
+        fontSize: 12.5,
+        color: "var(--text-dim)",
+        background: "var(--bg-elev)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-md)",
+        cursor: "pointer",
+        transition: "border-color .12s ease",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--border-strong)")}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+    >
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {display ?? value}
+      </span>
+      <span
+        style={{
+          flexShrink: 0,
+          fontSize: 10,
+          fontFamily: "var(--font-ui)",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          color: copied ? "var(--success)" : "var(--muted)",
+        }}
+      >
+        {copied ? "copied ✓" : "copy"}
+      </span>
+    </button>
+  );
+}
+
 /* ---------------- Wordmark ---------------- */
 export function Wordmark() {
   return (

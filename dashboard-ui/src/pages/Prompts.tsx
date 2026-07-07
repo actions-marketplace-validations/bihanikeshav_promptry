@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { PageHeader } from "../components/ui";
+import { PageHeader, CopyField } from "../components/ui";
 import { getNearDuplicates } from "../api/client";
 import type { LayoutContext } from "../components/Layout";
 import type { NearDuplicates } from "../api/types";
@@ -49,9 +49,22 @@ export default function Prompts() {
       />
 
       {filtered.length === 0 && (
-        <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
-          No prompts found.
-        </div>
+        prompts.length === 0 ? (
+          <div className="card" style={{ padding: "32px 24px", maxWidth: 520, margin: "0 auto", textAlign: "center" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>No prompts registered yet</div>
+            <div style={{ fontSize: 12.5, color: "var(--secondary)", margin: "6px 0 14px", lineHeight: 1.5 }}>
+              Version a prompt from your code with <code className="mono" style={{ color: "var(--text-dim)" }}>track()</code>,
+              or scaffold one from the CLI. It shows up here with its full version history.
+            </div>
+            <div style={{ maxWidth: 360, margin: "0 auto", textAlign: "left" }}>
+              <CopyField value="promptry new prompt" />
+            </div>
+          </div>
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
+            No prompts match “{q}”.
+          </div>
+        )
       )}
 
       {dupes && dupes.pairs.length > 0 && (

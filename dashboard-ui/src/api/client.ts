@@ -28,6 +28,7 @@ import type {
   NearDuplicates,
   GoldenExample,
   GoldenRunResult,
+  OnboardingStatus,
 } from "./types";
 
 function getBaseUrl(): string {
@@ -58,6 +59,12 @@ async function fetchJson<T>(path: string): Promise<T> {
     throw new Error(`API error ${res.status}: ${await res.text()}`);
   }
   return res.json();
+}
+
+// ---- Onboarding ----
+
+export function getOnboardingStatus(): Promise<OnboardingStatus> {
+  return fetchJson("/api/onboarding-status");
 }
 
 // ---- Suites ----

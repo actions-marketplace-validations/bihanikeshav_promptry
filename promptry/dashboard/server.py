@@ -57,6 +57,37 @@ def health():
     return {"status": "ok", "version": __version__, "db_path": db_path}
 
 
+# ---- Onboarding ----
+
+@app.get("/api/onboarding-status")
+def onboarding_status():
+    """Cheap all-time existence counts for the three data types the dashboard
+    needs before it has anything to show: eval suites, per-call invocations, and
+    versioned prompts. When all three are zero the user hasn't recorded anything
+    yet, so the Overview shows a getting-started card instead of empty tiles."""
+    storage = get_storage()
+    try:
+        suites = len(storage.list_suite_names())
+    except Exception:
+        suites = 0
+    try:
+        prompts = len(storage.list_prompt_summaries(limit=1))
+    except Exception:
+        prompts = 0
+    invocations = 0
+    if hasattr(storage, "count_invocations"):
+        try:
+            invocations = storage.count_invocations()
+        except Exception:
+            invocations = 0
+    return {
+        "suites": suites,
+        "prompts": prompts,
+        "invocations": invocations,
+        "empty": suites == 0 and prompts == 0 and invocations == 0,
+    }
+
+
 # ---- Suites ----
 
 @app.get("/api/suites")
