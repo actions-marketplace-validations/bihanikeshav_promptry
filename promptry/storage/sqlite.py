@@ -185,7 +185,7 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
                                      json_extract(metadata, '$.completion_tokens')),
                model = json_extract(metadata, '$.model'),
                latency_ms = json_extract(metadata, '$.latency_ms')
-           WHERE metadata IS NOT NULL""",
+           WHERE metadata IS NOT NULL AND json_valid(metadata)""",
         "CREATE INDEX IF NOT EXISTS idx_invocations_model_created ON invocations(model, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_invocations_created_cost ON invocations(created_at, cost)",
     ]),
@@ -1131,8 +1131,11 @@ class SQLiteStorage(BaseStorage):
         # cached_tokens / cache_write_tokens were not promoted to columns, so
         # they are still json_extract'd — but SQL-side (in C), never a Python
         # json.loads per row.
-        cached_expr = "CAST(COALESCE(json_extract(metadata, '$.cached_tokens'), 0) AS INTEGER)"
-        cwrite_expr = "CAST(COALESCE(json_extract(metadata, '$.cache_write_tokens'), 0) AS INTEGER)"
+        # json_extract raises on malformed metadata (e.g. a legacy row whose
+        # blob isn't valid JSON), so gate on json_valid — invalid blobs read as
+        # 0 here, matching how the old Python reader swallowed json.loads errors.
+        cached_expr = "CAST(COALESCE(CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.cached_tokens') END, 0) AS INTEGER)"
+        cwrite_expr = "CAST(COALESCE(CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.cache_write_tokens') END, 0) AS INTEGER)"
 
         # Cost lives in the invocations ledger — one row per LLM call. (The
         # prompts table holds versioned templates, not per-call telemetry, so

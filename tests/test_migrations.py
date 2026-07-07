@@ -227,6 +227,69 @@ class TestInvocationTypedColumns:
         finally:
             db.close()
 
+    def _create_pre_typed_db_with_bad_metadata(self, db_path):
+        """Like _create_pre_typed_db but the only invocations carry metadata
+        that is NOT valid JSON: a plain non-JSON string and an empty string.
+        Old readers tolerated these (they swallowed json.loads errors); the
+        backfill's json_extract would raise on them, and because the ALTERs
+        commit before the failing UPDATE, a raise would leave a DB that errors
+        on every subsequent open (ALTER has no IF NOT EXISTS)."""
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript(_SCHEMA_VERSION_DDL)
+        conn.executescript(
+            """
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt_name TEXT NOT NULL,
+                prompt_version INTEGER,
+                metadata TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                input_text TEXT,
+                output_text TEXT,
+                request_id TEXT
+            );
+            """
+        )
+        for version, desc, _ in _MIGRATIONS[:-1]:
+            conn.execute(
+                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                (version, desc),
+            )
+        for name, meta in [("bad.a", "not json"), ("bad.b", "")]:
+            conn.execute(
+                "INSERT INTO invocations (prompt_name, metadata) VALUES (?, ?)",
+                (name, meta),
+            )
+        conn.commit()
+        conn.close()
+
+    def test_backfill_survives_malformed_metadata(self, tmp_path):
+        """Migration must not raise on malformed/empty-string metadata; those
+        rows get NULL typed columns and aggregates ignore them."""
+        db_path = tmp_path / "badmeta.db"
+        self._create_pre_typed_db_with_bad_metadata(db_path)
+
+        # Must not raise (a raise here would also poison every reopen).
+        db = Storage(db_path=db_path)
+        try:
+            assert db._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == len(_MIGRATIONS)
+            got = [tuple(r) for r in db._conn.execute(
+                "SELECT prompt_name, cost, tokens_in, tokens_out, model, latency_ms "
+                "FROM invocations ORDER BY id")]
+            assert got == [("bad.a", None, None, None, None, None),
+                           ("bad.b", None, None, None, None, None)]
+            # Aggregates ignore the malformed rows entirely.
+            data = db.get_cost_data(days=3650)
+            assert data["summary"]["total_cost"] == pytest.approx(0.0)
+            assert data["summary"]["total_tokens_in"] == 0
+        finally:
+            db.close()
+
+        # Reopening a second time must also succeed (proves no half-applied,
+        # error-on-open state was committed).
+        db2 = Storage(db_path=db_path)
+        db2.close()
+
     def test_aggregates_unchanged_after_backfill(self, tmp_path):
         """Cost aggregates read the same before/after the typed-column path."""
         db_path = tmp_path / "pretyped2.db"
