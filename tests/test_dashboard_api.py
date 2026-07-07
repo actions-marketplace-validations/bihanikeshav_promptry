@@ -288,6 +288,77 @@ class TestCost:
 
 # ---- Feedback ----
 
+
+# ---- Config save (provenance) ----
+
+class TestConfigSave:
+    """The dashboard's Settings page writes to the legacy
+    .promptry/config.toml (see promptry/projectconfig.py). The save path must
+    only ever persist fields it's actually setting, on top of whatever is
+    already in that legacy file — never the merged view that also carries
+    values from ~/.promptry/config.toml or the canonical promptry.toml,
+    otherwise those get copied into the committed legacy file and/or silently
+    shadow the canonical file on next read."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_cwd(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.chdir(tmp_path)
+        from promptry.projectconfig import reset_project_config
+        reset_project_config()
+        yield
+        reset_project_config()
+
+    def _write(self, path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_save_does_not_copy_home_or_canonical_keys_into_legacy_file(
+        self, client, tmp_path
+    ):
+        # A personal home-level fallback and a team-committed promptry.toml
+        # both contribute keys to the merged view...
+        self._write(
+            tmp_path / "home" / ".promptry" / "config.toml",
+            '[judge]\nmodel = "home-model"\n',
+        )
+        self._write(
+            tmp_path / "promptry.toml",
+            '[judge]\nmodel = "canonical-model"\nmax_prompt_chars = 4000\n'
+            '[pricing.canonical-model]\nin = 1.0\nout = 2.0\n',
+        )
+        # ... but the dashboard only touches "dashboard" here.
+        resp = client.post("/api/config", json={"dashboard": {"default_days": 21}})
+        assert resp.status_code == 200
+
+        legacy_path = tmp_path / ".promptry" / "config.toml"
+        raw_text = legacy_path.read_text(encoding="utf-8")
+        # None of the home/canonical-sourced values should have been copied in.
+        assert "home-model" not in raw_text
+        assert "canonical-model" not in raw_text
+        assert "max_prompt_chars" not in raw_text
+        assert "pricing" not in raw_text
+
+    def test_save_preserves_preexisting_legacy_keys_not_touched_by_post(
+        self, client, tmp_path
+    ):
+        self._write(
+            tmp_path / ".promptry" / "config.toml",
+            '[pricing.my-model]\nin = 1.0\nout = 2.0\n',
+        )
+        resp = client.post("/api/config", json={"judge": {"model": "new-judge"}})
+        assert resp.status_code == 200
+
+        from promptry.projectconfig import load_raw_config
+        raw = load_raw_config()
+        assert raw["judge"]["model"] == "new-judge"
+        # pre-existing legacy key untouched by this POST survives the rewrite
+        assert raw["pricing"]["my-model"] == {"in": 1.0, "out": 2.0}
+
+
 class TestFeedback:
     def _seed(self, storage):
         # 3 positive, 2 negative (one with a note); link each to an invocation

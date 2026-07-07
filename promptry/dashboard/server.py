@@ -893,7 +893,12 @@ class _ConfigUpdate(BaseModel):
 def update_project_config(body: _ConfigUpdate):
     """Persist config to .promptry/config.toml (committable). Keys never stored."""
     from promptry import projectconfig
-    data = projectconfig.load_project_config()
+    # Load ONLY the raw legacy file being written here — never the merged
+    # view from load_project_config(), which also carries values sourced from
+    # ~/.promptry/config.toml and the canonical promptry.toml. Writing those
+    # back would copy personal/team config into the committed legacy file and
+    # shadow promptry.toml on the next read.
+    data = projectconfig.load_raw_config()
     if body.models is not None:
         data["models"] = body.models
     if body.judge is not None:

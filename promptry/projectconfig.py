@@ -158,6 +158,28 @@ def load_project_config() -> dict:
     return copy.deepcopy(_project_cache)
 
 
+def load_raw_config(path: Path | None = None) -> dict:
+    """Load the raw, *unmerged* contents of a single config file — no merge
+    with the other sources, no defaults filled in.
+
+    This exists for the dashboard's settings-save path: it must mutate and
+    rewrite only the file it's actually about to write (the legacy
+    ``.promptry/config.toml``), never the merged view from
+    :func:`load_project_config` — otherwise values sourced from
+    ``~/.promptry/config.toml`` or the canonical ``promptry.toml`` get copied
+    into the legacy file, and keys that also live in ``promptry.toml`` get
+    silently shadowed on the next read.
+    """
+    p = path if path is not None else config_path()
+    if not p.is_file():
+        return {}
+    try:
+        with open(p, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return {}
+
+
 def reset_project_config() -> None:
     """Drop the memoized project config (mirrors ``config.reset_config``)."""
     global _project_cache, _project_sig
