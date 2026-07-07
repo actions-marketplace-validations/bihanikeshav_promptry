@@ -234,6 +234,86 @@ class TestConcurrentSetModelRace:
         assert stale_key not in embeddings._cache
 
 
+class TestConcurrentNameGenerationRace:
+    """Targets the narrower gap: model_name read racing set_model()
+    independently of the generation read.
+
+    Before the fix, ``model_name = _current_model_name()`` ran outside
+    ``_lock``, then ``generation = _generation`` was read inside a separate
+    ``with _lock:``. A set_model() call landing in that gap would bump
+    ``_generation`` and change the override *before* the generation read,
+    so the generation captured already matched "current" -- the staleness
+    check at write time was powerless, and the freshly computed vector got
+    written under the stale (pre-switch) model name.
+
+    We reproduce this deterministically (no sleep-based timing) by
+    monkeypatching ``_current_model_name`` to block on a gate. Where that
+    call sits relative to ``_lock`` determines the outcome:
+
+    - Unfixed code: the call happens before ``with _lock:``, so a
+      concurrent set_model() runs freely while we're blocked there,
+      bumping generation ahead of the (still separate) generation read --
+      reproducing the poisoned write under the stale name.
+    - Fixed code: the call happens inside the same ``with _lock:`` that
+      captures generation, so a concurrent set_model() blocks on the lock
+      until that capture finishes -- no interleaving is possible, and nothing
+      gets written under the stale name.
+    """
+
+    def test_name_and_generation_captured_atomically(self):
+        gate_enter = threading.Event()
+        gate_release = threading.Event()
+
+        embeddings.set_model("modelA")
+
+        def slow_name():
+            gate_enter.set()
+            gate_release.wait(timeout=5)
+            return "modelA"
+
+        stub = _StubModel({"x": [9.0, 9.0]})
+        errors: list[BaseException] = []
+
+        def worker():
+            try:
+                with patch.object(embeddings, "_current_model_name", slow_name):
+                    with _patch_stub(stub):
+                        embeddings.encode(["x"])
+            except BaseException as exc:  # pragma: no cover - only on failure
+                errors.append(exc)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        assert gate_enter.wait(timeout=5), "worker never reached the name read"
+
+        attacker_done = threading.Event()
+
+        def attacker():
+            embeddings.set_model("modelB")
+            attacker_done.set()
+
+        attacker_thread = threading.Thread(target=attacker)
+        attacker_thread.start()
+        # On unfixed code the attacker's set_model() is uncontended (the
+        # name read holds no lock) and finishes almost instantly. On fixed
+        # code it blocks on _lock until the worker's atomic capture block
+        # exits, so this just times out without asserting either way.
+        attacker_done.wait(timeout=0.3)
+
+        gate_release.set()
+        thread.join(timeout=5)
+        attacker_thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert not attacker_thread.is_alive()
+        assert not errors
+
+        stale_key = embeddings._cache_key("modelA", "x")
+        assert stale_key not in embeddings._cache, (
+            "a value was cached under the stale pre-switch model name "
+            "despite a concurrent set_model() to modelB"
+        )
+
+
 class TestConcurrentSameKeyContention:
     def test_two_threads_encoding_same_new_text_no_exception_single_entry(self):
         stub = _StubModel({"shared-text": [3.0, 4.0]})
