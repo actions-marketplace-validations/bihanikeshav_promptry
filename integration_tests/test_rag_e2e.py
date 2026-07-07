@@ -21,6 +21,7 @@ import pytest
 
 from promptry import (
     track,
+    track_invocation,
     suite,
     assert_contains,
     assert_not_contains,
@@ -208,9 +209,14 @@ def test_drift_engine_runs_with_real_scores(rag, isolated_db):
 # --------------------------------------------------------------------------
 
 def test_cost_tracking_records_tokens_via_metadata(isolated_db):
-    """track() with token metadata should show up in get_cost_data()."""
-    track(
-        SYSTEM_PROMPT_V1,
+    """Token metadata supplied to track_invocation() shows up in get_cost_data().
+
+    Cost lives on the invocations ledger, not the prompt-template table:
+    track() versions template content (dedups by hash) and deliberately does
+    NOT feed the cost dashboard, so per-call telemetry goes through
+    track_invocation() — the documented public API for tokens/cost/latency.
+    """
+    track_invocation(
         "rag-tutor",
         metadata={
             "tokens_in": 120,
