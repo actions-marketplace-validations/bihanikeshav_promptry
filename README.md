@@ -53,17 +53,27 @@ PASS test_basic_quality (142ms)
 Overall: PASS  score: 0.891
 ```
 
+Prefer YAML, or don't want to hand-write a suite? `promptry new suite` scaffolds
+one for you, YAML or Python:
+
+```bash
+promptry new suite --name my-suite --yaml \
+  --model gpt-4o-mini --prompt "Answer: {input}" \
+  --case "What is 2+2?::contains::4"
+promptry run my-suite --module evals.yaml  # run it
+```
+
 ## Features
 
 | Feature | What it does |
 |---------|--------------|
 | **Prompt versioning** | Content-hashed, automatic dedup, grouped by module. No manual bumps, no YAML, no git dance. |
 | **Live prompt CMS** | `render_prompt()` serves dashboard-edited `{{name}}` templates with no redeploy. Edit a prompt in the browser, your app picks it up on the next call. Substitution is value-driven, so JSON braces and literal `$` are never mistaken for variables. |
-| **Semantic prompt search** | Search the registry by meaning and flag near-duplicate prompts (likely forks to consolidate). Embeddings with a lexical fallback. |
+| **Semantic prompt search** | Search the registry by meaning (`promptry prompt search`) and flag near-duplicate prompts (`promptry prompt duplicates`, likely forks to consolidate). Embeddings with a lexical fallback. |
 | **Environment promotion** | dev → staging → prod tags gate every edit before it reaches users. Promote a version, roll one back. |
-| **Python-native suites** | `@suite` decorators, not YAML. Loops, fixtures, and your IDE's debugger all work. |
-| **Deterministic assertions** | Semantic, schema, JSON, regex, grounding, tool-use. Zero API calls at CI time. |
-| **LLM-as-judge** | Opt-in, not default. You decide when to spend tokens on evaluation. |
+| **Python-native or YAML suites** | `@suite` decorators for full IDE/debugger support, or declarative `evals.yaml` for a no-code path — both run through the same CLI, and `promptry new suite` scaffolds either. |
+| **Deterministic assertions** | Semantic, schema, JSON, regex, grounding, tool-use, exact match, Levenshtein, ROUGE-L, embedding distance. Zero API calls at CI time. |
+| **LLM-as-judge** | Opt-in, not default. Auto-configures from `[judge] model` in `promptry.toml`, or set your own callable via `set_judge()`. |
 | **Drift detection** | Mann-Whitney U on a rolling window with real p-values — on eval scores *and* on live production telemetry (cost, latency, output length, rating). |
 | **Regression diff** | Tells you *what* changed — prompt version, model, or data — not just that it broke. |
 | **Regression bisect** | Walks the run history to pinpoint the first run that broke a test. |
@@ -79,8 +89,15 @@ Overall: PASS  score: 0.891
 | **Safety suite** | 25 jailbreak / injection / PII / encoding templates across 6 categories. Extensible via `templates.toml`. |
 | **MCP server** | First-class: your LLM agent drives the whole test runner. Native, not a plugin. |
 | **Dashboard** | Local web UI for eval history, prompt registry + live editing, cost drill-down, model comparison, invocation traces, and a multi-model playground. No account, no cloud. |
-| **Project config** | Committable `.promptry/config.toml` (models, judge, dashboard prefs, pricing overrides). API keys via env. |
-| **JS/TS client** | Ship prompt events from frontend/Node apps to the same SQLite store. |
+| **Project config** | Committable `promptry.toml` (models, judge, dashboard prefs, pricing overrides). API keys via env. |
+| **JS/TS client** | Ship prompt events from frontend/Node apps to the same SQLite store, over the same [wire schema](docs/wire-schema/events.schema.json) the Python client uses. |
+| **CI-friendly output** | `--format json\|junit` on `run`, `compare`, and `drift`, plus `--output` to write the report to a file. |
+| **Prompt linting** | `promptry lint` flags placeholder/format footguns in a saved prompt or file; exits 1 on error-level findings. |
+| **Failure clustering** | `promptry cluster` groups a suite's recent failed assertions into patterns. |
+| **PII/secret scan** | `promptry scan` regex-tripwires captured invocation text for secrets/PII; `--fail-on-hit` gates CI. |
+| **Production replay** | `promptry replay` runs captured production inputs through the current pipeline and diffs against the recorded output. |
+| **Golden-set drift** | `promptry golden` re-runs a prompt's golden examples through a model and scores drift vs. the recorded reference. |
+| **Setup checks** | `promptry doctor` checks dependencies, config, and storage; exits 1 if anything's broken. |
 
 ## Dashboard
 
