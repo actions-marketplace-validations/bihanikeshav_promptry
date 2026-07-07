@@ -1,0 +1,52 @@
+# Declarative eval suites for promptry -- no Python required.
+#
+# Run:  promptry run rag-qa --module examples/evals.yaml
+# List: promptry suites --module examples/evals.yaml
+#
+# These suites use "model mode": promptry calls the model directly through
+# promptry.llm.complete (litellm under the hood), substituting {input} into
+# the prompt for each case. Set an API key first, e.g. OPENAI_API_KEY.
+#
+# To evaluate your OWN pipeline instead, drop `model`/`prompt` and add:
+#     pipeline: your_module:your_function
+# where your_function(input) -> str.
+
+suites:
+  - name: rag-qa
+    description: Answer quality for a simple QA prompt.
+    model: gpt-4o-mini
+    prompt: "Answer concisely: {input}"
+    cases:
+      - input: "What is machine learning?"
+        expect:
+          - contains: ["machine learning"]
+          - semantic:
+              expected: "Machine learning is a branch of AI that learns from data"
+              threshold: 0.6
+
+  - name: classification
+    description: Sentiment classifier returns a single valid label.
+    model: gpt-4o-mini
+    prompt: "Classify the sentiment (positive, negative, or neutral) of: {input}"
+    cases:
+      - input: "I love this product!"
+        expect:
+          - regex:
+              pattern: "(positive|negative|neutral)"
+              fullmatch: false
+
+  - name: extraction
+    description: Document extraction returns well-formed JSON matching a schema.
+    model: gpt-4o-mini
+    prompt: "Extract name, email and amount as JSON from: {input}"
+    cases:
+      - input: "Invoice from Jane Doe (jane@example.com) for $99.99."
+        expect:
+          - json_valid: true
+          - schema:
+              type: object
+              properties:
+                name: {type: string}
+                email: {type: string}
+                amount: {type: number}
+              required: [name, email, amount]

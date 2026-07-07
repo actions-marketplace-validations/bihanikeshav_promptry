@@ -371,6 +371,50 @@ def _list_suite_names(suites) -> str:
     return ", ".join(s.name for s in suites) or "(none)"
 
 
+# Files auto-discovered (in order) when --module is left at its default and no
+# importable evals.py is present.
+_YAML_SUITE_CANDIDATES = ("evals.yaml", "evals.yml", "promptry.yaml", "promptry.yml")
+
+
+def _yaml_suite_path(module: str) -> Optional[Path]:
+    """Resolve which YAML file (if any) a --module value should load suites from.
+
+    Returns a path when either ``module`` is an explicit ``.yaml``/``.yml`` file
+    or ``module`` is the default ``evals`` and no ``evals.py`` exists but a
+    known YAML suite file does. Returns ``None`` for the ordinary dotted-module
+    import path.
+    """
+    if module.endswith((".yaml", ".yml")):
+        return Path(module)
+    if module == "evals" and not (Path.cwd() / "evals.py").is_file():
+        for cand in _YAML_SUITE_CANDIDATES:
+            p = Path.cwd() / cand
+            if p.is_file():
+                return p
+    return None
+
+
+def _discover_suites(module: str) -> None:
+    """Register eval suites from either a Python module or a YAML file.
+
+    Unifies suite discovery for run/suites/watch: a ``.yaml``/``.yml`` --module
+    (or an auto-discovered evals.yaml/promptry.yaml) loads declarative suites;
+    anything else is imported as a dotted Python module.
+    """
+    yaml_path = _yaml_suite_path(module)
+    if yaml_path is None:
+        _import_module(module)
+        return
+
+    from promptry.yaml_suites import load_yaml_suites, YamlSuiteError
+
+    try:
+        load_yaml_suites(yaml_path)
+    except YamlSuiteError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
 @app.command("run")
 def run_cmd(
     suite_name: str = typer.Argument(..., help="Suite to run."),
@@ -384,7 +428,7 @@ def run_cmd(
     explain: bool = typer.Option(False, "--explain", help="Generate an LLM explanation for regressions (requires judge configured via set_judge)."),
 ):
     """Run an eval suite. Exit code 1 on regression."""
-    _import_module(module)
+    _discover_suites(module)
 
     from promptry.runner import run_suite
     from promptry.comparison import compare_with_baseline, format_comparison, explain_regression
@@ -556,7 +600,7 @@ def suites_cmd(
     module: str = typer.Option("evals", "--module", "-m", help="Python module with suite definitions (default: evals)."),
 ):
     """List registered eval suites."""
-    _import_module(module)
+    _discover_suites(module)
 
     from promptry.evaluator import list_suites
 
@@ -793,6 +837,16 @@ def _resolve_module_paths(module: str) -> list[Path]:
 
     paths: list[Path] = []
 
+    # YAML suites: watch the declarative file itself (plus promptry.toml below).
+    yaml_path = _yaml_suite_path(module)
+    if yaml_path is not None:
+        if yaml_path.is_file():
+            paths.append(yaml_path.resolve())
+        config_file = Path.cwd() / "promptry.toml"
+        if config_file.is_file():
+            paths.append(config_file.resolve())
+        return paths
+
     spec = importlib.util.find_spec(module)
     mod_file: Optional[Path] = None
     if spec and spec.origin and spec.origin != "built-in":
@@ -832,19 +886,29 @@ def _run_suite_reload(suite_name: Optional[str], module: str, compare: Optional[
         from promptry.evaluator import clear_suites, list_suites
         clear_suites()
 
-        # Drop the user's module (and any submodules) from sys.modules so
-        # importlib.import_module picks up the latest source on disk.
-        prefix = module + "."
-        stale = [name for name in list(sys.modules) if name == module or name.startswith(prefix)]
-        for name in stale:
-            sys.modules.pop(name, None)
+        yaml_path = _yaml_suite_path(module)
+        if yaml_path is not None:
+            # Declarative suites: re-parse the YAML file from disk each run.
+            from promptry.yaml_suites import load_yaml_suites, YamlSuiteError
+            try:
+                load_yaml_suites(yaml_path)
+            except YamlSuiteError as e:
+                console.print(f"[red]Error:[/red] {e}")
+                return
+        else:
+            # Drop the user's module (and any submodules) from sys.modules so
+            # importlib.import_module picks up the latest source on disk.
+            prefix = module + "."
+            stale = [name for name in list(sys.modules) if name == module or name.startswith(prefix)]
+            for name in stale:
+                sys.modules.pop(name, None)
 
-        # Fresh import -- triggers @suite registrations against the cleared registry.
-        try:
-            importlib.import_module(module)
-        except Exception as e:
-            console.print(f"[red]Import error:[/red] {e}")
-            return
+            # Fresh import -- triggers @suite registrations against the cleared registry.
+            try:
+                importlib.import_module(module)
+            except Exception as e:
+                console.print(f"[red]Import error:[/red] {e}")
+                return
 
         suites = list_suites()
         if not suites:
@@ -1181,6 +1245,43 @@ def test_summarization_quality():
 # ---------------------------------------------------------------------------
 def pipeline(prompt: str) -> str:
     return my_pipeline(prompt)
+'''
+
+
+_EXAMPLE_EVAL_YAML = '''# Declarative eval suites -- no Python required.
+# docs: https://promptry.meownikov.xyz
+#
+# Uncomment and edit. Run with:  promptry run rag-quality --module evals.yaml
+# (Or just `promptry run rag-quality` -- when evals.py is absent, promptry
+# auto-discovers evals.yaml / promptry.yaml in the current directory.)
+#
+# suites:
+#   - name: rag-quality
+#     # EITHER call your own pipeline (a "module:function" that takes the
+#     # case input and returns the model output):
+#     pipeline: mymodule:my_pipeline
+#     # ...OR drop `pipeline` and let promptry call a model directly:
+#     # model: gpt-4o-mini            # routed through promptry.llm.complete
+#     # prompt: "Answer concisely: {input}"   # {input} is substituted per case
+#     cases:
+#       - input: "What is our refund policy?"
+#         expect:
+#           - contains: "30 days"                 # str or [list, of, str]
+#           - not_contains: "lawsuit"
+#           - regex: "(refund|return)"            # or {pattern, fullmatch: false}
+#           - semantic: {expected: "Refunds within 30 days", threshold: 0.75}
+#           - json_valid: true
+#           - schema:                             # a JSON schema
+#               type: object
+#               properties: {amount: {type: number}}
+#               required: [amount]
+#           - llm: "Is the answer grounded and polite?"   # needs a [judge] model
+#           - grounded: {source: "Refunds allowed within 30 days.", threshold: 0.8}
+#           # deterministic ($0) checks:
+#           - exact: "yes"                        # or {expected, case_sensitive}
+#           - levenshtein: {expected: "30 days", min_ratio: 0.8}
+#           - rouge_l: {expected: "refund within 30 days", min_score: 0.5}
+#           - embedding_distance: {expected: "30 day refunds", max_distance: 0.3}
 '''
 
 
@@ -1653,6 +1754,15 @@ def init_cmd():
     else:
         evals_path.write_text(_EXAMPLE_EVAL, encoding="utf-8")
         created.append("evals.py")
+
+    # evals.yaml -- commented declarative-suite scaffold (an alternative to
+    # evals.py for teams that prefer YAML over Python).
+    evals_yaml_path = cwd / "evals.yaml"
+    if evals_yaml_path.exists():
+        console.print("[yellow]evals.yaml already exists, skipping.[/yellow]")
+    else:
+        evals_yaml_path.write_text(_EXAMPLE_EVAL_YAML, encoding="utf-8")
+        created.append("evals.yaml")
 
     if created:
         console.print(f"[green]Created:[/green] {', '.join(created)}")

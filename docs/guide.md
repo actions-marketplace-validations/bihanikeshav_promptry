@@ -7,6 +7,7 @@ Full documentation for promptry. For a quick overview, see the [README](../READM
 - [Track your prompts](#track-your-prompts)
 - [Track retrieval context](#track-retrieval-context)
 - [Write eval suites](#write-eval-suites)
+  - [Declarative suites in YAML](#declarative-suites-in-yaml)
 - [Live prompt CMS](#live-prompt-cms)
   - [Environment promotion](#environment-promotion)
 - [Assertions](#assertions)
@@ -109,6 +110,48 @@ $ promptry run rag-regression --module my_evals
 
   Overall: PASS  score: 0.891
 ```
+
+### Declarative suites in YAML
+
+Prefer YAML over Python for straightforward cases? Author suites in an `evals.yaml`
+file. Each assertion key maps 1:1 onto the matching `assert_*` function, so behaviour
+(scoring, failure messages, drift/history/dashboard) is identical to the code path —
+YAML suites register into the same registry as `@suite`.
+
+```yaml
+suites:
+  - name: rag-quality
+    pipeline: mymodule:my_pipeline    # "module:function" that takes input -> str
+    # ...OR drop `pipeline` for a direct model call:
+    # model: gpt-4o-mini              # routed through promptry.llm.complete
+    # prompt: "Answer: {input}"       # {input} is substituted per case
+    cases:
+      - input: "What is our refund policy?"
+        expect:
+          - contains: "30 days"                    # str or [str, ...]
+          - not_contains: "lawsuit"
+          - regex: "(refund|return)"               # or {pattern, fullmatch: false}
+          - exact: "yes"                           # or {expected, case_sensitive}
+          - semantic: {expected: "Refunds within 30 days", threshold: 0.75}
+          - levenshtein: {expected: "30 days", min_ratio: 0.8}
+          - rouge_l: {expected: "refund within 30 days", min_score: 0.5}
+          - embedding_distance: {expected: "30 day refunds", max_distance: 0.3}
+          - json_valid: true
+          - schema: {type: object, properties: {amount: {type: number}}, required: [amount]}
+          - llm: "Is the answer grounded and polite?"   # or {criteria, threshold}
+          - grounded: {source: "Refunds allowed within 30 days.", threshold: 0.8}
+```
+
+Run it by pointing `--module` at the file:
+
+```bash
+$ promptry run rag-quality --module evals.yaml
+$ promptry suites --module evals.yaml
+```
+
+When no `evals.py` is present, `promptry run` / `suites` auto-discover
+`evals.yaml` (or `promptry.yaml`) in the current directory, so `--module` can be
+omitted entirely. `promptry init` scaffolds a commented `evals.yaml` to start from.
 
 ## Live prompt CMS
 
