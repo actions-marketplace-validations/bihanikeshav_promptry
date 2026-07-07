@@ -9,8 +9,10 @@ Configure in promptry.toml:
     endpoint = "https://your-server.com/ingest"
     api_key = "pk_..."
 
-The JS client (promptry on npm) uses the same event format and endpoint,
-so both Python and JS telemetry land in the same place.
+The batch payload shipped by _ship_batch is governed by the shared wire
+contract at docs/wire-schema/events.schema.json. The JS client
+(promptry-js) emits that exact same envelope to the same endpoint, so
+both Python and JS telemetry land in the same SQLite + dashboard.
 """
 from __future__ import annotations
 

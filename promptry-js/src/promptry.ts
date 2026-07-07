@@ -1,9 +1,16 @@
-/** Main Promptry class: track(), trackContext(), flush(), destroy(). */
+/** Main Promptry class: track(), trackContext(), trackInvocation(),
+ * trackFeedback(), flush(), destroy(). */
 
 import { sha256 } from './hash';
 import { DedupCache } from './dedup';
 import { Batcher } from './batcher';
-import type { PromptryOptions, TelemetryEvent, TrackOptions } from './types';
+import type {
+  FeedbackOptions,
+  InvocationOptions,
+  PromptryOptions,
+  TelemetryEvent,
+  TrackOptions,
+} from './types';
 
 export class Promptry {
   private _batcher: Batcher;
@@ -90,6 +97,78 @@ export class Promptry {
     this._enqueueOp(this._trackAsync(joined, contextName, meta));
 
     return chunks;
+  }
+
+  /**
+   * Track a prompt. Alias of track() with a clearer name alongside
+   * trackInvocation()/trackFeedback(). Returns `content` unchanged.
+   */
+  trackPrompt(content: string, name: string, opts?: TrackOptions): string {
+    return this.track(content, name, opts);
+  }
+
+  /**
+   * Track one LLM invocation (cost / latency / tokens). Discrete event,
+   * never deduped — every call is its own row, mirroring the Python
+   * invocations ledger. Returns nothing; ships in the background.
+   */
+  trackInvocation(opts: InvocationOptions): void {
+    if (this._sampleRate < 1.0 && Math.random() > this._sampleRate) {
+      return;
+    }
+    const now = new Date().toISOString();
+    const event: TelemetryEvent = {
+      type: 'invocation',
+      data: {
+        name: opts.name,
+        ...(opts.model !== undefined ? { model: opts.model } : {}),
+        tokens_in: opts.tokensIn ?? 0,
+        tokens_out: opts.tokensOut ?? 0,
+        ...(opts.cost !== undefined ? { cost: opts.cost } : {}),
+        ...(opts.latencyMs !== undefined ? { latency_ms: opts.latencyMs } : {}),
+        ...(opts.requestId !== undefined
+          ? { request_id: opts.requestId }
+          : {}),
+        metadata: this._withProject(opts.metadata),
+        created_at: now,
+      },
+      timestamp: now,
+    };
+    this._batcher.enqueue(event);
+  }
+
+  /**
+   * Track end-user feedback (rating / comment) for a prior invocation,
+   * correlated by requestId. Always ships (feedback is rare and valuable,
+   * so it is not sampled). Returns nothing; ships in the background.
+   */
+  trackFeedback(opts: FeedbackOptions): void {
+    const now = new Date().toISOString();
+    const meta = this._withProject(opts.metadata);
+    const event: TelemetryEvent = {
+      type: 'feedback',
+      data: {
+        request_id: opts.requestId,
+        ...(opts.rating !== undefined ? { rating: opts.rating } : {}),
+        ...(opts.comment !== undefined ? { comment: opts.comment } : {}),
+        ...(opts.source !== undefined ? { source: opts.source } : {}),
+        ...(Object.keys(meta).length > 0 ? { metadata: meta } : {}),
+        created_at: now,
+      },
+      timestamp: now,
+    };
+    this._batcher.enqueue(event);
+  }
+
+  /** Merge caller metadata with the configured projectId. */
+  private _withProject(
+    metadata?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const meta: Record<string, unknown> = { ...metadata };
+    if (this._projectId) {
+      meta['project_id'] = this._projectId;
+    }
+    return meta;
   }
 
   /** Flush all pending events (waits for in-flight hash ops first). */

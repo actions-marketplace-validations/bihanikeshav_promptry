@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bihanikeshav/promptry/docs/wire-schema/events.schema.json",
+  "title": "promptry telemetry wire contract",
+  "description": "The single source of truth for the batch payload POSTed to a self-hosted promptry ingest endpoint. Both the Python RemoteStorage backend (promptry/storage/remote.py) and the JS/TS client (promptry-js) emit this exact shape. Never a hosted/cloud default endpoint - the endpoint is always the user's own server.",
+  "type": "object",
+  "required": ["events"],
+  "additionalProperties": false,
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/event" }
+    }
+  },
+  "$defs": {
+    "event": {
+      "type": "object",
+      "required": ["type", "data", "timestamp"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "data": { "type": "object" },
+        "timestamp": { "type": "string" }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/prompt_save" },
+        { "$ref": "#/$defs/eval_run" },
+        { "$ref": "#/$defs/eval_result" },
+        { "$ref": "#/$defs/prompt_tag" },
+        { "$ref": "#/$defs/dataset_save" },
+        { "$ref": "#/$defs/vote" },
+        { "$ref": "#/$defs/invocation" },
+        { "$ref": "#/$defs/feedback" }
+      ]
+    },
+
+    "metadata": {
+      "type": ["object", "null"]
+    },
+
+    "prompt_save": {
+      "properties": {
+        "type": { "const": "prompt_save" },
+        "data": {
+          "type": "object",
+          "required": ["name", "version", "content", "hash", "metadata", "created_at"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": ["integer", "null"] },
+            "content": { "type": "string" },
+            "hash": { "type": "string" },
+            "metadata": { "$ref": "#/$defs/metadata" },
+            "created_at": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "eval_run": {
+      "properties": {
+        "type": { "const": "eval_run" },
+        "data": {
+          "type": "object",
+          "required": ["run_id", "suite_name", "prompt_name", "prompt_version", "model_version", "overall_pass", "overall_score"],
+          "additionalProperties": false,
+          "properties": {
+            "run_id": { "type": "integer" },
+            "suite_name": { "type": "string" },
+            "prompt_name": { "type": ["string", "null"] },
+            "prompt_version": { "type": ["integer", "null"] },
+            "model_version": { "type": ["string", "null"] },
+            "overall_pass": { "type": "boolean" },
+            "overall_score": { "type": ["number", "null"] }
+          }
+        }
+      }
+    },
+
+    "eval_result": {
+      "properties": {
+        "type": { "const": "eval_result" },
+        "data": {
+          "type": "object",
+          "required": ["run_id", "test_name", "assertion_type", "passed", "score", "details", "latency_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "run_id": { "type": "integer" },
+            "test_name": { "type": "string" },
+            "assertion_type": { "type": "string" },
+            "passed": { "type": "boolean" },
+            "score": { "type": ["number", "null"] },
+            "details": { "type": ["object", "string", "null"] },
+            "latency_ms": { "type": ["number", "null"] }
+          }
+        }
+      }
+    },
+
+    "prompt_tag": {
+      "properties": {
+        "type": { "const": "prompt_tag" },
+        "data": {
+          "type": "object",
+          "required": ["prompt_id", "tag"],
+          "additionalProperties": false,
+          "properties": {
+            "prompt_id": { "type": "integer" },
+            "tag": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "dataset_save": {
+      "properties": {
+        "type": { "const": "dataset_save" },
+        "data": {
+          "type": "object",
+          "required": ["name", "version", "item_count", "metadata"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "integer" },
+            "item_count": { "type": "integer" },
+            "metadata": { "$ref": "#/$defs/metadata" }
+          }
+        }
+      }
+    },
+
+    "vote": {
+      "properties": {
+        "type": { "const": "vote" },
+        "data": {
+          "type": "object",
+          "required": ["vote_id", "prompt_name", "prompt_version", "response", "score", "message", "metadata"],
+          "additionalProperties": false,
+          "properties": {
+            "vote_id": { "type": "integer" },
+            "prompt_name": { "type": "string" },
+            "prompt_version": { "type": ["integer", "null"] },
+            "response": { "type": "string" },
+            "score": { "type": "number" },
+            "message": { "type": ["string", "null"] },
+            "metadata": { "$ref": "#/$defs/metadata" }
+          }
+        }
+      }
+    },
+
+    "invocation": {
+      "description": "A single LLM call: cost, latency, tokens. Emitted by promptry-js trackInvocation(). Correlate end-user feedback back to it via request_id.",
+      "properties": {
+        "type": { "const": "invocation" },
+        "data": {
+          "type": "object",
+          "required": ["name", "tokens_in", "tokens_out", "metadata", "created_at"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "model": { "type": ["string", "null"] },
+            "tokens_in": { "type": "integer" },
+            "tokens_out": { "type": "integer" },
+            "cost": { "type": ["number", "null"] },
+            "latency_ms": { "type": ["number", "null"] },
+            "request_id": { "type": ["string", "null"] },
+            "metadata": { "$ref": "#/$defs/metadata" },
+            "created_at": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "feedback": {
+      "description": "An end-user rating/comment, correlated to an invocation by request_id. Emitted by promptry-js trackFeedback(). Mirrors the /api/feedback ingest shape.",
+      "properties": {
+        "type": { "const": "feedback" },
+        "data": {
+          "type": "object",
+          "required": ["request_id", "created_at"],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": { "type": "string" },
+            "rating": { "type": ["number", "null"] },
+            "comment": { "type": ["string", "null"] },
+            "source": { "type": ["string", "null"] },
+            "metadata": { "$ref": "#/$defs/metadata" },
+            "created_at": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
