@@ -914,7 +914,7 @@ def watch_cmd(
         from watchfiles import watch
     except ImportError:
         console.print("[red]Error:[/red] watchfiles not installed.")
-        console.print("  Install with: pip install watchfiles")
+        console.print("  Please ensure promptry is properly installed with: pip install --upgrade promptry")
         raise typer.Exit(1)
 
     paths = _resolve_module_paths(module)
@@ -1498,7 +1498,7 @@ def dashboard_cmd(
         import uvicorn
     except ImportError:
         console.print("[red]Error:[/red] Dashboard dependencies not installed.")
-        console.print("  Install with: pip install promptry[dashboard]")
+        console.print("  Please ensure promptry is properly installed with: pip install --upgrade promptry")
         raise typer.Exit(1)
 
     import socket
@@ -1619,7 +1619,7 @@ def mcp_cmd():
     try:
         from promptry.mcp_server import mcp as mcp_server
     except ImportError:
-        console.print("[red]Error:[/red] MCP dependencies not installed.\n  Install with: pip install promptry[mcp]")
+        console.print("[red]Error:[/red] MCP server could not be imported. MCP is a core dependency and should be available.")
         raise typer.Exit(1)
     mcp_server.run()
 
@@ -1747,7 +1747,7 @@ def doctor_cmd():
     if dashboard_ok:
         _ok("Dashboard deps", "fastapi, uvicorn")
     else:
-        _warn("Dashboard deps", "fastapi/uvicorn not installed -- pip install promptry[dashboard]")
+        _warn("Dashboard deps", "fastapi/uvicorn not installed -- please reinstall with pip install --upgrade promptry")
 
     # 9. Python packages -- optional extras with versions
     _extras = [

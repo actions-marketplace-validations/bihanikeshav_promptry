@@ -166,7 +166,7 @@ from promptry import assert_semantic
 assert_semantic(response, "An explanation of machine learning concepts")
 ```
 
-Requires `promptry[semantic]` — first call downloads `all-MiniLM-L6-v2` (~80MB).
+First call downloads `all-MiniLM-L6-v2` (~80MB) as the default embedding model.
 
 ### LLM-as-judge
 
@@ -464,7 +464,7 @@ assert_any_assistant_turn(
 )
 ```
 
-**`assert_conversation_coherent(conv, threshold=0.5)`** — check consecutive assistant turns stay on topic. Computes cosine similarity between every pair of consecutive assistant replies and fails if any pair drops below the threshold. A low default (0.5) is usually right; you're asking "same conversation?", not "same reply?". Requires `promptry[semantic]`.
+**`assert_conversation_coherent(conv, threshold=0.5)`** — check consecutive assistant turns stay on topic. Computes cosine similarity between every pair of consecutive assistant replies and fails if any pair drops below the threshold. A low default (0.5) is usually right; you're asking "same conversation?", not "same reply?". Uses sentence-transformers for semantic similarity.
 
 ```python
 from promptry import assert_conversation_coherent
@@ -472,7 +472,7 @@ from promptry import assert_conversation_coherent
 assert_conversation_coherent(conv, threshold=0.4)
 ```
 
-**`assert_no_repetition(conv, similarity_threshold=0.95)`** — catch loops and stuck agents. Computes pairwise similarity across all assistant turns and fails if any pair is near-identical. Requires `promptry[semantic]`.
+**`assert_no_repetition(conv, similarity_threshold=0.95)`** — catch loops and stuck agents. Computes pairwise similarity across all assistant turns and fails if any pair is near-identical. Uses sentence-transformers for semantic similarity.
 
 ```python
 from promptry import assert_no_repetition
@@ -1201,7 +1201,6 @@ All tools return plain text so agents can reason about the results directly.
 A web UI for visualizing eval history, prompt diffs, model comparisons, and cost data.
 
 ```bash
-pip install promptry[dashboard]
 promptry dashboard
 ```
 

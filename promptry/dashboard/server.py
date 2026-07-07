@@ -543,7 +543,7 @@ def run_examples(name: str, body: _RunExamplesReq):
     try:
         return run_golden_set(get_storage(), name, body.model, threshold=body.threshold)
     except ImportError:
-        raise HTTPException(status_code=503, detail="litellm is not installed on the server")
+        raise HTTPException(status_code=503, detail="Eval endpoint is unavailable: litellm dependency missing. Reinstall with pip install --upgrade promptry")
 
 
 class _PromoteReq(BaseModel):
@@ -1000,7 +1000,7 @@ def playground_model(body: _PlaygroundModelReq):
     try:
         import litellm
     except ImportError:
-        raise HTTPException(status_code=503, detail="litellm is not installed on the server")
+        raise HTTPException(status_code=503, detail="Playground is unavailable: litellm dependency missing. Reinstall with pip install --upgrade promptry")
 
     messages = []
     if body.system.strip():

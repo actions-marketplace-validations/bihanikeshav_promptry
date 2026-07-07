@@ -36,10 +36,7 @@ Probable cause:
 ## Install
 
 ```bash
-pip install promptry                       # core
-pip install promptry[semantic]             # + semantic assertions (sentence-transformers)
-pip install promptry[dashboard]            # + web dashboard
-pip install promptry[semantic,dashboard]   # everything
+pip install promptry
 ```
 
 ## Quick start
@@ -88,7 +85,6 @@ Overall: PASS  score: 0.891
 ## Dashboard
 
 ```bash
-pip install promptry[dashboard]
 promptry dashboard
 ```
 

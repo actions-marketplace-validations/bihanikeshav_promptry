@@ -43,7 +43,7 @@ def _get_model():
             except ImportError:
                 raise ImportError(
                     "sentence-transformers is required for semantic assertions. "
-                    "Install it with: pip install promptry[semantic]"
+                    "Please ensure promptry is properly installed with: pip install --upgrade promptry"
                 )
             from promptry.config import get_config
             name = _model_name_override or get_config().model.embedding_model
@@ -1143,7 +1143,7 @@ def assert_conversation_coherent(
     not "nearly identical".
 
     Returns the minimum pairwise similarity. Raises if below threshold.
-    Requires ``promptry[semantic]``.
+    Uses sentence-transformers for embeddings.
     """
     turns = conv.assistant_turns()
     if len(turns) < 2:
@@ -1203,7 +1203,7 @@ def assert_no_repetition(
     assistant turns and fails if any pair exceeds ``similarity_threshold``.
 
     Returns the maximum pairwise similarity (lower is better). Raises if
-    any pair is above the threshold. Requires ``promptry[semantic]``.
+    any pair is above the threshold. Uses sentence-transformers for embeddings.
     """
     turns = conv.assistant_turns()
     if len(turns) < 2:

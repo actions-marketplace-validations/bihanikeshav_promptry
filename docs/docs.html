@@ -150,17 +150,13 @@
     <h1 id="install">Installation</h1>
     <p>Promptry ships as a Python package (the core library, CLI, dashboard server, and MCP server) and a matching JavaScript client. Both read and write the same <code>.promptry/store.db</code>, so you can mix languages in a single repo without a second source of truth.</p>
 
-<pre><code># Python: core + CLI
+<pre><code># Python: core + CLI + all features
 $ pip install promptry
-
-# Optional extras
-$ pip install 'promptry[semantic]'     # local embeddings (all-MiniLM-L6-v2)
-$ pip install 'promptry[dashboard]'    # FastAPI + uvicorn for the web UI
 
 # JavaScript / TypeScript: remote tracking only
 $ npm install promptry-js</code></pre>
 
-    <p>The Python install has no runtime dependencies beyond the standard library and SQLite. Extras are opt-in so a CI runner that only needs <code>promptry run</code> stays under 10 MB.</p>
+    <p>The Python install includes all runtime dependencies: semantic similarity, dashboard, litellm integration, and more.</p>
 
     <h2 id="track">Track your prompts</h2>
     <p>Add one line, don't change anything else:</p>
@@ -263,7 +259,7 @@ system = render_prompt(<span style="color: var(--accent-2)">"rag.qa"</span>, DEF
 
 assert_semantic(response, <span style="color: var(--accent-2)">"An explanation of machine learning concepts"</span>)</code></pre>
 
-    <p>Requires <code>promptry[semantic]</code>. The first call downloads <code>all-MiniLM-L6-v2</code> (~80 MB) into the HuggingFace cache. Subsequent calls load from disk in under 500 ms.</p>
+    <p>The first call downloads <code>all-MiniLM-L6-v2</code> (~80 MB) into the HuggingFace cache as the default embedding model. Subsequent calls load from disk in under 500 ms.</p>
 
     <h2 id="judge">LLM-as-judge</h2>
     <p>Embedding similarity catches "are these roughly about the same thing?" It can't judge tone, correctness, or whether the response actually followed instructions. <code>assert_llm</code> uses an LLM to grade responses against criteria you define.</p>
@@ -693,8 +689,7 @@ promptry watch --debounce 300</code></pre>
     <h1 id="dashboard" style="margin-top: 72px;">Dashboard</h1>
     <p>A web UI for eval history, prompt diffs, model comparisons, and cost data. Data never leaves your machine &mdash; the hosted UI connects to your local server.</p>
 
-<pre><code><span style="color: var(--ink-3)">$</span> pip install <span style="color: var(--accent-2)">'promptry[dashboard]'</span>
-<span style="color: var(--ink-3)">$</span> promptry dashboard                <span style="color: var(--ink-3)"># :8420, opens hosted UI</span>
+<pre><code><span style="color: var(--ink-3)">$</span> promptry dashboard                <span style="color: var(--ink-3)"># :8420, opens hosted UI</span>
 <span style="color: var(--ink-3)">$</span> promptry dashboard --local        <span style="color: var(--ink-3)"># open localhost instead</span>
 <span style="color: var(--ink-3)">$</span> promptry dashboard --port 9000    <span style="color: var(--ink-3)"># custom port</span></code></pre>
 

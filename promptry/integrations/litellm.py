@@ -113,7 +113,7 @@ def patch_litellm(prompt_name: str = "litellm") -> None:
     except ImportError as exc:
         raise ImportError(
             "litellm is required for this integration. "
-            "Install it with: pip install promptry[litellm]"
+            "Please ensure promptry is properly installed with: pip install --upgrade promptry"
         ) from exc
 
     # --- sync wrapper ---
