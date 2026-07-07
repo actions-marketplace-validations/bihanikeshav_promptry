@@ -231,3 +231,127 @@ class TestGetCostData:
         storage.record_invocation("p", metadata={"cost": 0.02, "model": "claude"})
         result = storage.get_cost_data(days=7, model="gpt-4o")
         assert result["summary"]["total_cost"] == pytest.approx(0.01)
+
+
+# ---- SQL-aggregation equivalence (post-migration) ----
+# These pin the exact output shapes/values that the JSON-scan implementations
+# produced (snapshot captured from the pre-rewrite code) so the SQL-side
+# rewrite stays byte-compatible with what the dashboard consumes.
+
+def _seed_mixed(storage):
+    rows = [
+        ("mod.a", {"tokens_in": 500, "tokens_out": 100, "model": "gpt-4o", "cost": 0.005, "latency_ms": 120.0, "cached_tokens": 200, "cache_write_tokens": 10}),
+        ("mod.a", {"tokens_in": 300, "tokens_out": 50, "model": "gpt-4o", "cost": 0.003, "latency_ms": 90.5}),
+        ("mod.b", {"prompt_tokens": 400, "completion_tokens": 80, "model": "claude-3-5-sonnet-20241022", "cost": 0.012, "latency_ms": 200.0, "cached_tokens": 100}),
+        ("mod.b", {"input_tokens": 250, "output_tokens": 40, "model": "gpt-4o", "cost": 0.002}),
+        ("other.c", {"tokens_in": 1000, "tokens_out": 200, "model": "claude-3-5-sonnet-20241022", "cost": 0.02, "latency_ms": 300.0}),
+    ]
+    ids = [storage.record_invocation(n, metadata=m) for n, m in rows]
+    return ids
+
+
+class TestSqlAggregationEquivalence:
+
+    def test_get_cost_data_all(self, storage):
+        _seed_mixed(storage)
+        r = storage.get_cost_data(days=7)
+        s = r["summary"]
+        assert s["total_calls"] == 5
+        assert s["total_cost"] == pytest.approx(0.042)
+        assert s["total_tokens_in"] == 2450
+        assert s["total_tokens_out"] == 470
+        assert s["total_cached_tokens"] == 300
+        assert s["total_cache_write_tokens"] == 10
+        assert s["cache_hit_rate"] == pytest.approx(0.12244897959183673)
+        assert s["cache_savings"] == pytest.approx(0.00025)
+        assert s["uncached_cost"] == pytest.approx(0.04225)
+        assert s["avg_cost"] == pytest.approx(0.0084)
+
+        by_name = {e["name"]: e for e in r["by_name"]}
+        # sorted by cost desc
+        assert [e["name"] for e in r["by_name"]] == ["other.c", "mod.b", "mod.a"]
+        a = by_name["mod.a"]
+        assert a["calls"] == 2 and a["tokens_in"] == 800 and a["tokens_out"] == 150
+        assert a["cached_tokens"] == 200 and a["cache_write_tokens"] == 10
+        assert a["cost"] == pytest.approx(0.008)
+        assert a["cache_savings"] == pytest.approx(0.00025)
+        assert a["cache_hit_rate"] == pytest.approx(0.25)
+        assert a["models"] == ["gpt-4o"]
+        b = by_name["mod.b"]
+        assert b["models"] == ["claude-3-5-sonnet-20241022", "gpt-4o"]
+        assert b["cache_savings"] == pytest.approx(0.0)
+
+        assert len(r["by_date"]) == 1
+        d = r["by_date"][0]
+        assert d["calls"] == 5 and d["tokens_in"] == 2450 and d["tokens_out"] == 470
+        assert d["cached_tokens"] == 300 and d["cost"] == pytest.approx(0.042)
+
+    def test_get_cost_data_named(self, storage):
+        _seed_mixed(storage)
+        r = storage.get_cost_data(days=7, name="mod.a")
+        assert r["summary"]["total_calls"] == 2
+        assert r["summary"]["total_cost"] == pytest.approx(0.008)
+        assert [e["name"] for e in r["by_name"]] == ["mod.a"]
+
+    def test_get_cost_data_model(self, storage):
+        _seed_mixed(storage)
+        r = storage.get_cost_data(days=7, model="gpt-4o")
+        assert r["summary"]["total_calls"] == 3
+        assert r["summary"]["total_cost"] == pytest.approx(0.01)
+        assert r["summary"]["total_tokens_in"] == 1050
+        assert r["summary"]["total_tokens_out"] == 190
+        assert [e["name"] for e in r["by_name"]] == ["mod.a", "mod.b"]
+
+    def test_get_invocation_stats(self, storage):
+        _seed_mixed(storage)
+        r = storage.get_invocation_stats("mod.a", days=30)
+        assert r["count"] == 2
+        m = r["metrics"]
+        assert m["tokens_in"] == {"min": 300.0, "avg": 400.0, "p50": 400.0, "p95": 490.0, "max": 500.0, "sum": 800.0}
+        assert m["cost"]["sum"] == pytest.approx(0.008)
+        assert m["latency_ms"]["avg"] == pytest.approx(105.25)
+        assert m["latency_ms"]["p95"] == pytest.approx(118.525)
+        assert len(r["histogram"]) == 12
+        assert r["histogram"][0] == {"start": 300, "end": 317, "count": 1}
+        assert r["histogram"][-1] == {"start": 483, "end": 500, "count": 1}
+
+    def test_get_budget_status_one_pass(self, storage):
+        _seed_mixed(storage)
+        storage.save_budget("global", "daily", 0.1)
+        storage.save_budget("module", "monthly", 0.05, target="mod")
+        storage.save_budget("prompt", "daily", 0.01, target="mod.a")
+        out = {b["scope"]: b for b in storage.get_budget_status()}
+        assert out["global"]["spend"] == pytest.approx(0.042)
+        assert out["global"]["pct"] == pytest.approx(42.0)
+        assert out["global"]["breached"] is False
+        assert out["module"]["spend"] == pytest.approx(0.022)
+        assert out["module"]["pct"] == pytest.approx(44.0)
+        assert out["prompt"]["spend"] == pytest.approx(0.008)
+        assert out["prompt"]["pct"] == pytest.approx(80.0)
+
+    def test_get_invocation_models(self, storage):
+        _seed_mixed(storage)
+        assert storage.get_invocation_models(days=30) == [
+            {"model": "gpt-4o", "calls": 3},
+            {"model": "claude-3-5-sonnet-20241022", "calls": 2},
+        ]
+
+    def test_list_invocations_ordering(self, storage):
+        _seed_mixed(storage)
+        recent = storage.list_invocations(days=7, order="recent")
+        assert [r["id"] for r in recent] == [5, 4, 3, 2, 1]
+        cost = storage.list_invocations(days=7, order="cost")
+        assert [r["id"] for r in cost] == [5, 3, 1, 2, 4]
+        # Anthropic-style spelling still surfaces as null per-row (unchanged)
+        row4 = next(r for r in recent if r["id"] == 4)
+        assert row4["tokens_in"] is None and row4["cost"] == pytest.approx(0.002)
+
+    def test_get_model_cost_summary(self, storage):
+        _seed_mixed(storage)
+        s = storage.get_model_cost_summary("gpt-4o", days=3650)
+        assert s["calls"] == 3
+        assert s["cost"] == pytest.approx(0.01)
+        # latency only present on 2 of 3 gpt-4o rows (120.0, 90.5)
+        assert s["avg_latency"] == pytest.approx(105.25)
+        empty = storage.get_model_cost_summary("nonexistent", days=3650)
+        assert empty == {"cost": 0.0, "calls": 0, "avg_latency": 0.0}

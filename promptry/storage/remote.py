@@ -296,6 +296,9 @@ class RemoteStorage(BaseStorage):
     def get_cost_data(self, days: int = 7, name=None, model=None) -> dict:
         return self._local.get_cost_data(days, name, model)
 
+    def get_model_cost_summary(self, model: str, days: int = 30) -> dict:
+        return self._local.get_model_cost_summary(model, days=days)
+
     def list_prompt_summaries(self, offset: int = 0, limit: int = 200):
         return self._local.list_prompt_summaries(offset=offset, limit=limit)
 

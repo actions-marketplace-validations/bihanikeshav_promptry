@@ -145,6 +145,103 @@ class TestExistingDatabase:
             db.close()
 
 
+class TestInvocationTypedColumns:
+    """Migration that adds typed metric columns to invocations + backfill."""
+
+    def _create_pre_typed_db(self, db_path):
+        """A DB at the schema version just before typed columns were added:
+        invocations exists with JSON-only metadata, no cost/tokens_in/... cols."""
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript(_SCHEMA_VERSION_DDL)
+        # Build the invocations table as it was through migration 5, plus the
+        # budgets/golden tables, and mark every migration BEFORE the new typed
+        # one as already applied so only the new migration runs on open.
+        conn.executescript(
+            """
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt_name TEXT NOT NULL,
+                prompt_version INTEGER,
+                metadata TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                input_text TEXT,
+                output_text TEXT,
+                request_id TEXT
+            );
+            """
+        )
+        # The new typed-columns migration is the last entry; everything before
+        # it is pre-applied.
+        prior = [m for m in _MIGRATIONS[:-1]]
+        for version, desc, _ in prior:
+            conn.execute(
+                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                (version, desc),
+            )
+        rows = [
+            ("p.a", '{"tokens_in": 500, "tokens_out": 100, "model": "gpt-4o", "cost": 0.005, "latency_ms": 120.0}'),
+            ("p.a", '{"prompt_tokens": 300, "completion_tokens": 50, "model": "gpt-4o", "cost": 0.003}'),
+            ("p.b", '{"input_tokens": 250, "output_tokens": 40, "model": "claude", "cost": 0.002, "latency_ms": 90.0}'),
+            ("p.c", None),
+        ]
+        for name, meta in rows:
+            conn.execute(
+                "INSERT INTO invocations (prompt_name, metadata) VALUES (?, ?)",
+                (name, meta),
+            )
+        conn.commit()
+        conn.close()
+
+    def test_typed_columns_added_and_backfilled(self, tmp_path):
+        db_path = tmp_path / "pretyped.db"
+        self._create_pre_typed_db(db_path)
+
+        db = Storage(db_path=db_path)
+        try:
+            cur = db._conn.execute("SELECT MAX(version) FROM schema_version")
+            assert cur.fetchone()[0] == len(_MIGRATIONS)
+
+            cols = {r[1] for r in db._conn.execute("PRAGMA table_info(invocations)")}
+            for c in ("cost", "tokens_in", "tokens_out", "model", "latency_ms"):
+                assert c in cols
+
+            cur = db._conn.execute(
+                "SELECT prompt_name, cost, tokens_in, tokens_out, model, latency_ms "
+                "FROM invocations ORDER BY id"
+            )
+            got = [tuple(r) for r in cur.fetchall()]
+            assert got[0] == ("p.a", 0.005, 500, 100, "gpt-4o", 120.0)
+            # OpenAI-style spellings backfill into the typed columns
+            assert got[1] == ("p.a", 0.003, 300, 50, "gpt-4o", None)
+            # Anthropic-style spellings backfill too
+            assert got[2] == ("p.b", 0.002, 250, 40, "claude", 90.0)
+            # JSON-null metadata row stays null across the board
+            assert got[3] == ("p.c", None, None, None, None, None)
+
+            # Indexes created
+            idx = {r[0] for r in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_invocations%'"
+            )}
+            assert "idx_invocations_model_created" in idx
+            assert "idx_invocations_created_cost" in idx
+        finally:
+            db.close()
+
+    def test_aggregates_unchanged_after_backfill(self, tmp_path):
+        """Cost aggregates read the same before/after the typed-column path."""
+        db_path = tmp_path / "pretyped2.db"
+        self._create_pre_typed_db(db_path)
+        db = Storage(db_path=db_path)
+        try:
+            data = db.get_cost_data(days=3650)
+            assert data["summary"]["total_calls"] == 4
+            assert data["summary"]["total_cost"] == pytest.approx(0.01)
+            assert data["summary"]["total_tokens_in"] == 1050
+            assert data["summary"]["total_tokens_out"] == 190
+        finally:
+            db.close()
+
+
 class TestIdempotency:
 
     def test_migrations_idempotent(self, tmp_path):
