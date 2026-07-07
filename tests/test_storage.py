@@ -252,6 +252,46 @@ class TestGetCostData:
         assert result["by_name"][0]["cost"] == pytest.approx(expected)
         assert result["summary"]["total_cost"] == pytest.approx(expected)
 
+    def test_cost_data_recomputes_fuzzy_dated_variant(self, storage):
+        # resolve_model prefix-matches dated variants of a REROUTES key (e.g.
+        # a provider-suffixed slug like "<key>-1234") even though that exact
+        # string is never a REROUTES key itself. The reroute-candidate query
+        # must catch these via a prefix LIKE, not just an exact IN match, or
+        # the row is silently skipped and its absurd stored cost stands.
+        from promptry import pricing
+        base = "grok-4-1-fast-non-reasoning"
+        model = f"{base}-1234"
+        assert model not in pricing.REROUTES  # not an exact key...
+        assert pricing.resolve_model(model, "2026-07-07") != model  # ...but fuzzy-matched
+        storage.record_invocation(
+            "rr-fuzzy", metadata={"model": model, "tokens_in": 1000,
+                                   "tokens_out": 500, "cost": 999.0})
+        expected = pricing.calculate_cost(
+            model, tokens_in=1000, tokens_out=500, when="2026-07-07")
+        assert expected is not None and expected < 1.0
+        result = storage.get_cost_data(days=7)
+        assert result["by_name"][0]["cost"] == pytest.approx(expected)
+        assert result["summary"]["total_cost"] == pytest.approx(expected)
+
+    def test_cost_data_by_name_sorted_after_reroute_delta(self, storage):
+        # by_name must stay cost-desc even after reroute deltas are applied:
+        # the SQL-summed order (based on stored cost) can be inverted once the
+        # recompute replaces the rerouted row's cost.
+        from promptry import pricing
+        model = "grok-4-1-fast-non-reasoning"
+        expected = pricing.calculate_cost(
+            model, tokens_in=1000, tokens_out=500, when="2026-07-07")
+        # stored cost puts "other" ahead of "rr" pre-delta, but the recomputed
+        # cost (expected) puts "rr" ahead post-delta.
+        storage.record_invocation("other", metadata={"cost": expected / 2})
+        storage.record_invocation(
+            "rr", metadata={"model": model, "tokens_in": 1000,
+                            "tokens_out": 500, "cost": 0.0000001})
+        result = storage.get_cost_data(days=7)
+        costs = [e["cost"] for e in result["by_name"]]
+        assert costs == sorted(costs, reverse=True)
+        assert result["by_name"][0]["name"] == "rr"
+
 
 # ---- SQL-aggregation equivalence (post-migration) ----
 # These pin the exact output shapes/values that the JSON-scan implementations

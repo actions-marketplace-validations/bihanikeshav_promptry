@@ -1190,16 +1190,29 @@ class SQLiteStorage(BaseStorage):
             # configured (the common case) so non-xAI deployments pay nothing.
             reroute_rows: list = []
             if REROUTES:
+                # resolve_model also fuzzy-matches dated variants of a
+                # REROUTES key by prefix (e.g. "grok-4-1-fast-non-reasoning"
+                # matches "grok-4-1-fast-non-reasoning-1234"), so the
+                # candidate prefilter must be a prefix LIKE, not an exact IN
+                # — otherwise those rows are silently skipped. REROUTES keys
+                # contain no '_' or '%' today, but escape defensively since
+                # both are LIKE wildcards.
                 reroute_keys = sorted(REROUTES)
-                qmarks = ",".join("?" * len(reroute_keys))
+                like_clause = " OR ".join(
+                    ["model LIKE ? || '%' ESCAPE '\\'"] * len(reroute_keys)
+                )
+                escaped_keys = [
+                    k.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    for k in reroute_keys
+                ]
                 reroute_rows = self._conn.execute(
                     f"""SELECT prompt_name AS name, model, tokens_in, tokens_out,
                                created_at, cost,
-                               json_extract(metadata, '$.cached_tokens') AS cached_tokens,
-                               json_extract(metadata, '$.cache_write_tokens') AS cache_write_tokens
+                               CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.cached_tokens') END AS cached_tokens,
+                               CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.cache_write_tokens') END AS cache_write_tokens
                         FROM invocations
-                        WHERE {where_sql} AND model IN ({qmarks})""",
-                    params + reroute_keys,
+                        WHERE {where_sql} AND ({like_clause})""",
+                    params + escaped_keys,
                 ).fetchall()
 
         # cache savings per (name, model) group -> per-name totals.
@@ -1279,6 +1292,7 @@ class SQLiteStorage(BaseStorage):
                 de = by_date_by_key.get(date_str)
                 if de is not None:
                     de["cost"] += delta
+            by_name.sort(key=lambda x: x["cost"], reverse=True)
 
         total_cost = sum(e["cost"] for e in by_name)
         total_calls = sum(e["calls"] for e in by_name)
