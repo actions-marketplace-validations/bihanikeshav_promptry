@@ -2,7 +2,7 @@
   "name": "promptry",
   "displayName": "promptry",
   "description": "Regression testing for LLM prompts — run evals, view results, detect drift",
-  "version": "0.1.0",
+  "version": "0.10.0",
   "publisher": "bihanikeshav",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Testing", "Machine Learning"],
@@ -21,6 +21,11 @@
           "type": "string",
           "default": "python",
           "description": "Path to Python executable with promptry installed"
+        },
+        "promptry.module": {
+          "type": "string",
+          "default": "evals",
+          "description": "Python module with suite definitions, passed as --module to every promptry CLI invocation"
         }
       }
     }
