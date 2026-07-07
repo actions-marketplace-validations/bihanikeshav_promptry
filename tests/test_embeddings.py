@@ -1,6 +1,8 @@
 """Tests for promptry.embeddings: model access, cache, and similarity."""
 from __future__ import annotations
 
+import threading
+import time
 from unittest.mock import patch
 
 import numpy as np
@@ -169,6 +171,99 @@ class TestGetEmbedderMissingDependency:
         with patch.dict("sys.modules", {"sentence_transformers": None}):
             with pytest.raises(ImportError, match="sentence-transformers"):
                 embeddings.get_embedder()
+
+
+class _BlockingStubModel:
+    """Stub whose encode() blocks on an Event until released, so a test can
+    control the interleaving of a slow encode() call against a concurrent
+    set_model() call on another thread."""
+
+    def __init__(self, gate: threading.Event, vectors: dict[str, list[float]] | None = None):
+        self.gate = gate
+        self.vectors = vectors or {}
+        self.calls: list[list[str]] = []
+
+    def encode(self, texts):
+        self.calls.append(list(texts))
+        self.gate.wait(timeout=5)
+        out = []
+        for t in texts:
+            vec = self.vectors.get(t, [1.0, 0.0])
+            out.append(np.array(vec, dtype=float))
+        return np.array(out)
+
+
+class TestConcurrentSetModelRace:
+    def test_set_model_during_encode_does_not_poison_cache_under_stale_name(self):
+        gate = threading.Event()
+        stub = _BlockingStubModel(gate, {"x": [1.0, 2.0]})
+
+        errors: list[BaseException] = []
+
+        def worker():
+            try:
+                with _patch_stub(stub):
+                    embeddings.encode(["x"])
+            except BaseException as exc:  # pragma: no cover - only on failure
+                errors.append(exc)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+
+        # Wait until the worker thread is blocked inside model.encode(),
+        # having already captured the original model name/generation.
+        deadline_ok = False
+        for _ in range(500):
+            if stub.calls:
+                deadline_ok = True
+                break
+            time.sleep(0.01)
+        assert deadline_ok, "worker never reached model.encode()"
+
+        # Switch models while the worker is mid-encode -- this bumps the
+        # generation counter and clears the cache.
+        embeddings.set_model("other-model")
+
+        # Let the worker's model.encode() finish and proceed to the write phase.
+        gate.set()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert not errors
+
+        stale_key = embeddings._cache_key("test-default", "x")
+        assert stale_key not in embeddings._cache
+
+
+class TestConcurrentSameKeyContention:
+    def test_two_threads_encoding_same_new_text_no_exception_single_entry(self):
+        stub = _StubModel({"shared-text": [3.0, 4.0]})
+        errors: list[BaseException] = []
+        results: list[np.ndarray] = []
+        lock = threading.Lock()
+
+        def worker():
+            try:
+                with _patch_stub(stub):
+                    out = embeddings.encode(["shared-text"])[0]
+                with lock:
+                    results.append(out)
+            except BaseException as exc:  # pragma: no cover - only on failure
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert not errors
+        assert len(results) == 2
+        for r in results:
+            assert np.allclose(r, [3.0, 4.0])
+
+        key = embeddings._cache_key("test-default", "shared-text")
+        assert key in embeddings._cache
+        assert len(embeddings._cache) == 1
 
 
 class TestCacheEviction:

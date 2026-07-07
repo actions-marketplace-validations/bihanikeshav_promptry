@@ -31,6 +31,14 @@ _model_name_override: str | None = None
 
 _lock = threading.Lock()
 
+# Monotonic counter bumped by set_model(). encode() captures the generation
+# in effect when it starts, and drops (does not write) any freshly computed
+# results whose generation is stale by the time it re-acquires the lock to
+# write them -- this closes a race where a concurrent set_model() call could
+# otherwise cause vectors from a NEW model to be cached under the OLD
+# model's name (and later served as if they came from the old model).
+_generation = 0
+
 # process-level cache: (model_name, sha256(text)) -> embedding row.
 # dict-based LRU: OrderedDict preserves insertion/access order, and we
 # evict the oldest entry once the cache grows past _MAX_CACHE_ENTRIES.
@@ -64,11 +72,12 @@ def set_model(name: str):
     cache, since cached vectors are only valid for the model that
     produced them.
     """
-    global _model, _model_name_override
+    global _model, _model_name_override, _generation
     with _lock:
         _model_name_override = name
         _model = None
         _cache.clear()
+        _generation += 1
 
 
 def _current_model_name() -> str:
@@ -99,6 +108,7 @@ def encode(texts: list[str]) -> np.ndarray:
     miss_indices: list[int] = []
 
     with _lock:
+        generation = _generation
         for i, text in enumerate(texts):
             key = _cache_key(model_name, text)
             cached = _cache.get(key)
@@ -112,14 +122,23 @@ def encode(texts: list[str]) -> np.ndarray:
         model = get_embedder()
         encoded = model.encode([texts[i] for i in miss_indices])
         with _lock:
+            # If set_model() ran while we were encoding, the model we just
+            # used is no longer "model_name" -- writing these rows under
+            # model_name's key would poison the cache for whichever model
+            # is current (and, if set_model() switches back later, would
+            # be served as if they were produced by model_name). Skip the
+            # write; still return the freshly computed vectors below since
+            # they're correct for the caller (same as pre-cache behavior).
+            stale = generation != _generation
             for pos, i in enumerate(miss_indices):
                 row = np.array(encoded[pos], dtype=float, copy=True)
                 row.setflags(write=False)
-                key = _cache_key(model_name, texts[i])
-                _cache[key] = row
-                _cache.move_to_end(key)
-                if len(_cache) > _MAX_CACHE_ENTRIES:
-                    _cache.popitem(last=False)
+                if not stale:
+                    key = _cache_key(model_name, texts[i])
+                    _cache[key] = row
+                    _cache.move_to_end(key)
+                    if len(_cache) > _MAX_CACHE_ENTRIES:
+                        _cache.popitem(last=False)
                 results[i] = row
 
     return np.array([np.array(row, dtype=float, copy=True) for row in results])
