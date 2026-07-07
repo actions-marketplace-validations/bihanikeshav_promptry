@@ -235,6 +235,85 @@ def test_replay_caps_drifted_examples():
 
 
 # ---------------------------------------------------------------------------
+# replay_captures concurrency
+# ---------------------------------------------------------------------------
+
+def test_replay_concurrency_preserves_input_order():
+    import time
+    caps = [Capture(ts="t", task="rag", input=i, output=f"a{i}") for i in range(6)]
+    sleeps = {0: 0.05, 1: 0.01, 2: 0.03, 3: 0.02, 4: 0.04, 5: 0.0}
+
+    def pipeline(x):
+        time.sleep(sleeps[x])
+        return f"a{x}"
+
+    result = replay_captures(caps, pipeline=pipeline, concurrency=4)
+    assert result.matched == 6
+    assert result.drifted == 0
+
+
+def test_replay_drifted_examples_stay_in_input_order_under_concurrency():
+    import time
+    caps = [Capture(ts="t", task="rag", input=i, output=f"expected-{i}") for i in range(4)]
+    sleeps = [0.04, 0.01, 0.03, 0.0]
+
+    def pipeline(x):
+        time.sleep(sleeps[x])
+        return "wrong"
+
+    result = replay_captures(caps, pipeline=pipeline, concurrency=4)
+    assert [e["input"] for e in result.examples_drifted] == [0, 1, 2, 3]
+
+
+def test_replay_concurrency_actually_used():
+    import threading
+    import time
+    lock = threading.Lock()
+    state = {"current": 0, "max": 0}
+
+    def pipeline(x):
+        with lock:
+            state["current"] += 1
+            state["max"] = max(state["max"], state["current"])
+        time.sleep(0.05)
+        with lock:
+            state["current"] -= 1
+        return x
+
+    caps = [Capture(ts="t", task="rag", input=i, output=i) for i in range(8)]
+    result = replay_captures(caps, pipeline=pipeline, concurrency=4)
+    assert result.matched == 8
+    assert state["max"] > 1
+    assert state["max"] <= 4
+
+
+def test_replay_per_item_exception_does_not_kill_batch_concurrent():
+    caps = [Capture(ts="t", task="rag", input=i, output=f"a{i}") for i in range(5)]
+
+    def pipeline(x):
+        if x == 2:
+            raise ValueError("boom")
+        return f"a{x}"
+
+    result = replay_captures(caps, pipeline=pipeline, concurrency=3)
+    assert result.errors == 1
+    assert result.matched == 4
+
+
+def test_replay_concurrency_1_matches_serial_semantics():
+    caps = [Capture(ts="t", task="rag", input=i, output=f"a{i}") for i in range(3)]
+    calls = []
+
+    def pipeline(x):
+        calls.append(x)
+        return f"a{x}"
+
+    result = replay_captures(caps, pipeline=pipeline, concurrency=1)
+    assert calls == [0, 1, 2]
+    assert result.matched == 3
+
+
+# ---------------------------------------------------------------------------
 # redact_sensitive
 # ---------------------------------------------------------------------------
 

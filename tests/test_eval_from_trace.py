@@ -54,6 +54,72 @@ class TestRunGoldenSet:
         assert all(r["error"] for r in rep["results"])
 
 
+class TestRunGoldenSetConcurrency:
+    def test_preserves_input_order(self, monkeypatch):
+        import time
+        examples = [{"id": i, "input_text": f"q{i}", "reference_output": f"a{i}"} for i in range(4)]
+        sleeps = {"q0": 0.04, "q1": 0.01, "q2": 0.03, "q3": 0.0}
+
+        def call(model, text, temp):
+            time.sleep(sleeps[text])
+            return text.replace("q", "a")
+
+        monkeypatch.setattr(eft, "_call_model", call)
+        monkeypatch.setattr(eft, "_similarity", lambda a, b: (1.0, "exact"))
+        rep = eft.run_golden_set(_Stub(examples), "p", model="m", concurrency=4)
+        assert [r["id"] for r in rep["results"]] == [0, 1, 2, 3]
+
+    def test_per_item_exception_captured(self, monkeypatch):
+        examples = [{"id": i, "input_text": f"q{i}", "reference_output": f"a{i}"} for i in range(4)]
+
+        def call(model, text, temp):
+            if text == "q2":
+                raise RuntimeError("boom")
+            return text.replace("q", "a")
+
+        monkeypatch.setattr(eft, "_call_model", call)
+        monkeypatch.setattr(eft, "_similarity", lambda a, b: (1.0, "exact"))
+        rep = eft.run_golden_set(_Stub(examples), "p", model="m", concurrency=4)
+        assert rep["passed"] == 3
+        by_id = {r["id"]: r for r in rep["results"]}
+        assert by_id[2]["error"] is not None
+
+    def test_concurrency_actually_used(self, monkeypatch):
+        import threading
+        import time
+        lock = threading.Lock()
+        state = {"current": 0, "max": 0}
+
+        def call(model, text, temp):
+            with lock:
+                state["current"] += 1
+                state["max"] = max(state["max"], state["current"])
+            time.sleep(0.05)
+            with lock:
+                state["current"] -= 1
+            return text
+
+        examples = [{"id": i, "input_text": f"q{i}", "reference_output": f"q{i}"} for i in range(8)]
+        monkeypatch.setattr(eft, "_call_model", call)
+        monkeypatch.setattr(eft, "_similarity", lambda a, b: (1.0 if a == b else 0.0, "exact"))
+        rep = eft.run_golden_set(_Stub(examples), "p", model="m", concurrency=4)
+        assert state["max"] > 1
+        assert state["max"] <= 4
+
+    def test_concurrency_1_matches_serial(self, monkeypatch):
+        examples = [{"id": i, "input_text": f"q{i}", "reference_output": f"q{i}"} for i in range(3)]
+        calls = []
+
+        def call(model, text, temp):
+            calls.append(text)
+            return text
+
+        monkeypatch.setattr(eft, "_call_model", call)
+        monkeypatch.setattr(eft, "_similarity", lambda a, b: (1.0, "exact"))
+        rep = eft.run_golden_set(_Stub(examples), "p", model="m", concurrency=1)
+        assert calls == ["q0", "q1", "q2"]
+
+
 class TestGoldenStorage:
     def test_add_list_delete(self, storage):
         eid = storage.add_golden_example("rag.qa", "what is X?", "X is Y.", source_invocation_id=7, model="gpt-4o-mini")

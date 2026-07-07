@@ -32,6 +32,7 @@ import os
 import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -289,6 +290,7 @@ def replay_captures(
     *,
     compare: Callable[[Any, Any], bool] | None = None,
     max_examples: int = 5,
+    concurrency: int = 8,
 ) -> ReplayResult:
     """Replay captured inputs through `pipeline`, compare to captured output.
 
@@ -298,9 +300,32 @@ def replay_captures(
       0.8) for real-world replay.
     - `max_examples` bounds the number of drifted captures kept in the
       result (so we don't bloat memory on huge replay files).
+    - `concurrency` controls how many pipeline calls run in parallel via a
+      `ThreadPoolExecutor` (I/O-bound work). Results are always mapped back
+      to input order regardless of completion order. A per-item pipeline
+      exception is captured as a replay error rather than aborting the
+      batch. `concurrency=1` runs strictly serially with identical
+      semantics to a plain for-loop.
     """
     if compare is None:
         compare = _default_compare
+
+    caps_list = list(captures)
+
+    def _invoke(cap: Capture) -> tuple[Any, Exception | None]:
+        try:
+            return pipeline(cap.input), None
+        except Exception as e:
+            return None, e
+
+    if concurrency == 1:
+        outcomes = [_invoke(cap) for cap in caps_list]
+    else:
+        outcomes: list[tuple[Any, Exception | None]] = [None] * len(caps_list)  # type: ignore[list-item]
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = [pool.submit(_invoke, cap) for cap in caps_list]
+            for i, fut in enumerate(futures):
+                outcomes[i] = fut.result()
 
     total = 0
     matched = 0
@@ -308,11 +333,9 @@ def replay_captures(
     errors = 0
     examples: list[dict] = []
 
-    for cap in captures:
+    for cap, (candidate, exc) in zip(caps_list, outcomes):
         total += 1
-        try:
-            candidate = pipeline(cap.input)
-        except Exception as e:
+        if exc is not None:
             errors += 1
             if len(examples) < max_examples:
                 examples.append({
@@ -320,7 +343,7 @@ def replay_captures(
                     "task": cap.task,
                     "input": cap.input,
                     "expected": cap.output,
-                    "error": f"{type(e).__name__}: {e}",
+                    "error": f"{type(exc).__name__}: {exc}",
                 })
             continue
 
