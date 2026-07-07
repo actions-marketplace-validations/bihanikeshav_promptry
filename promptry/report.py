@@ -633,22 +633,48 @@ def _first_failed_assertion_message(test: dict) -> str | None:
     return None
 
 
+def _has_failed_assertion(test: dict) -> bool:
+    return any(not a.get("passed", True) for a in test.get("assertions", []))
+
+
+def _is_crashed_test(test: dict) -> bool:
+    """A crash is a failed test with an error but no failed assertion.
+
+    The runner sets ``error`` for ordinary assertion failures too (the
+    AssertionError message), so the presence of ``error`` alone doesn't
+    mean the test crashed -- only an error with no failed assertion does
+    (e.g. an exception raised before any assertion could fail).
+    """
+    return (
+        not test.get("passed", False)
+        and bool(test.get("error"))
+        and not _has_failed_assertion(test)
+    )
+
+
 def _render_junit_run(data: dict) -> str:
-    """One <testsuite> for the suite, one <testcase> per test."""
+    """One <testsuite> for the suite, one <testcase> per test.
+
+    Standard JUnit semantics: a test that crashed (an exception, not an
+    assertion failure) becomes an <error> element counted in ``errors=``;
+    a test with failed assertions becomes a <failure> counted in
+    ``failures=``.
+    """
     suite_name = data.get("suite_name", "unknown")
     tests = data.get("tests", []) or []
     n_tests = len(tests)
-    n_failures = sum(1 for t in tests if not t.get("passed", False))
+    n_errors = sum(1 for t in tests if _is_crashed_test(t))
+    n_failures = sum(1 for t in tests if not t.get("passed", False) and not _is_crashed_test(t))
     total_time = sum((t.get("latency_ms") or 0.0) for t in tests) / 1000.0
 
-    root = ET.Element("testsuites")
-    ts = ET.SubElement(root, "testsuite", {
-        "name": suite_name,
+    counts = {
         "tests": str(n_tests),
         "failures": str(n_failures),
-        "errors": "0",
+        "errors": str(n_errors),
         "time": f"{total_time:.3f}",
-    })
+    }
+    root = ET.Element("testsuites", dict(counts))
+    ts = ET.SubElement(root, "testsuite", {"name": suite_name, **counts})
     for t in tests:
         tc = ET.SubElement(ts, "testcase", {
             "classname": suite_name,
@@ -656,9 +682,13 @@ def _render_junit_run(data: dict) -> str:
             "time": f"{(t.get('latency_ms') or 0.0) / 1000.0:.3f}",
         })
         if not t.get("passed", False):
-            message = t.get("error") or _first_failed_assertion_message(t) or "test failed"
-            failure = ET.SubElement(tc, "failure", {"message": message})
-            failure.text = message
+            if _is_crashed_test(t):
+                message = t["error"]
+                elem = ET.SubElement(tc, "error", {"message": message})
+            else:
+                message = t.get("error") or _first_failed_assertion_message(t) or "test failed"
+                elem = ET.SubElement(tc, "failure", {"message": message})
+            elem.text = message
     return _xml_declare(root)
 
 
@@ -677,13 +707,14 @@ def _render_junit_compare(data: dict) -> str:
         n_failures += 1
     n_tests = len(comparisons) + 1
 
-    root = ET.Element("testsuites")
-    ts = ET.SubElement(root, "testsuite", {
-        "name": f"compare:{suite_name}",
+    counts = {
         "tests": str(n_tests),
         "failures": str(n_failures),
         "errors": "0",
-    })
+        "time": "0.000",
+    }
+    root = ET.Element("testsuites", dict(counts))
+    ts = ET.SubElement(root, "testsuite", {"name": f"compare:{suite_name}", **counts})
     for ac in comparisons:
         tc = ET.SubElement(ts, "testcase", {
             "classname": suite_name,
@@ -713,13 +744,14 @@ def _render_junit_drift(data: dict) -> str:
     is_drifting = bool(data.get("is_drifting", False))
     message = data.get("message", "")
 
-    root = ET.Element("testsuites")
-    ts = ET.SubElement(root, "testsuite", {
-        "name": f"drift:{suite_name}",
+    counts = {
         "tests": "1",
         "failures": "1" if is_drifting else "0",
         "errors": "0",
-    })
+        "time": "0.000",
+    }
+    root = ET.Element("testsuites", dict(counts))
+    ts = ET.SubElement(root, "testsuite", {"name": f"drift:{suite_name}", **counts})
     tc = ET.SubElement(ts, "testcase", {
         "classname": suite_name,
         "name": suite_name,
@@ -737,7 +769,8 @@ def render_junit(data: dict) -> str:
     Dispatches on the shape of ``data``:
       - a ``SuiteResult.to_dict()`` shape (has "tests") -> one <testsuite>
         for the suite, one <testcase> per test; assertion failures surface
-        as <failure message=...> on their test's <testcase>.
+        as <failure message=...>, crashed tests (with ``error``) as
+        <error message=...> counted in ``errors=``.
       - a ``ModelCompareReport.to_dict()`` shape (has "assertion_comparisons")
         -> one <testcase> per assertion type plus an "overall" <testcase>
         reflecting the switch/keep_baseline verdict.

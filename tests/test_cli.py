@@ -525,6 +525,32 @@ class TestRunCLIFormat:
         assert result.exit_code == 2
         assert "Invalid --format" in result.output
 
+    def test_compare_regression_still_emits_json(self, tmp_path, monkeypatch):
+        """A --compare regression must not short-circuit the machine payload:
+        exit code is 1 but stdout still carries the full JSON report."""
+        import json
+
+        from promptry.storage import get_storage
+
+        self._write_failing_module(tmp_path, monkeypatch)
+
+        # Seed a prior high-scoring run so the failing run regresses against it.
+        storage = get_storage()
+        storage.save_eval_run(
+            suite_name="smoke",
+            overall_pass=True,
+            overall_score=1.0,
+        )
+
+        result = CliRunner().invoke(
+            app,
+            ["run", "smoke", "--module", "evals_fail", "--compare", "prod", "--format", "json"],
+        )
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["suite_name"] == "smoke"
+        assert data["overall_pass"] is False
+
 
 class TestCompare:
 

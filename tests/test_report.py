@@ -241,25 +241,59 @@ class TestRenderJunitRun:
         assert len(cases) == 1
         assert cases[0].get("name") == "test_basic_quality"
 
-    def test_counts_match(self, run_results_failing):
+    def test_assertion_failure_counts_as_failure(self, run_results_failing):
+        """A test with failed assertions (even with the runner's
+        AssertionError message in `error`) is a JUnit <failure>."""
         root = ET.fromstring(render_junit(run_results_failing))
         suite = root.find("testsuite")
         assert suite.get("tests") == str(len(run_results_failing["tests"]))
-        n_failed = sum(1 for t in run_results_failing["tests"] if not t["passed"])
-        assert suite.get("failures") == str(n_failed)
-
-    def test_failure_element_present_for_failing_test(self, run_results_failing):
-        root = ET.fromstring(render_junit(run_results_failing))
-        suite = root.find("testsuite")
+        assert suite.get("failures") == "1"
+        assert suite.get("errors") == "0"
         case = suite.findall("testcase")[0]
         failure = case.find("failure")
         assert failure is not None
-        assert failure.get("message")
+        assert failure.get("message") == "Score below threshold"
+        assert case.find("error") is None
+
+    def test_crashed_test_counts_as_error(self):
+        """A test that raised (error set, no failed assertion) is a JUnit
+        <error>, counted in errors= not failures=."""
+        data = {
+            "suite_name": "rag-qa",
+            "overall_pass": False,
+            "overall_score": 0.0,
+            "tests": [
+                {
+                    "test_name": "test_crash",
+                    "passed": False,
+                    "latency_ms": 5.0,
+                    "error": "RuntimeError: pipeline exploded",
+                    "assertions": [],
+                },
+            ],
+        }
+        root = ET.fromstring(render_junit(data))
+        suite = root.find("testsuite")
+        assert suite.get("errors") == "1"
+        assert suite.get("failures") == "0"
+        case = suite.find("testcase")
+        error = case.find("error")
+        assert error is not None
+        assert error.get("message") == "RuntimeError: pipeline exploded"
+        assert case.find("failure") is None
 
     def test_passing_test_has_no_failure_element(self, run_results):
         root = ET.fromstring(render_junit(run_results))
         case = root.find("testsuite").find("testcase")
         assert case.find("failure") is None
+        assert case.find("error") is None
+
+    def test_root_testsuites_has_aggregate_attributes(self, run_results_failing):
+        root = ET.fromstring(render_junit(run_results_failing))
+        assert root.get("tests") == "1"
+        assert root.get("failures") == "1"
+        assert root.get("errors") == "0"
+        assert root.get("time") is not None
 
     def test_empty_tests_list(self):
         xml_str = render_junit({
@@ -272,6 +306,7 @@ class TestRenderJunitRun:
         suite = root.find("testsuite")
         assert suite.get("tests") == "0"
         assert suite.get("failures") == "0"
+        assert suite.get("errors") == "0"
 
 
 class TestRenderJunitCompare:
@@ -313,6 +348,13 @@ class TestRenderJunitCompare:
         assert len(cases) == 1
         assert cases[0].get("name") == "overall"
 
+    def test_root_testsuites_has_aggregate_attributes(self, compare_data_keep):
+        root = ET.fromstring(render_junit(compare_data_keep))
+        assert root.get("tests") == "1"
+        assert root.get("failures") == "1"
+        assert root.get("errors") == "0"
+        assert root.get("time") is not None
+
 
 class TestRenderJunitDrift:
 
@@ -335,6 +377,13 @@ class TestRenderJunitDrift:
         assert suite.get("failures") == "0"
         case = suite.find("testcase")
         assert case.find("failure") is None
+
+    def test_root_testsuites_has_aggregate_attributes(self, drift_data):
+        root = ET.fromstring(render_junit(drift_data))
+        assert root.get("tests") == "1"
+        assert root.get("failures") == "1"
+        assert root.get("errors") == "0"
+        assert root.get("time") is not None
 
 
 class TestRenderJunitUnrecognizedShape:

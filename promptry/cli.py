@@ -427,6 +427,7 @@ def run_cmd(
         out.print("SLOs:")
         out.print(format_slo_breaches(slo_breaches))
 
+    compare_regressed = False
     if compare:
         out.print()
         out.print(f"Comparing against [bold]{compare}[/bold] baseline:")
@@ -459,7 +460,10 @@ def run_cmd(
                     notify_regression(result, details=f"Compare against '{compare}' baseline")
                 except Exception:
                     pass
-                raise typer.Exit(1)
+                # Don't exit yet: the machine-readable payload (--format
+                # json/junit) and any --output/--markdown files must still be
+                # produced. The exit code is raised at the end.
+                compare_regressed = True
 
     # Build results dict once for any report output.
     results_dict = (
@@ -490,7 +494,7 @@ def run_cmd(
         markdown.write_text(md_content, encoding="utf-8")
         out.print(f"[green]Markdown summary written to[/green] {markdown}")
 
-    if not result.overall_pass or slo_breaches:
+    if compare_regressed or not result.overall_pass or slo_breaches:
         raise typer.Exit(1)
 
 
