@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 def _normalize(t: str) -> str:
@@ -48,16 +49,22 @@ def _call_model(model: str, input_text: str, temperature: float) -> str:
 
 
 def run_golden_set(storage, prompt_name: str, model: str,
-                   threshold: float = 0.8, temperature: float = 0.0) -> dict:
+                   threshold: float = 0.8, temperature: float = 0.0,
+                   concurrency: int = 8) -> dict:
     """Re-run every golden example for a prompt through ``model`` and score
     each output's similarity to its recorded reference. Returns per-example
-    results plus an overall accuracy (fraction scoring >= threshold)."""
-    examples = storage.list_golden_examples(prompt_name)
-    results: list[dict] = []
-    mode = None
-    passed_n = 0
+    results plus an overall accuracy (fraction scoring >= threshold).
 
-    for ex in examples:
+    Model calls are I/O-bound, so up to ``concurrency`` examples are run in
+    parallel via a `ThreadPoolExecutor`. Results are always reassembled in
+    the same order as ``examples``, and a per-example exception is captured
+    as a failed result rather than aborting the whole run.
+    `concurrency=1` runs strictly serially with identical semantics to a
+    plain for-loop.
+    """
+    examples = storage.list_golden_examples(prompt_name)
+
+    def _invoke(ex: dict) -> tuple[dict, str | None]:
         ref = ex.get("reference_output") or ""
         try:
             start = time.time()
@@ -65,19 +72,36 @@ def run_golden_set(storage, prompt_name: str, model: str,
             latency = round((time.time() - start) * 1000)
             sim, mode = _similarity(out, ref)
             passed = sim >= threshold
-            passed_n += int(passed)
-            results.append({
+            return {
                 "id": ex["id"], "score": round(sim, 4), "passed": passed,
                 "output_preview": _normalize(out)[:200],
                 "reference_preview": _normalize(ref)[:200],
                 "latency_ms": latency, "error": None,
-            })
+            }, mode
         except Exception as e:
-            results.append({
+            return {
                 "id": ex["id"], "score": 0.0, "passed": False,
                 "output_preview": "", "reference_preview": _normalize(ref)[:200],
                 "latency_ms": 0, "error": str(e)[:200],
-            })
+            }, None
+
+    if concurrency == 1:
+        outcomes = [_invoke(ex) for ex in examples]
+    else:
+        outcomes: list[tuple[dict, str | None]] = [None] * len(examples)  # type: ignore[list-item]
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = [pool.submit(_invoke, ex) for ex in examples]
+            for i, fut in enumerate(futures):
+                outcomes[i] = fut.result()
+
+    results: list[dict] = []
+    mode = None
+    passed_n = 0
+    for result, m in outcomes:
+        results.append(result)
+        if m is not None:
+            mode = m
+        passed_n += int(result["passed"])
 
     n = len(results)
     return {
