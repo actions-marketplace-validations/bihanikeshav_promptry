@@ -127,12 +127,6 @@ class BaseStorage(ABC):
         ...
 
     @abstractmethod
-    def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
-        """Delete all but the newest keep_last versions of a prompt. Returns
-        the number deleted. For collapsing legacy baked-prompt churn."""
-        ...
-
-    @abstractmethod
     def get_invocation_stats(self, name: str, days: int = 30) -> dict:
         """Per-call distribution stats for a prompt from the invocations
         ledger (count, min/avg/p50/p95/max per metric, input-size histogram)."""
