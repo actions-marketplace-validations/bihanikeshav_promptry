@@ -269,3 +269,23 @@ class TestCompare:
         # Should exit with code 1 (error) because no baseline data exists, not crash
         assert result.exit_code == 1
         assert "Error" in result.output or "No baseline" in result.output or "No runs" in result.output
+
+
+class TestDashboard:
+
+    def test_dashboard_local_flag_deprecated(self, monkeypatch):
+        """dashboard --local should emit a deprecation warning."""
+        # Mock uvicorn to avoid import error
+        def mock_run(*args, **kwargs):
+            pass
+
+        import sys
+        import types
+        uvicorn = types.ModuleType('uvicorn')
+        uvicorn.run = mock_run
+        sys.modules['uvicorn'] = uvicorn
+
+        result = runner.invoke(app, ["dashboard", "--local", "--no-open"])
+        # Should see deprecation warning in output or exit with warning
+        # The warning should appear before the error (if any)
+        assert "Warning" in result.output or "deprecated" in result.output.lower()

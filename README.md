@@ -146,7 +146,7 @@ jobs:
       pull-requests: write  # required for PR comments
     steps:
       - uses: actions/checkout@v4
-      - uses: bihanikeshav/promptry@v0.6.0
+      - uses: bihanikeshav/promptry@v0.10.0
         with:
           suite: rag-regression
           module: evals

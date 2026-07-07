@@ -506,7 +506,7 @@ def test_conversation():
     assert_no_repetition(conv)
 ```
 
-Run it the same way as any other suite: `promptry eval-run chatbot-flow`.
+Run it the same way as any other suite: `promptry run chatbot-flow --module evals`.
 
 ## Track token usage and cost
 
@@ -535,15 +535,15 @@ $ promptry cost-report --days 30
 
 Cost report (last 30 days)
 
-        By prompt name
-┌──────────────────┬───────┬───────────┬────────────┬─────────┬─────────┐
-│ Prompt           │ Calls │ Tokens In │ Tokens Out │ Cost    │ Models  │
-├──────────────────┼───────┼───────────┼────────────┼─────────┼─────────┤
-│ pricing.extract  │   847 │   423,500 │    84,700  │ $2.5410 │ gpt-4o  │
-│ doc.classify     │ 1,203 │   120,300 │     1,203  │ $0.1203 │ gpt-4o… │
-├──────────────────┼───────┼───────────┼────────────┼─────────┼─────────┤
-│ Total            │ 2,050 │   543,800 │    85,903  │ $2.6613 │         │
-└──────────────────┴───────┴───────────┴────────────┴─────────┴─────────┘
+                                By prompt name                                 
++-----------------------------------------------------------------------------+
+| Prompt          | Calls | Tokens In | Cached |    Cost | Hit rate | Savings |
+|-----------------+-------+-----------+--------+---------+----------+---------|
+| pricing.extract |    30 |    10,500 |      - | $0.0517 |     0.0% |       - |
+| doc.classify    |    20 |     2,000 |      - | $0.0060 |     0.0% |       - |
+|-----------------+-------+-----------+--------+---------+----------+---------|
+| Total           |    50 |    12,500 |      - | $0.0578 |     0.0% |       - |
++-----------------------------------------------------------------------------+
 
 $ promptry cost-report --name pricing.extract --model gpt-4o
 ```
@@ -817,7 +817,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - uses: bihanikeshav/promptry@v0.6.0
+      - uses: bihanikeshav/promptry@v0.10.0
         with:
           suite: rag-regression
           module: evals
@@ -1073,7 +1073,7 @@ promptry templates list [--category <cat>]
 promptry templates run --module <mod> [--func <name>] [--category <cat>]
 
 # dashboard
-promptry dashboard [--port 8420] [--no-open] [--local]
+promptry dashboard [--port 8420] [--no-open]
 
 # MCP server
 promptry mcp
@@ -1222,9 +1222,8 @@ This starts a local web server on `http://localhost:8420` and opens your browser
 | **Settings** | Project config — model list, judge, dashboard prefs, pricing overrides (see below) |
 
 ```bash
-promptry dashboard                # start on :8420, open hosted dashboard
+promptry dashboard                # start on :8420 (localhost-only)
 promptry dashboard --port 9000    # custom port
-promptry dashboard --local        # open localhost instead of hosted URL
 promptry dashboard --no-open      # don't auto-open browser
 ```
 
