@@ -143,3 +143,63 @@ class TestRefreshFromFeed:
         }))
         cost = pricing.calculate_cost("gpt-4o-mini", tokens_in=1_000_000, tokens_out=0)
         assert cost == pytest.approx(1.0)
+
+
+class TestLazyPersistedLoad:
+    """perf: load_persisted_prices() runs on first pricing use, not at
+    import time. Simulate a fresh process by resetting the lazy-load flag."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_lazy_flag(self):
+        original = pricing._prices_loaded
+        pricing._prices_loaded = False
+        yield
+        pricing._prices_loaded = original
+
+    def test_calculate_cost_triggers_lazy_load_of_persisted_file(self, tmp_path, monkeypatch):
+        path = tmp_path / "prices.json"
+        path.write_text(json.dumps({
+            "rates": {"lazy-model": {"in": 5.0, "out": 10.0}},
+        }), encoding="utf-8")
+        monkeypatch.setenv("PROMPTRY_PRICES_FILE", str(path))
+
+        assert "lazy-model" not in pricing.RATES  # not loaded yet
+        cost = pricing.calculate_cost("lazy-model", tokens_in=1_000_000, tokens_out=0)
+        assert cost == pytest.approx(5.0)  # first call triggered the load
+
+    def test_direct_rates_consumers_see_persisted_prices_via_ensure(self, tmp_path, monkeypatch):
+        """Consumers that read RATES/PRICES_META directly (CLI table,
+        export_feed) must call ensure_prices_loaded() first to see a
+        persisted refresh, since they don't go through calculate_cost/
+        resolve_model/is_known_model themselves."""
+        path = tmp_path / "prices.json"
+        path.write_text(json.dumps({
+            "version": "2099-01-01",
+            "rates": {"direct-consumer-model": {"in": 3.0, "out": 6.0}},
+        }), encoding="utf-8")
+        monkeypatch.setenv("PROMPTRY_PRICES_FILE", str(path))
+
+        assert "direct-consumer-model" not in pricing.RATES
+        pricing.ensure_prices_loaded()
+        assert "direct-consumer-model" in pricing.RATES
+        assert pricing.PRICES_META["version"] == "2099-01-01"
+
+    def test_ensure_prices_loaded_only_applies_the_file_once(self, tmp_path, monkeypatch):
+        path = tmp_path / "prices.json"
+        path.write_text(json.dumps({
+            "rates": {"once-model": {"in": 1.0, "out": 2.0}},
+        }), encoding="utf-8")
+        monkeypatch.setenv("PROMPTRY_PRICES_FILE", str(path))
+
+        calls = {"n": 0}
+        real_load = pricing.load_persisted_prices
+
+        def counting_load():
+            calls["n"] += 1
+            return real_load()
+
+        monkeypatch.setattr(pricing, "load_persisted_prices", counting_load)
+        pricing.ensure_prices_loaded()
+        pricing.ensure_prices_loaded()
+        pricing.is_known_model("once-model")
+        assert calls["n"] == 1

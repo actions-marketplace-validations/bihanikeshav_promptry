@@ -6,6 +6,7 @@ import pytest
 
 from datetime import datetime, timezone
 
+from promptry import pricing
 from promptry.pricing import (
     RATES,
     REROUTES,
@@ -213,6 +214,65 @@ class TestCacheHitRate:
 
     def test_no_hits(self):
         assert cache_hit_rate(0, 1000) == 0.0
+
+
+class TestRateIndexPerf:
+    """perf: sorted-key lists are precomputed, not re-sorted every call, with
+    a self-healing fallback for direct RATES/REROUTES mutation, plus a small
+    exact-match cache for resolved model -> rates."""
+
+    @pytest.fixture(autouse=True)
+    def _restore(self):
+        rates = {k: dict(v) for k, v in RATES.items()}
+        reroutes = dict(REROUTES)
+        yield
+        RATES.clear(); RATES.update(rates)
+        REROUTES.clear(); REROUTES.update(reroutes)
+        pricing._recompute_rate_indexes()
+
+    def test_precomputed_index_matches_live_dict_length(self):
+        pricing._recompute_rate_indexes()
+        assert len(pricing._rates_sorted_keys) == len(RATES)
+        assert len(pricing._reroutes_sorted_keys) == len(REROUTES)
+
+    def test_lookup_still_correct_after_direct_rates_mutation(self):
+        # Tests (and some legacy call sites) poke RATES directly, bypassing
+        # _recompute_rate_indexes(). The length-mismatch fallback must still
+        # resolve correctly rather than using a stale key list.
+        RATES["zzz-brand-new-model"] = {"in": 9.0, "cached": 4.5, "cache_write": 9.0, "out": 20.0}
+        assert _lookup_rates("zzz-brand-new-model-dated-2099") == RATES["zzz-brand-new-model"]
+
+    def test_resolved_rates_cache_returns_equal_result(self):
+        # Repeated lookups of the same non-canonical slug must be idempotent
+        # and consistent regardless of caching.
+        r1 = _lookup_rates("gpt-4o-2024-11-20")
+        r2 = _lookup_rates("gpt-4o-2024-11-20")
+        assert r1 == r2 == RATES["gpt-4o"]
+
+    def test_cache_invalidated_by_apply_feed(self):
+        # Prime the cache with the old rate, then override it via a feed —
+        # the cached entry must not shadow the new rate.
+        assert _lookup_rates("gpt-4o") == RATES["gpt-4o"]
+        pricing.apply_feed({"rates": {"gpt-4o": {"in": 1.0, "out": 2.0}}})
+        try:
+            assert _lookup_rates("gpt-4o")["in"] == pytest.approx(1.0)
+        finally:
+            pass  # autouse fixture restores RATES/REROUTES + indexes
+
+
+class TestLazyLoad:
+    def test_ensure_prices_loaded_is_idempotent(self):
+        # Calling it repeatedly must not raise and must leave RATES sane.
+        pricing.ensure_prices_loaded()
+        pricing.ensure_prices_loaded()
+        assert "gpt-4o" in RATES
+
+    def test_known_pricing_entry_points_trigger_it(self):
+        # calculate_cost/resolve_model/is_known_model must each be safe to
+        # call without an explicit ensure_prices_loaded() first.
+        assert pricing.is_known_model("gpt-4o") is True
+        assert resolve_model("gpt-4o", "2026-01-01") == "gpt-4o"
+        assert calculate_cost("gpt-4o", tokens_in=0, tokens_out=0) == 0.0
 
 
 class TestCacheSavings:

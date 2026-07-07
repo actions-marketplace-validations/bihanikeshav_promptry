@@ -258,6 +258,7 @@ def apply_pricing_overrides() -> int:
         return 0
     try:
         from promptry import pricing
+        pricing.ensure_prices_loaded()
         for name, rates in overrides.items():
             if isinstance(rates, dict):
                 pricing.RATES[name] = {
@@ -266,6 +267,7 @@ def apply_pricing_overrides() -> int:
                     "cache_write": float(rates.get("cache_write", rates.get("in", 0))),
                     "out": float(rates.get("out", 0)),
                 }
+        pricing._recompute_rate_indexes()
         return len(overrides)
     except Exception:
         return 0

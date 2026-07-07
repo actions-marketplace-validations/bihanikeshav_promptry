@@ -1367,6 +1367,7 @@ def cost_report_cmd(
 def _print_prices_table():
     """Render the current rate table + provenance + active reroutes."""
     from promptry import pricing
+    pricing.ensure_prices_loaded()
     meta = pricing.PRICES_META
     updated = meta.get("updated") or "—"
     console.print(
@@ -1448,6 +1449,7 @@ def prices_cmd(
     Nothing leaves your machine unless you pass --refresh.
     """
     from promptry import pricing
+    pricing.ensure_prices_loaded()
 
     if export is not None:
         export.write_text(json.dumps(pricing.export_feed(), indent=2), encoding="utf-8")

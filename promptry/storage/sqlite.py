@@ -1146,8 +1146,14 @@ class SQLiteStorage(BaseStorage):
             REROUTES,
             cache_savings as _cache_savings,
             calculate_cost as _calc_cost,
+            ensure_prices_loaded as _ensure_prices_loaded,
             resolve_model as _resolve_model,
         )
+        # REROUTES is read directly below (the `if REROUTES:` prefilter), not
+        # through calculate_cost/resolve_model, so it must trigger the lazy
+        # persisted-price load itself or a refreshed reroute table would be
+        # silently ignored on this path.
+        _ensure_prices_loaded()
 
         where = ["created_at >= datetime('now', ? || ' days')"]
         params: list = [f"-{days}"]
