@@ -170,6 +170,9 @@ def test_unsupported_method_raises_not_implemented():
         def list_prompt_summaries(self, offset=0, limit=200):
             raise NotImplementedError
 
+        def list_latest_contents(self, limit=500):
+            raise NotImplementedError
+
         def get_invocation_stats(self, name, days=30):
             raise NotImplementedError
 

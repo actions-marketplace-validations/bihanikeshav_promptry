@@ -140,9 +140,14 @@ class TestInitCLI:
         runner.invoke(app, ["init"])
         monkeypatch.syspath_prepend(str(tmp_path))
         import importlib
-        evals = importlib.import_module("evals")
-        with pytest.raises(NotImplementedError):
-            evals.my_pipeline("What is machine learning?")
+        import sys
+        sys.modules.pop("evals", None)  # never reuse another test's cached module
+        try:
+            evals = importlib.import_module("evals")
+            with pytest.raises(NotImplementedError):
+                evals.my_pipeline("What is machine learning?")
+        finally:
+            sys.modules.pop("evals", None)
 
     def test_init_toml_has_commented_judge_block(self, tmp_path, monkeypatch):
         """The unified promptry.toml scaffold should include a commented [judge] block."""
@@ -152,6 +157,33 @@ class TestInitCLI:
         assert "[judge]" in content
         assert "[models]" in content or "[[models]]" in content
         assert "[pricing" in content
+
+    def test_init_commented_blocks_are_valid_toml_when_uncommented(self, tmp_path, monkeypatch):
+        """Uncommenting the scaffold's [judge]/[[models]]/[pricing] reference
+        blocks must yield parseable TOML — guards against typos in the
+        commented examples users are told to enable."""
+        import sys
+        if sys.version_info >= (3, 11):
+            import tomllib
+        else:
+            import tomli as tomllib
+        monkeypatch.chdir(tmp_path)
+        runner.invoke(app, ["init"])
+        lines = (tmp_path / "promptry.toml").read_text(encoding="utf-8").splitlines()
+        uncommented = []
+        for line in lines:
+            stripped = line.lstrip()
+            # uncomment only "# <toml>" example lines, not prose comments
+            if stripped.startswith("# ") and any(
+                c in stripped for c in ("=", "[", "]")
+            ):
+                uncommented.append(stripped[2:])
+            elif not stripped.startswith("#"):
+                uncommented.append(line)
+        data = tomllib.loads("\n".join(uncommented))
+        assert "judge" in data
+        assert "models" in data
+        assert "pricing" in data
 
     def test_init_next_steps_mentions_api_key_and_doctor(self, tmp_path, monkeypatch):
         """Next-steps output should tell the user how to set an API key and to run doctor."""
