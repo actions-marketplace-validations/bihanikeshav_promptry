@@ -267,6 +267,30 @@ assert_matches(response, r"\w+")
 assert_matches(response, r"[\w.+-]+@[\w-]+\.[\w.]+", fullmatch=False)
 ```
 
+### Deterministic checks: exact match, edit distance, ROUGE-L, embedding distance
+
+`assert_semantic` and `assert_llm` both cost something -- a model load, an API call. When the pipeline's output should match a fixed reference exactly (or nearly exactly), four judge-free assertions do the check with pure Python (or the same local embedding model `assert_semantic` uses) and never touch the network:
+
+```python
+from promptry import assert_exact, assert_levenshtein, assert_rouge_l, assert_embedding_distance
+
+# exact string match (labels, IDs, single-word classifications)
+assert_exact(classify(doc), "invoice")
+assert_exact(classify(doc), "INVOICE", case_sensitive=False)
+
+# edit distance -- tolerate small typos/formatting drift
+assert_levenshtein(response, "the quick brown fox", max_distance=3)
+assert_levenshtein(response, "the quick brown fox", min_ratio=0.9)
+
+# ROUGE-L F1 -- LCS-based overlap, good for summarization-style outputs
+assert_rouge_l(summary, reference_summary, min_score=0.5)
+
+# embedding distance -- 1 - cosine_similarity, same model as assert_semantic
+assert_embedding_distance(response, "expected answer", max_distance=0.2)
+```
+
+`assert_levenshtein` takes exactly one of `max_distance` (absolute edit count) or `min_ratio` (`1 - distance / max(len(actual), len(expected))`) -- passing both or neither raises `ValueError`. `assert_rouge_l` tokenizes on whitespace and computes the standard precision/recall/F1 simplification (no stemming or multi-reference aggregation); if both strings are empty, F1 is defined as 1.0, and if only one is empty, F1 is 0.0.
+
 ### Check factual grounding
 
 `assert_grounded` uses an LLM judge to verify that facts in a response actually exist in the source document. It decomposes the response into claims and checks each one:

@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 # names stay here as re-exports for back-compat (several modules and
 # possibly external callers import them from promptry.assertions).
 from promptry.embeddings import get_embedder as _get_model, set_model, encode as _encode, cosine_similarity as _cosine_similarity
+# Imported as a module (not `from ... import similarity`) so that tests can
+# monkeypatch promptry.embeddings.similarity and have assert_embedding_distance
+# pick up the replacement at call time.
+from promptry import embeddings as _embeddings_module
 
 # LLM judge callable for assert_llm. the user sets this to their own
 # LLM wrapper function: takes a string prompt, returns a string response.
@@ -106,6 +110,211 @@ def assert_semantic(actual: str, expected: str, threshold: float | None = None) 
             f"Semantic similarity {score:.3f} < threshold {threshold}"
         )
     return score
+
+
+def assert_exact(actual: str, expected: str, case_sensitive: bool = True) -> float:
+    """Check that actual equals expected exactly (optionally case-insensitive).
+
+    The $0 assertion: no model, no judge, no tolerance. Use it for
+    classification labels, IDs, and anywhere the pipeline must produce
+    one specific string.
+
+    Returns 1.0 on match, 0.0 on mismatch. Raises AssertionError on mismatch.
+    """
+    a = actual if case_sensitive else actual.lower()
+    e = expected if case_sensitive else expected.lower()
+    passed = a == e
+    score = 1.0 if passed else 0.0
+
+    append_result(AssertionResult(
+        assertion_type="exact",
+        passed=passed,
+        score=score,
+        details={
+            "case_sensitive": case_sensitive,
+            "actual_preview": actual[:200],
+            "expected_preview": expected[:200],
+        },
+    ))
+
+    if not passed:
+        raise AssertionError(f"Expected {expected!r}, got {actual!r}")
+    return score
+
+
+def _levenshtein_distance(a: str, b: str) -> int:
+    """Classic DP edit distance (insert/delete/substitute), O(len(a)*len(b))."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+
+    prev_row = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        curr_row = [i] + [0] * len(b)
+        for j, cb in enumerate(b, start=1):
+            cost = 0 if ca == cb else 1
+            curr_row[j] = min(
+                prev_row[j] + 1,       # deletion
+                curr_row[j - 1] + 1,   # insertion
+                prev_row[j - 1] + cost,  # substitution
+            )
+        prev_row = curr_row
+    return prev_row[-1]
+
+
+def assert_levenshtein(
+    actual: str,
+    expected: str,
+    max_distance: int | None = None,
+    min_ratio: float | None = None,
+) -> float:
+    """Check edit distance between actual and expected (pure-Python DP).
+
+    Exactly one of ``max_distance`` (absolute edit count) or ``min_ratio``
+    (normalized similarity, ``1 - distance / max(len(actual), len(expected))``)
+    must be provided.
+
+    Returns the ratio (0.0-1.0). Raises AssertionError if the threshold
+    isn't met, or ValueError if both/neither threshold is given.
+    """
+    if (max_distance is None) == (min_ratio is None):
+        raise ValueError(
+            "assert_levenshtein requires exactly one of max_distance or min_ratio"
+        )
+
+    distance = _levenshtein_distance(actual, expected)
+    longest = max(len(actual), len(expected))
+    ratio = 1.0 if longest == 0 else 1.0 - (distance / longest)
+
+    if max_distance is not None:
+        passed = distance <= max_distance
+        threshold_desc = f"max_distance={max_distance}"
+    else:
+        passed = ratio >= min_ratio
+        threshold_desc = f"min_ratio={min_ratio}"
+
+    append_result(AssertionResult(
+        assertion_type="levenshtein",
+        passed=passed,
+        score=ratio,
+        details={
+            "distance": distance,
+            "ratio": ratio,
+            "max_distance": max_distance,
+            "min_ratio": min_ratio,
+            "actual_preview": actual[:200],
+            "expected_preview": expected[:200],
+        },
+    ))
+
+    if not passed:
+        raise AssertionError(
+            f"Levenshtein distance {distance} (ratio {ratio:.3f}) failed {threshold_desc}"
+        )
+    return ratio
+
+
+def _lcs_length(a: list[str], b: list[str]) -> int:
+    """Length of the longest common subsequence of two token lists."""
+    if not a or not b:
+        return 0
+    prev_row = [0] * (len(b) + 1)
+    for ta in a:
+        curr_row = [0] * (len(b) + 1)
+        for j, tb in enumerate(b, start=1):
+            if ta == tb:
+                curr_row[j] = prev_row[j - 1] + 1
+            else:
+                curr_row[j] = max(prev_row[j], curr_row[j - 1])
+        prev_row = curr_row
+    return prev_row[-1]
+
+
+def assert_rouge_l(actual: str, expected: str, min_score: float) -> float:
+    """Check ROUGE-L F1 between actual and expected (LCS-based, pure-Python).
+
+    Standard ROUGE-L simplification: whitespace tokenization, then
+    precision = LCS / len(actual_tokens), recall = LCS / len(expected_tokens),
+    F1 = harmonic mean of precision and recall. This ignores stemming,
+    stopword handling, and multi-reference aggregation that some ROUGE
+    implementations add -- it's the deterministic core, not a drop-in
+    replacement for a full ROUGE toolkit.
+
+    Edge cases: if both actual and expected are empty (or all-whitespace),
+    F1 is defined as 1.0 (nothing to miss). If exactly one is empty, F1 is 0.0.
+
+    Returns the F1 score (0.0-1.0). Raises AssertionError if below min_score.
+    """
+    actual_tokens = actual.split()
+    expected_tokens = expected.split()
+
+    if not actual_tokens and not expected_tokens:
+        f1 = 1.0
+        precision = recall = 1.0
+        lcs = 0
+    elif not actual_tokens or not expected_tokens:
+        f1 = 0.0
+        precision = recall = 0.0
+        lcs = 0
+    else:
+        lcs = _lcs_length(actual_tokens, expected_tokens)
+        precision = lcs / len(actual_tokens)
+        recall = lcs / len(expected_tokens)
+        f1 = 0.0 if (precision + recall) == 0 else 2 * precision * recall / (precision + recall)
+
+    passed = f1 >= min_score
+
+    append_result(AssertionResult(
+        assertion_type="rouge_l",
+        passed=passed,
+        score=f1,
+        details={
+            "min_score": min_score,
+            "precision": precision,
+            "recall": recall,
+            "lcs_length": lcs,
+            "actual_preview": actual[:200],
+            "expected_preview": expected[:200],
+        },
+    ))
+
+    if not passed:
+        raise AssertionError(f"ROUGE-L F1 {f1:.3f} < min_score {min_score}")
+    return f1
+
+
+def assert_embedding_distance(actual: str, expected: str, max_distance: float) -> float:
+    """Check that actual and expected are close in embedding space.
+
+    distance = 1 - cosine_similarity(actual, expected), using the same
+    shared embedding model/cache as assert_semantic (via promptry.embeddings.similarity).
+    Lower distance means more similar.
+
+    Returns the distance (lower is better). Raises AssertionError if it
+    exceeds max_distance.
+    """
+    distance = 1.0 - _embeddings_module.similarity(actual, expected)
+    passed = distance <= max_distance
+
+    append_result(AssertionResult(
+        assertion_type="embedding_distance",
+        passed=passed,
+        score=distance,
+        details={
+            "max_distance": max_distance,
+            "actual_preview": actual[:200],
+            "expected_preview": expected[:200],
+        },
+    ))
+
+    if not passed:
+        raise AssertionError(
+            f"Embedding distance {distance:.3f} > max_distance {max_distance}"
+        )
+    return distance
 
 
 def assert_contains(text: str, keywords: list[str], case_sensitive=False) -> float:
