@@ -118,6 +118,78 @@ server work end to end around a single local SQLite store. Numbered 0.10.0, not
 - pytest `TestResult` collection warning spammed every test run.
   Fixed with `__test__ = False`.
 
+### Added
+
+- **Single install** — `pip install promptry` now pulls everything (semantic
+  search, dashboard, judge providers). The old extras (`promptry[semantic]`,
+  `promptry[dashboard]`, `promptry[openai]`, etc.) still install but are now
+  empty groups, kept only for compatibility.
+- **YAML declarative suites** — write suites as `evals.yaml` instead of (or
+  alongside) Python `@suite` files. `--module` accepts an explicit
+  `.yaml`/`.yml` path, or auto-discovers `evals.yaml`/`evals.yml`/
+  `promptry.yaml`/`promptry.yml` when left at its default (`evals`) and no
+  `evals.py` is present.
+- **`promptry new suite`** — a wizard that scaffolds a suite interactively or
+  fully via flags (`--name`, `--yaml`/`--python`, `--pipeline` or
+  `--model`/`--prompt`, repeatable `--case`), writing `evals.yaml` or
+  `evals.py` and printing the exact `promptry run` command to try it.
+- **`--format json|junit`** on `run`, `compare`, and `drift`, plus `--output`
+  to write the report (HTML/plain text for `table`, JSON or JUnit XML for the
+  other formats) straight to a file.
+- **Seven new CLI commands**: `promptry lint` (prompt-template footgun
+  checker, CI-gates on error-level findings), `promptry prompt search`
+  (semantic prompt search), `promptry prompt duplicates` (near-duplicate
+  prompt detection), `promptry cluster` (group recent failed assertions into
+  patterns), `promptry scan` (PII/secret tripwire over captured invocations,
+  `--fail-on-hit` for CI), `promptry replay` (replay captured production
+  inputs through the current pipeline and diff the output), and
+  `promptry golden` (re-run a prompt's golden examples through a model and
+  score drift against the recorded reference).
+- **Judge auto-configuration** — `get_judge()` now falls back to a judge
+  auto-built from `[judge] model` in `promptry.toml` when no explicit
+  `set_judge()` callable is registered.
+- **New deterministic assertions**: `assert_exact`, `assert_levenshtein`,
+  `assert_rouge_l`, `assert_embedding_distance`.
+- **JS SDK tracking expansion + wire schema** —
+  `docs/wire-schema/events.schema.json` is now the single source of truth for
+  the batch payload that the Python `RemoteStorage` backend and the
+  `promptry-js` client both emit.
+- **Dashboard onboarding empty states** guide new projects that have no
+  suites or evals yet toward their first run.
+- **Shell completions** (`promptry --install-completion`).
+- **`promptry doctor` exit codes** — exits 1 when any check fails, so it can
+  gate CI/setup scripts instead of only printing warnings.
+
+### Changed
+
+- **Unified config** — team/project settings that used to live in a separate
+  `.promptry/config.toml` now belong in the canonical `promptry.toml`; the
+  legacy file is still read for back-compat and merged in, but `promptry.toml`
+  wins on conflicts.
+- **Invocations schema migration + SQL aggregation** — invocation metrics
+  promoted to typed columns with aggregation pushed into SQL, instead of
+  pulling rows into Python to sum.
+- **Safety template catalog** extracted from inline Python into a packaged
+  TOML file (`promptry/data/safety_templates.toml`).
+- **`promptry.assertions`** converted from a single module into a package
+  (`judge`, `json_utils`, `text`, `tools`, `conversation` submodules);
+  existing `from promptry.assertions import ...` usage is unaffected.
+- **Dashboard server split into routers**, one per API domain, replacing the
+  single monolithic `server.py` route file.
+- **VS Code extension** consumes `--format json` for run results and adds a
+  `promptry.module` setting; bumped to 0.10.0 to match the core package.
+
+### Deprecated
+
+- Optional-dependency **extras** (`promptry[semantic]`, `promptry[dashboard]`,
+  `promptry[openai]`, `promptry[litellm]`, `promptry[anthropic]`, etc.) — kept
+  as empty groups for compatibility; everything they used to gate now
+  installs by default.
+- **`--local`** dashboard flag — no longer needed, kept only so existing
+  invocations don't break.
+- **`.promptry/config.toml`** legacy path — still honored, but new settings
+  should go in `promptry.toml`.
+
 ## 0.8.0
 
 ### New features
