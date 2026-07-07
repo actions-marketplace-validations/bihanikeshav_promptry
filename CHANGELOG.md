@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.0 (2026-06-01)
+## 0.10.0 (2026-07-08)
 
 First broad public release. The library, CLI, dashboard, GitHub Action, and MCP
 server work end to end around a single local SQLite store. Numbered 0.10.0, not

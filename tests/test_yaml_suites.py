@@ -607,3 +607,51 @@ def test_valid_assertion_keys_covers_documented_set():
         "schema", "llm", "grounded",
     }
     assert keys == expected
+
+
+class TestDriftYamlDiscovery:
+    """drift must work for YAML-only projects (final-review fix)."""
+
+    def _write_suite(self, tmp_path):
+        (tmp_path / "evals.yaml").write_text("""
+suites:
+  - name: yaml-drift
+    model: m
+    prompt: "{input}"
+    cases:
+      - input: "x"
+        expect: []
+""", encoding="utf-8")
+
+    def test_drift_explicit_yaml_module(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from promptry.cli import app
+        monkeypatch.setenv("PROMPTRY_DB", str(tmp_path / "t.db"))
+        monkeypatch.chdir(tmp_path)
+        self._write_suite(tmp_path)
+        result = CliRunner().invoke(app, ["drift", "yaml-drift", "--module", "evals.yaml"])
+        # No score history yet -> not drifting, but discovery must not
+        # explode with "Could not import 'evals.yaml'".
+        assert "Could not import" not in result.output
+        assert result.exit_code == 0
+
+    def test_drift_autodiscovers_evals_yaml(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from promptry.cli import app
+        monkeypatch.setenv("PROMPTRY_DB", str(tmp_path / "t.db"))
+        monkeypatch.chdir(tmp_path)
+        self._write_suite(tmp_path)  # no evals.py present
+        result = CliRunner().invoke(app, ["drift", "yaml-drift"])
+        assert "Could not import" not in result.output
+        assert result.exit_code == 0
+
+    def test_run_bad_module_json_mode_keeps_stdout_pure(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+        from promptry.cli import app
+        monkeypatch.setenv("PROMPTRY_DB", str(tmp_path / "t.db"))
+        monkeypatch.chdir(tmp_path)
+        result = CliRunner().invoke(
+            app, ["run", "x", "--module", "missing.yaml", "--format", "json"],
+        )
+        assert result.exit_code == 1
+        assert result.stdout.strip() == ""

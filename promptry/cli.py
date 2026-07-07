@@ -330,12 +330,16 @@ def _compare_report_to_dict(report) -> dict:
     return report.to_dict()
 
 
-def _import_module(module_path: str):
-    """Import a module by dotted path to trigger @suite registration."""
+def _import_module(module_path: str, err: Optional[Console] = None):
+    """Import a module by dotted path to trigger @suite registration.
+
+    ``err`` is where the failure message is printed; commands with machine
+    formats pass their stderr-bound console so stdout stays pure.
+    """
     try:
         importlib.import_module(module_path)
     except ModuleNotFoundError as e:
-        console.print(f"[red]Error:[/red] Could not import '{module_path}': {e}")
+        (err or console).print(f"[red]Error:[/red] Could not import '{module_path}': {e}")
         raise typer.Exit(1)
 
 
@@ -367,16 +371,17 @@ def _yaml_suite_path(module: str) -> Optional[Path]:
     return None
 
 
-def _discover_suites(module: str) -> None:
+def _discover_suites(module: str, err: Optional[Console] = None) -> None:
     """Register eval suites from either a Python module or a YAML file.
 
-    Unifies suite discovery for run/suites/watch: a ``.yaml``/``.yml`` --module
-    (or an auto-discovered evals.yaml/promptry.yaml) loads declarative suites;
-    anything else is imported as a dotted Python module.
+    Unifies suite discovery for run/suites/watch/drift: a ``.yaml``/``.yml``
+    --module (or an auto-discovered evals.yaml/promptry.yaml) loads declarative
+    suites; anything else is imported as a dotted Python module. ``err`` routes
+    failure messages (see ``_import_module``).
     """
     yaml_path = _yaml_suite_path(module)
     if yaml_path is None:
-        _import_module(module)
+        _import_module(module, err=err)
         return
 
     from promptry.yaml_suites import load_yaml_suites, YamlSuiteError
@@ -384,7 +389,7 @@ def _discover_suites(module: str) -> None:
     try:
         load_yaml_suites(yaml_path)
     except YamlSuiteError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        (err or console).print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
 
@@ -422,7 +427,7 @@ def run_cmd(
     """Run an eval suite. Exit code 1 on regression."""
     fmt, out = _format_and_out(format)
 
-    _discover_suites(module)
+    _discover_suites(module, err=out)
 
     from promptry.runner import run_suite
     from promptry.comparison import compare_with_baseline, format_comparison, explain_regression
@@ -582,7 +587,7 @@ def drift_cmd(
     """Check for score drift in a suite. Exit code 1 if drifting."""
     fmt, out = _format_and_out(format)
 
-    _import_module(module)
+    _discover_suites(module, err=out)
 
     import dataclasses
 

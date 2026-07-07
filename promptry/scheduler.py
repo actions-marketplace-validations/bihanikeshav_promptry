@@ -198,8 +198,15 @@ def _run_loop(suite_name: str, module: str, interval_minutes: int):
         try:
             # invalidate caches so freshly changed files are picked up
             importlib.invalidate_caches()
-            mod = importlib.import_module(module)
-            importlib.reload(mod)
+            if module.endswith((".yaml", ".yml")):
+                from promptry.evaluator import clear_suites
+                from promptry.yaml_suites import load_yaml_suites
+
+                clear_suites()
+                load_yaml_suites(module)
+            else:
+                mod = importlib.import_module(module)
+                importlib.reload(mod)
 
             result = run_suite(suite_name)
             drift = monitor.check(suite_name)
