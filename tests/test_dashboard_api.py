@@ -72,6 +72,34 @@ class TestHealth:
         assert "db_path" in data
 
 
+# ---- Onboarding ----
+
+class TestOnboardingStatus:
+    def test_empty_db_reports_empty(self, client):
+        resp = client.get("/api/onboarding-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data == {"suites": 0, "prompts": 0, "invocations": 0, "empty": True}
+
+    def test_suite_only_not_empty(self, client, storage):
+        _seed_suite(storage, "qa-suite", [0.8])
+        data = client.get("/api/onboarding-status").json()
+        assert data["suites"] >= 1
+        assert data["empty"] is False
+
+    def test_prompt_only_not_empty(self, client, storage):
+        _seed_prompt(storage, "greeting", ["Hello {{name}}"])
+        data = client.get("/api/onboarding-status").json()
+        assert data["prompts"] >= 1
+        assert data["empty"] is False
+
+    def test_invocation_only_not_empty(self, client, storage):
+        storage.record_invocation("my-prompt", metadata={"model": "gpt-4o", "cost": 0.002})
+        data = client.get("/api/onboarding-status").json()
+        assert data["invocations"] >= 1
+        assert data["empty"] is False
+
+
 # ---- Suites ----
 
 class TestSuites:

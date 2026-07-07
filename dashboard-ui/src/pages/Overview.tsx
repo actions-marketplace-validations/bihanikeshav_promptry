@@ -1,10 +1,111 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { KPI, PageHeader, Sparkline, StatusPill } from "../components/ui";
+import { KPI, PageHeader, Sparkline, StatusPill, CopyField, CommandButton } from "../components/ui";
 import { pct, relTime, usd, scoreColor } from "../utils";
-import { getCostData, listBudgets, listFeedback, getFeedbackStats } from "../api/client";
+import { getCostData, listBudgets, listFeedback, getFeedbackStats, getOnboardingStatus } from "../api/client";
 import type { LayoutContext } from "../components/Layout";
-import type { CostResponse, BudgetStatus, FeedbackRow, FeedbackStats } from "../api/types";
+import type { CostResponse, BudgetStatus, FeedbackRow, FeedbackStats, OnboardingStatus } from "../api/types";
+
+const DOCS_URL = "https://promptry.meownikov.xyz";
+
+/* First-run getting-started card. Replaces the zero-value KPI grid when the
+   user has recorded nothing yet — three numbered steps, each with a
+   click-to-copy command, plus a docs link. */
+function OnboardingCard() {
+  const steps: { n: number; title: string; body: string; value: string; display?: string }[] = [
+    {
+      n: 1,
+      title: "Scaffold an eval suite",
+      body: "Generate a starter suite you can fill with your prompts and assertions.",
+      value: "promptry new suite",
+    },
+    {
+      n: 2,
+      title: "Run it",
+      body: "Score the suite. Passing / regressing / drifting status shows up right here.",
+      value: "promptry run <name>",
+    },
+    {
+      n: 3,
+      title: "Instrument your app",
+      body: "Record each live call so cost, latency, and feedback flow into the dashboard.",
+      value: 'promptry.track_invocation("my-prompt", metadata={"model": "gpt-4o", "cost": 0.002})',
+    },
+  ];
+  return (
+    <div className="card enter" style={{ overflow: "hidden", maxWidth: 760, margin: "0 auto" }}>
+      <div style={{ padding: "20px 22px 14px", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text)" }}>Welcome to promptry</div>
+        <div style={{ fontSize: 13, color: "var(--secondary)", marginTop: 5, maxWidth: 560 }}>
+          Nothing recorded yet. Three steps get your eval health and spend flowing into this dashboard —
+          copy a command to start.
+        </div>
+      </div>
+      <div style={{ padding: "6px 22px 4px" }}>
+        {steps.map((s) => (
+          <div
+            key={s.n}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "28px 1fr",
+              gap: 14,
+              padding: "16px 0",
+              borderBottom: s.n < 3 ? "1px solid var(--border)" : "none",
+            }}
+          >
+            <div
+              className="mono"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 999,
+                border: "1px solid var(--accent-line)",
+                background: "var(--accent-soft)",
+                color: "var(--accent)",
+                fontSize: 13,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {s.n}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text)" }}>{s.title}</div>
+              <div style={{ fontSize: 12, color: "var(--secondary)", margin: "3px 0 9px", maxWidth: 520 }}>{s.body}</div>
+              <CopyField value={s.value} display={s.display ?? s.value} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div
+        style={{
+          padding: "13px 22px",
+          borderTop: "1px solid var(--border)",
+          background: "var(--bg-elev)",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+          <code className="mono" style={{ color: "var(--text-dim)" }}>promptry new</code> scaffolds prompts, suites, and datasets.
+        </span>
+        <a
+          href={DOCS_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="btn"
+          style={{ textDecoration: "none" }}
+        >
+          Read the docs ›
+        </a>
+      </div>
+    </div>
+  );
+}
 
 /* one-line clamp that fades instead of cutting with an ellipsis */
 const fade: React.CSSProperties = {
@@ -31,6 +132,17 @@ function SectionCard({ title, sub, action, children, style }: { title: string; s
 const ratingColor = (r: number | null) =>
   r == null ? "var(--border-strong)" : r >= 0.8 ? "var(--success)" : r < 0.5 ? "var(--error)" : "var(--warning)";
 
+/* Actionable per-widget empty state: a one-liner that names what produces the
+   data, optionally with a click-to-copy command/snippet or a link. */
+function Empty({ text, children }: { text: string; children?: ReactNode }) {
+  return (
+    <div style={{ padding: "22px 18px 20px", textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>
+      <div style={{ marginBottom: children ? 12 : 0, lineHeight: 1.5 }}>{text}</div>
+      {children && <div style={{ maxWidth: 400, margin: "0 auto", textAlign: "left" }}>{children}</div>}
+    </div>
+  );
+}
+
 export default function Overview() {
   const { suites } = useOutletContext<LayoutContext>();
   const navigate = useNavigate();
@@ -38,8 +150,10 @@ export default function Overview() {
   const [budgets, setBudgets] = useState<BudgetStatus[]>([]);
   const [fbStats, setFbStats] = useState<FeedbackStats | null>(null);
   const [recentFb, setRecentFb] = useState<FeedbackRow[]>([]);
+  const [onboarding, setOnboarding] = useState<OnboardingStatus | null>(null);
 
   useEffect(() => {
+    getOnboardingStatus().then(setOnboarding).catch(() => setOnboarding(null));
     getCostData(30).then(setCost).catch(() => setCost(null));
     listBudgets().then((r) => setBudgets(r.budgets)).catch(() => setBudgets([]));
     getFeedbackStats(30).then(setFbStats).catch(() => setFbStats(null));
@@ -102,13 +216,20 @@ export default function Overview() {
         description="Eval health and spend at a glance. Dive into Evals or Cost for detail."
       />
 
+      {onboarding?.empty ? (
+        <OnboardingCard />
+      ) : (
+      <>
       {/* eval-health hero + cost KPIs + budget governance */}
       <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 16, marginBottom: 16, alignItems: "stretch" }}>
         {/* Suite health hero: summary stat band + weakest-first list */}
         <div className="card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontSize: 13, fontWeight: 600 }}>Suite health</div>
-            <button className="btn" onClick={() => navigate("/evals")}>All evals ›</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <CommandButton value="promptry new suite" label="New suite" />
+              <button className="btn" onClick={() => navigate("/evals")}>All evals ›</button>
+            </div>
           </div>
           <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
             {[
@@ -123,7 +244,9 @@ export default function Overview() {
             ))}
           </div>
           {health.length === 0 ? (
-            <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>No eval suites yet.</div>
+            <Empty text="No eval suites yet — scaffold one and run it to see scores here.">
+              <CopyField value="promptry new suite" />
+            </Empty>
           ) : (
             <table className="pr">
               <tbody>
@@ -169,7 +292,11 @@ export default function Overview() {
             style={{ flex: 1 }}
           >
             {budgets.length === 0 ? (
-              <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>No budgets set.</div>
+              <Empty text="No budgets set — add one on the Cost page to get alerts before you overspend.">
+                <button className="btn" onClick={() => navigate("/cost")} style={{ display: "flex", margin: "0 auto" }}>
+                  Set a budget ›
+                </button>
+              </Empty>
             ) : (
               <div style={{ padding: "13px 16px" }}>
                 {budgets.map((b) => {
@@ -201,7 +328,9 @@ export default function Overview() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 16 }}>
         <SectionCard title="Spend by module · 30d" action={<button className="btn" onClick={() => navigate("/cost")}>Cost detail ›</button>}>
           {byModule.length === 0 ? (
-            <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>No cost data yet.</div>
+            <Empty text="No cost recorded yet — track each live call and spend breaks down here by module.">
+              <CopyField value={'promptry.track_invocation("my-prompt", metadata={"model": "gpt-4o", "cost": 0.002})'} />
+            </Empty>
           ) : (
             <div style={{ padding: "12px 16px" }}>
               {byModule.map((r) => (
@@ -223,7 +352,9 @@ export default function Overview() {
 
         <SectionCard title="Recent feedback" sub="what end-users are saying" action={<button className="btn" onClick={() => navigate("/feedback")}>All feedback ›</button>}>
           {recentFb.length === 0 ? (
-            <div style={{ padding: 28, textAlign: "center", color: "var(--muted)", fontSize: 12.5 }}>No feedback captured yet.</div>
+            <Empty text="No feedback yet — POST end-user ratings to /api/feedback, keyed by the request_id you pass to track_invocation.">
+              <CopyField value={'curl -X POST localhost:8420/api/feedback -d \'{"request_id":"abc","rating":1}\''} />
+            </Empty>
           ) : (
             <table className="pr" style={{ tableLayout: "fixed", width: "100%" }}>
               <tbody>
@@ -252,6 +383,8 @@ export default function Overview() {
           )}
         </SectionCard>
       </div>
+      </>
+      )}
     </div>
   );
 }

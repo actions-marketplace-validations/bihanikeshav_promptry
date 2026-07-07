@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { KPI, PageHeader, Sparkline, StatusPill, Select } from "../components/ui";
+import { KPI, PageHeader, Sparkline, StatusPill, Select, CommandButton } from "../components/ui";
 import { pct, relTime, scoreColor } from "../utils";
 import type { LayoutContext } from "../components/Layout";
 import type { SuiteSummary } from "../api/types";
@@ -53,6 +53,8 @@ export default function Evals() {
         title="Eval Suites"
         description="Continuous evaluation of every prompt. Regressions surface the moment a run falls below threshold."
         actions={
+          <>
+          <CommandButton value="promptry new suite" label="New suite" />
           <button className="btn" onClick={refresh}>
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path d="M2 6a4 4 0 0 1 7-2.6M10 6a4 4 0 0 1-7 2.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
@@ -60,6 +62,7 @@ export default function Evals() {
             </svg>
             Refresh
           </button>
+          </>
         }
       />
 
@@ -243,7 +246,9 @@ export default function Evals() {
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={10} style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
-                  No suites match this filter.
+                  {suites.length === 0
+                    ? "No eval suites yet — scaffold one with promptry new suite, then run it."
+                    : "No suites match this filter."}
                 </td>
               </tr>
             )}

@@ -1,3 +1,10 @@
+export interface OnboardingStatus {
+  suites: number;
+  prompts: number;
+  invocations: number;
+  empty: boolean;
+}
+
 export interface SuiteSummary {
   name: string;
   latest_score: number | null;
