@@ -216,3 +216,63 @@ class TestFormatReport:
 
         output = format_model_compare(report)
         assert "KEEP BASELINE" in output
+
+
+class TestToDict:
+
+    def test_to_dict_matches_cli_helper_shape(self, storage):
+        """ModelCompareReport.to_dict() must produce exactly the shape the
+        old cli._compare_report_to_dict() helper built (the JSON contract
+        consumed by report.render_compare_report / render_json / render_junit
+        and the dashboard)."""
+        _seed_runs(storage, "test-suite", "gpt-4o", [0.85, 0.87, 0.89])
+        _seed_runs(storage, "test-suite", "claude", [0.92])
+
+        report = compare_models(
+            suite_name="test-suite",
+            candidate="claude",
+            baseline="gpt-4o",
+            storage=storage,
+        )
+
+        data = report.to_dict()
+
+        assert data["suite_name"] == "test-suite"
+        assert set(data["baseline"].keys()) == {
+            "model_version", "run_count", "overall_mean", "overall_std",
+            "overall_min", "overall_max", "avg_cost_per_call",
+        }
+        assert data["baseline"]["model_version"] == "gpt-4o"
+        assert data["candidate"]["model_version"] == "claude"
+        assert data["overall_delta"] == report.overall_delta
+        assert data["percentile"] == report.percentile
+        assert isinstance(data["assertion_comparisons"], list)
+        for ac_dict, ac in zip(data["assertion_comparisons"], report.assertion_comparisons):
+            assert ac_dict == {
+                "assertion_type": ac.assertion_type,
+                "baseline_mean": ac.baseline_mean,
+                "baseline_std": ac.baseline_std,
+                "candidate_score": ac.candidate_score,
+                "delta": ac.delta,
+                "verdict": ac.verdict,
+            }
+        assert data["cost_ratio"] == report.cost_ratio
+        assert data["score_per_dollar_baseline"] == report.score_per_dollar_baseline
+        assert data["score_per_dollar_candidate"] == report.score_per_dollar_candidate
+        assert data["verdict"] == report.verdict
+        assert data["verdict_reason"] == report.verdict_reason
+
+    def test_to_dict_is_json_serializable(self, storage):
+        import json
+
+        _seed_runs(storage, "test-suite", "gpt-4o", [0.85, 0.87, 0.89])
+        _seed_runs(storage, "test-suite", "claude", [0.92])
+
+        report = compare_models(
+            suite_name="test-suite",
+            candidate="claude",
+            baseline="gpt-4o",
+            storage=storage,
+        )
+
+        json.dumps(report.to_dict())  # must not raise
