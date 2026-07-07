@@ -75,7 +75,7 @@ def onboarding_status():
     except Exception:
         prompts = 0
     invocations = 0
-    if hasattr(storage, "count_invocations"):
+    if storage.supports("count_invocations"):
         try:
             invocations = storage.count_invocations()
         except Exception:
@@ -372,7 +372,7 @@ def list_prompts(offset: int = Query(default=0), limit: int = Query(default=200)
     # that don't implement the summaries query yet.
     storage = get_storage()
     summaries = None
-    if hasattr(storage, "list_prompt_summaries"):
+    if storage.supports("list_prompt_summaries"):
         try:
             summaries = storage.list_prompt_summaries(offset=offset, limit=limit)
         except Exception:
@@ -502,7 +502,7 @@ def prompt_runs(name: str, limit: int = Query(default=50, ge=1)):
     """Eval runs that exercised this prompt (newest first) for the prompt↔eval
     linkage on PromptDetail."""
     storage = get_storage()
-    if not hasattr(storage, "get_runs_for_prompt"):
+    if not storage.supports("get_runs_for_prompt"):
         return {"runs": []}
     return {"runs": storage.get_runs_for_prompt(name, limit=limit)}
 
@@ -535,7 +535,7 @@ class _AddExampleReq(BaseModel):
 def list_examples(name: str):
     """Golden examples (promoted traces) for a prompt."""
     storage = get_storage()
-    if not hasattr(storage, "list_golden_examples"):
+    if not storage.supports("list_golden_examples"):
         return {"examples": []}
     return {"examples": storage.list_golden_examples(name)}
 
@@ -545,7 +545,7 @@ def add_example(name: str, body: _AddExampleReq):
     """Promote a captured invocation into a golden example for this prompt:
     its recorded output becomes the reference a re-run is scored against."""
     storage = get_storage()
-    rec = storage.get_invocation(body.invocation_id) if hasattr(storage, "get_invocation") else None
+    rec = storage.get_invocation(body.invocation_id) if storage.supports("get_invocation") else None
     if rec is None:
         raise HTTPException(status_code=404, detail="Invocation not found")
     if not rec.get("input_text"):
@@ -564,7 +564,7 @@ def add_example(name: str, body: _AddExampleReq):
 @app.delete("/api/examples/{example_id}")
 def delete_example(example_id: int):
     storage = get_storage()
-    ok = storage.delete_golden_example(example_id) if hasattr(storage, "delete_golden_example") else False
+    ok = storage.delete_golden_example(example_id) if storage.supports("delete_golden_example") else False
     return {"ok": ok}
 
 
@@ -595,7 +595,7 @@ def promote_prompt(name: str, body: _PromoteReq):
     """Point an environment tag (dev/staging/prod) at a specific version so
     render_prompt(env=...) serves it — a gate between editing and going live."""
     storage = get_storage()
-    if not hasattr(storage, "set_prompt_env"):
+    if not storage.supports("set_prompt_env"):
         raise HTTPException(status_code=501, detail="promotion not supported by this backend")
     ok = storage.set_prompt_env(name, body.version, body.env)
     if not ok:
@@ -607,7 +607,7 @@ def promote_prompt(name: str, body: _PromoteReq):
 def suite_bisect(name: str):
     """Find the first run where the suite regressed (passing→failing)."""
     storage = get_storage()
-    if not hasattr(storage, "bisect_regression"):
+    if not storage.supports("bisect_regression"):
         return {"found": False}
     return storage.bisect_regression(name)
 
@@ -618,7 +618,7 @@ def prune_prompt(name: str, keep: int = Query(default=1, ge=1)):
 
     Use on legacy prompts polluted with baked template+data versions."""
     storage = get_storage()
-    if not hasattr(storage, "prune_prompt_versions"):
+    if not storage.supports("prune_prompt_versions"):
         raise HTTPException(status_code=501, detail="pruning not supported by this storage backend")
     deleted = storage.prune_prompt_versions(name, keep_last=keep)
     return {"ok": True, "name": name, "deleted": deleted, "kept": keep}
@@ -756,7 +756,7 @@ def list_invocations(
     sort=<created_at|cost|latency_ms|tokens_in|tokens_out> + direction, or the
     legacy order='recent'|'cost'. Each row carries its latest feedback rating."""
     storage = get_storage()
-    if not hasattr(storage, "list_invocations"):
+    if not storage.supports("list_invocations"):
         return {"invocations": []}
     return {"invocations": storage.list_invocations(
         name=name, days=days, limit=limit, offset=offset, captured_only=captured_only,
@@ -776,7 +776,7 @@ def submit_feedback(body: _FeedbackIn):
     """Ingest an end-user rating/comment from the host app, correlated to an
     invocation by request_id (the id the app passed to track_invocation)."""
     storage = get_storage()
-    if not hasattr(storage, "save_feedback"):
+    if not storage.supports("save_feedback"):
         raise HTTPException(status_code=501, detail="feedback not supported by this backend")
     fid = storage.save_feedback(body.request_id, rating=body.rating, comment=body.comment, source=body.source)
     return {"ok": True, "id": fid}
@@ -795,7 +795,7 @@ def list_feedback(
     """End-user feedback rows, newest first, paged via limit/offset. q searches
     comment + prompt name. Each row links back to its invocation."""
     storage = get_storage()
-    if not hasattr(storage, "list_feedback"):
+    if not storage.supports("list_feedback"):
         return {"feedback": []}
     return {"feedback": storage.list_feedback(
         name=name, days=days, limit=limit, offset=offset,
@@ -807,7 +807,7 @@ def list_feedback(
 def feedback_stats(days: int = Query(default=30, ge=1)):
     """Satisfaction + counts + per-prompt breakdown + daily positive-rate spark."""
     storage = get_storage()
-    if not hasattr(storage, "get_feedback_stats"):
+    if not storage.supports("get_feedback_stats"):
         return {"days": days, "total": 0, "rated": 0, "positive_rate": None, "by_prompt": [], "sparkline": []}
     return storage.get_feedback_stats(days=days)
 
@@ -817,7 +817,7 @@ def get_invocation(invocation_id: int):
     """A single invocation with captured text, feedback, and an estimated
     split of input cost into fixed template overhead vs variable payload."""
     storage = get_storage()
-    rec = storage.get_invocation(invocation_id) if hasattr(storage, "get_invocation") else None
+    rec = storage.get_invocation(invocation_id) if storage.supports("get_invocation") else None
     if rec is None:
         raise HTTPException(status_code=404, detail="Invocation not found")
 
@@ -881,7 +881,7 @@ def scan_invocation_endpoint(invocation_id: int):
     from promptry.pii import scan_invocation
 
     storage = get_storage()
-    rec = storage.get_invocation(invocation_id) if hasattr(storage, "get_invocation") else None
+    rec = storage.get_invocation(invocation_id) if storage.supports("get_invocation") else None
     if rec is None:
         raise HTTPException(status_code=404, detail="Invocation not found")
     return scan_invocation(rec.get("input_text"), rec.get("output_text"))
@@ -895,7 +895,7 @@ def cost_coverage(days: int = Query(default=30, ge=1)):
     from promptry.pricing import is_known_model
 
     storage = get_storage()
-    seen = storage.get_invocation_models(days=days) if hasattr(storage, "get_invocation_models") else []
+    seen = storage.get_invocation_models(days=days) if storage.supports("get_invocation_models") else []
     uncosted = [m for m in seen if not is_known_model(m["model"])]
     return {
         "days": days,
@@ -955,7 +955,7 @@ def update_project_config(body: _ConfigUpdate):
 def list_budgets():
     """Budgets with current-period spend, % used, and breach flag."""
     storage = get_storage()
-    if not hasattr(storage, "get_budget_status"):
+    if not storage.supports("get_budget_status"):
         return {"budgets": []}
     return {"budgets": storage.get_budget_status()}
 
