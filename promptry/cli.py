@@ -1494,6 +1494,10 @@ def dashboard_cmd(
     local: bool = typer.Option(False, "--local", help="Deprecated, kept for backwards compat."),
 ):
     """Start the promptry dashboard web UI (local-only)."""
+    if local:
+        console.print("[yellow]Warning:[/yellow] --local flag is deprecated and no longer needed. "
+                      "The dashboard is always localhost-only.")
+
     try:
         import uvicorn
     except ImportError:

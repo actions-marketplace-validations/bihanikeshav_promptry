@@ -271,6 +271,7 @@ class TestCompare:
         assert "Error" in result.output or "No baseline" in result.output or "No runs" in result.output
 
 
+<<<<<<< HEAD
 class TestPricesCLI:
     """`promptry prices` — list, export, refresh (opt-in), and coverage."""
 
@@ -324,3 +325,23 @@ class TestPricesCLI:
         result = runner.invoke(app, ["prices", "--check"])
         assert result.exit_code == 0
         assert "No models recorded" in result.output or "coverage" in result.output.lower()
+=======
+class TestDashboard:
+
+    def test_dashboard_local_flag_deprecated(self, monkeypatch):
+        """dashboard --local should emit a deprecation warning."""
+        # Mock uvicorn to avoid import error
+        def mock_run(*args, **kwargs):
+            pass
+
+        import sys
+        import types
+        uvicorn = types.ModuleType('uvicorn')
+        uvicorn.run = mock_run
+        sys.modules['uvicorn'] = uvicorn
+
+        result = runner.invoke(app, ["dashboard", "--local", "--no-open"])
+        # Should see deprecation warning in output or exit with warning
+        # The warning should appear before the error (if any)
+        assert "Warning" in result.output or "deprecated" in result.output.lower()
+>>>>>>> worktree-agent-a2a5ce727e5cb03ce
