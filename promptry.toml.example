@@ -17,3 +17,31 @@
 # interval_minutes = 1440   # how often to run (daily)
 # threshold = 0.05          # flag if score drops more than 5%
 # window = 30               # number of recent runs to look at
+
+# --- Team / project sections (formerly .promptry/config.toml) ---------------
+# These travel through git so a team shares one setup. API keys NEVER go here —
+# they live in env vars (read by litellm); only key presence is reported.
+
+[dashboard]
+# default_days = 14           # default time window in the dashboard
+
+[judge]
+# model = "gpt-4o-mini"       # LLM-judge model id for llm_judge assertions
+# max_prompt_chars = 8000     # cap judge-prompt size (token-spend guard); 0 = off
+
+[slo]                         # CI fails the run if a latency budget is breached
+# max_latency_ms = 8000       # no single test slower than this (0 = not enforced)
+# p95_latency_ms = 5000       # 95th-percentile test latency (0 = not enforced)
+
+# Model list shown in the dashboard Playground (repeat the block per model):
+# [[models]]
+# id = "gpt-4o-mini"
+# provider = "openai"
+# label = "GPT-4o mini"
+
+# Pricing overrides — $ per 1M tokens, fills a coverage gap in the rate table:
+# [pricing.my-custom-model]
+# in = 1.0
+# cached = 0.5
+# cache_write = 1.0
+# out = 2.0

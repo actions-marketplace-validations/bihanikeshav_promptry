@@ -34,7 +34,7 @@ Full documentation for promptry. For a quick overview, see the [README](../READM
 - [MCP server](#mcp-server-llm-agent-integration)
 - [Dashboard](#dashboard)
 - [Config](#config)
-- [Project config (.promptry/config.toml)](#project-config)
+- [Project config (promptry.toml)](#project-config)
 - [Custom storage backend](#custom-storage-backend)
 - [Examples](#examples)
 
@@ -577,7 +577,7 @@ POST /api/budgets
 Missing: llama-3.3-70b, mixtral-8x7b
 ```
 
-Fix it by adding a `[pricing.*]` override in [`.promptry/config.toml`](#project-config), or pull current rates from litellm with `POST /api/cost/refresh-rates`.
+Fix it by adding a `[pricing.*]` override in [`promptry.toml`](#project-config), or pull current rates from litellm with `POST /api/cost/refresh-rates`.
 
 ### Traces and feedback
 
@@ -1256,15 +1256,20 @@ You can also override with env vars: `PROMPTRY_DB`, `PROMPTRY_STORAGE_MODE`, `PR
 
 ## Project config
 
-`promptry.toml` (above) configures the runtime — storage, sampling, thresholds. `.promptry/config.toml` is a separate, committable file for *team* settings the dashboard reads and writes: the model list shown in the Playground, the judge model, dashboard preferences, and pricing overrides. It's meant to travel through git so a team shares one setup.
+`promptry.toml` is the one canonical config file. Alongside the runtime sections above it also carries the *team* settings the dashboard reads and writes — the model list shown in the Playground, the judge model, dashboard preferences, latency SLOs, and pricing overrides — so a single committed file travels through git and shares one setup:
 
 ```toml
-# .promptry/config.toml
+# promptry.toml
 [dashboard]
 default_days = 14
 
 [judge]
-model = "gpt-4o-mini"
+model = "gpt-4o-mini"       # LLM-judge model for llm_judge assertions
+max_prompt_chars = 8000     # cap judge-prompt size; 0 = off
+
+[slo]                       # CI fails the run on a breached latency budget
+max_latency_ms = 8000
+p95_latency_ms = 5000
 
 [[models]]
 id = "gpt-4o-mini"
@@ -1277,6 +1282,10 @@ cached = 0.5
 cache_write = 1.0
 out = 2.0
 ```
+
+**Where it's loaded from (increasing precedence):** `~/.promptry/config.toml` (user-level fallback) → `.promptry/config.toml` (legacy project file) → `promptry.toml` (canonical, wins on conflicts). The legacy `.promptry/config.toml` is still merged for back-compat, but prefer moving these sections into `promptry.toml`. The loaded config is cached and re-reads only when a source file changes on disk.
+
+> **Deprecation note:** earlier versions kept these team sections in a *separate* `.promptry/config.toml`, disjoint from `promptry.toml`. That file still works, but is deprecated in favour of the unified `promptry.toml`. The dashboard's Settings page currently still writes to `.promptry/config.toml`; since `promptry.toml` wins on read, don't keep the same key in both files.
 
 **API keys never go in this file.** They live in your environment (read by litellm); the Settings page only reports *which* providers have a key present (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `AZURE_OPENAI_API_KEY`), never the values. Edit it from the dashboard's **Settings** page (`GET`/`POST /api/config`) or by hand — pricing overrides are merged into the live rate table on save.
 

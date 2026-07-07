@@ -66,6 +66,23 @@ class MonitorConfig:
 
 
 @dataclass
+class DashboardConfig:
+    default_days: int = 14
+
+
+@dataclass
+class JudgeConfig:
+    model: str = ""              # LLM-judge model id (e.g. "gpt-4o-mini")
+    max_prompt_chars: int = 8000  # cap judge-prompt size (token-spend guard); 0 = off
+
+
+@dataclass
+class SloConfig:
+    max_latency_ms: int = 0   # no single test slower than this (0 = not enforced)
+    p95_latency_ms: int = 0   # 95th-percentile test latency (0 = not enforced)
+
+
+@dataclass
 class NotificationsConfig:
     webhook_url: str = ""
     email: str = ""
@@ -83,6 +100,13 @@ class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    # Project/team sections — historically lived in .promptry/config.toml, now
+    # unified into promptry.toml. Also exposed as dicts via load_project_config().
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    judge: JudgeConfig = field(default_factory=JudgeConfig)
+    slo: SloConfig = field(default_factory=SloConfig)
+    models: list = field(default_factory=list)
+    pricing: dict = field(default_factory=dict)
 
 
 def _find_config_file() -> Path | None:
@@ -136,6 +160,31 @@ def _apply_toml(config: Config, data: dict):
             config.monitor.threshold = float(mon["threshold"])
         if "window" in mon:
             config.monitor.window = int(mon["window"])
+
+    if "dashboard" in data:
+        d = data["dashboard"]
+        if "default_days" in d:
+            config.dashboard.default_days = int(d["default_days"])
+
+    if "judge" in data:
+        j = data["judge"]
+        if "model" in j:
+            config.judge.model = j["model"]
+        if "max_prompt_chars" in j:
+            config.judge.max_prompt_chars = int(j["max_prompt_chars"])
+
+    if "slo" in data:
+        sl = data["slo"]
+        if "max_latency_ms" in sl:
+            config.slo.max_latency_ms = int(sl["max_latency_ms"])
+        if "p95_latency_ms" in sl:
+            config.slo.p95_latency_ms = int(sl["p95_latency_ms"])
+
+    if "models" in data:
+        config.models = list(data["models"])
+
+    if "pricing" in data:
+        config.pricing = dict(data["pricing"])
 
     if "notifications" in data:
         n = data["notifications"]

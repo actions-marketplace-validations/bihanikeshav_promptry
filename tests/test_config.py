@@ -12,6 +12,9 @@ from promptry.config import (
     ModelConfig,
     MonitorConfig,
     NotificationsConfig,
+    DashboardConfig,
+    JudgeConfig,
+    SloConfig,
     load_config,
     get_config,
     reset_config,
@@ -58,6 +61,17 @@ class TestDefaults:
         assert cfg.notifications.webhook_url == ""
         assert cfg.notifications.email == ""
         assert cfg.notifications.smtp_port == 587
+
+    def test_project_section_defaults(self):
+        """The unified Config tree grows the project-config sections."""
+        cfg = Config()
+        assert cfg.dashboard.default_days == 14
+        assert cfg.judge.model == ""
+        assert cfg.judge.max_prompt_chars == 8000
+        assert cfg.slo.max_latency_ms == 0
+        assert cfg.slo.p95_latency_ms == 0
+        assert cfg.models == []
+        assert cfg.pricing == {}
 
     def test_storage_invalid_mode_raises(self):
         with pytest.raises(ValueError, match="sync, async, off, or remote"):
@@ -144,6 +158,25 @@ smtp_password = "pass"
         cfg = Config()
         _apply_toml(cfg, {"capture": {"max_chars": 1234}})
         assert cfg.capture.max_chars == 1234
+
+    def test_apply_toml_project_sections(self):
+        """promptry.toml now carries the project sections too; get_config()'s
+        Config tree picks them up (Task 3 reads get_config().judge.model)."""
+        cfg = Config()
+        _apply_toml(cfg, {
+            "dashboard": {"default_days": 30},
+            "judge": {"model": "gpt-4o-mini", "max_prompt_chars": 4000},
+            "slo": {"max_latency_ms": 8000, "p95_latency_ms": 5000},
+            "models": [{"id": "m1", "provider": "openai"}],
+            "pricing": {"m1": {"in": 1.0, "out": 2.0}},
+        })
+        assert cfg.dashboard.default_days == 30
+        assert cfg.judge.model == "gpt-4o-mini"
+        assert cfg.judge.max_prompt_chars == 4000
+        assert cfg.slo.max_latency_ms == 8000
+        assert cfg.slo.p95_latency_ms == 5000
+        assert cfg.models == [{"id": "m1", "provider": "openai"}]
+        assert cfg.pricing == {"m1": {"in": 1.0, "out": 2.0}}
 
     def test_apply_toml_partial(self):
         """Only the sections present in the TOML dict should be applied."""

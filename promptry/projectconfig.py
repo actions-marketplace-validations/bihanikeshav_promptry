@@ -1,11 +1,21 @@
-"""Project-level config in ``.promptry/config.toml`` — committed to the repo
-so a team's model list, judge settings, dashboard prefs, and pricing
-overrides travel through git. API keys are NEVER stored here; they live in
-env vars (read by litellm) and we only report which providers have a key.
+"""Project-level / team config — the model list, judge settings, dashboard
+prefs, and pricing overrides that travel through git so a team shares one
+setup. API keys are NEVER stored here; they live in env vars (read by litellm)
+and we only report which providers have a key.
 
-Layout::
+These sections used to live in a *separate* ``.promptry/config.toml`` file,
+disjoint from the runtime ``promptry.toml`` that :mod:`promptry.config` reads.
+As of the config unification they belong in the one canonical ``promptry.toml``
+alongside ``[storage] [tracking] [model] [monitor]``. ``load_project_config()``
+merges, in increasing order of precedence:
 
-    .promptry/config.toml
+  1. ``~/.promptry/config.toml``   — user-level fallback
+  2. ``./.promptry/config.toml``   — legacy project file (still honored for
+     back-compat; prefer moving these sections into ``promptry.toml``)
+  3. ``./promptry.toml``           — canonical project file (wins on conflicts)
+
+Layout (all in ``promptry.toml``)::
+
       [dashboard]
       default_days = 14
 
@@ -27,9 +37,14 @@ Layout::
       cached = 0.5
       cache_write = 1.0
       out = 2.0
+
+The return value is a plain dict (unchanged shape). The result is memoized and
+invalidated automatically when any source file's mtime changes; call
+:func:`reset_project_config` to force a reload (mirrors ``reset_config``).
 """
 from __future__ import annotations
 
+import copy
 import os
 import sys
 from pathlib import Path
@@ -56,20 +71,56 @@ _DEFAULT_MODELS = [
 
 
 def config_path() -> Path:
-    """Project config path: ./.promptry/config.toml (cwd), committable."""
+    """Legacy project config path: ./.promptry/config.toml (cwd).
+
+    This is where the dashboard's Settings page writes team config for
+    back-compat. Reads unify this file with the canonical ``promptry.toml``
+    (see :func:`load_project_config`); on conflicts ``promptry.toml`` wins.
+    """
     return Path.cwd() / ".promptry" / "config.toml"
 
 
-def load_project_config() -> dict:
-    """Load .promptry/config.toml (or ~/.promptry/config.toml as fallback).
-    Returns a dict with sensible defaults filled in."""
+def _config_sources() -> list[Path]:
+    """Source files in *increasing* order of precedence (later wins)."""
+    return [
+        Path.home() / ".promptry" / "config.toml",  # user-level fallback
+        Path.cwd() / ".promptry" / "config.toml",   # legacy project file
+        Path.cwd() / "promptry.toml",               # canonical project file
+    ]
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge ``override`` onto ``base`` (override wins). Nested
+    tables are merged key-by-key; scalars and lists are replaced wholesale."""
+    out = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _sources_signature() -> tuple:
+    """A cheap fingerprint of the source files (path + mtime) so the cache can
+    self-invalidate when any file changes without an explicit reset."""
+    sig: list = []
+    for p in _config_sources():
+        try:
+            sig.append((str(p), p.stat().st_mtime_ns))
+        except OSError:
+            pass  # file absent -> contributes nothing
+    return tuple(sig)
+
+
+def _load_project_config() -> dict:
     data: dict = {}
-    for p in (config_path(), Path.home() / ".promptry" / "config.toml"):
+    for p in _config_sources():
         if p.is_file():
             try:
                 with open(p, "rb") as f:
-                    data = tomllib.load(f)
-                break
+                    parsed = tomllib.load(f)
+                data = _deep_merge(data, parsed)
             except Exception:
                 pass
     data.setdefault("dashboard", {}).setdefault("default_days", 14)
@@ -79,6 +130,39 @@ def load_project_config() -> dict:
     data.setdefault("pricing", {})
     data.setdefault("slo", {})
     return data
+
+
+# Memoized view. Keyed on the source-file signature so a file edit (e.g. from
+# the dashboard, or a hand edit while a long-running server is up) is picked up
+# without a restart, while a hot loop (per-assertion judge costing) hits cache.
+_project_cache: dict | None = None
+_project_sig: tuple | None = None
+
+
+def load_project_config() -> dict:
+    """Load the unified project config as a dict (cached).
+
+    Merges ``~/.promptry/config.toml`` (fallback), the legacy
+    ``.promptry/config.toml``, and the canonical ``promptry.toml`` — the latter
+    wins on conflicts. Sensible defaults are filled in. The result is memoized
+    and auto-invalidated on source-file mtime changes; use
+    :func:`reset_project_config` to force a reload.
+    """
+    global _project_cache, _project_sig
+    sig = _sources_signature()
+    if _project_cache is None or _project_sig != sig:
+        _project_cache = _load_project_config()
+        _project_sig = sig
+    # Return a deep copy so callers (e.g. the dashboard's update path) can
+    # mutate the result without poisoning the shared cache.
+    return copy.deepcopy(_project_cache)
+
+
+def reset_project_config() -> None:
+    """Drop the memoized project config (mirrors ``config.reset_config``)."""
+    global _project_cache, _project_sig
+    _project_cache = None
+    _project_sig = None
 
 
 def _toml_escape(s: str) -> str:
@@ -134,6 +218,7 @@ def save_project_config(data: dict) -> None:
     p = config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(_dump_toml(data), encoding="utf-8")
+    reset_project_config()  # next read reflects the write
 
 
 def key_status() -> dict[str, bool]:
