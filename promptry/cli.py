@@ -1007,45 +1007,55 @@ from promptry import (
 
 
 # ---------------------------------------------------------------------------
-# Replace this with your actual LLM call.  Every suite below calls one of
-# these helpers -- swap in your real model client and you're good to go.
+# Wire this up to your real LLM/RAG system.  Every suite below -- and every
+# wrapper pipeline further down -- routes through this one function, so
+# hooking it up once makes ALL suites runnable.
+#
+# Working example using litellm (a core promptry dependency, so this just
+# works once you set an API key -- see the doctor command and the README):
+#
+#   from litellm import completion
+#
+#   def my_pipeline(prompt: str) -> str:
+#       response = completion(
+#           model="gpt-4o-mini",  # or "claude-3-5-sonnet-20241022", "gemini/gemini-1.5-flash", ...
+#           messages=[{"role": "user", "content": prompt}],
+#       )
+#       return response.choices[0].message.content
 # ---------------------------------------------------------------------------
 
-def my_pipeline(question: str) -> str:
-    """General-purpose LLM call.  Replace with your real implementation."""
-    return "This is a placeholder response. Hook up your LLM here."
+def my_pipeline(prompt: str) -> str:
+    """Replace this with a call to your real LLM/RAG system -- see the example above."""
+    raise NotImplementedError(
+        "Replace my_pipeline with a call to your LLM/RAG system — see the comment above."
+    )
 
 
 def my_rag_pipeline(question: str) -> str:
     """RAG pipeline: retrieve context, then generate.  Replace with yours."""
     # e.g. context = retriever.search(question)
-    #      return llm(question, context=context)
-    return "Machine learning is a subset of artificial intelligence."
+    #      return my_pipeline(f"Context: {context}\\n\\nQuestion: {question}")
+    return my_pipeline(question)
 
 
 def my_classifier(text: str) -> str:
     """Classification pipeline.  Should return a single label.  Replace with yours."""
-    # e.g. return llm(f"Classify the sentiment: {text}")
-    return "positive"
+    return my_pipeline(f"Classify the sentiment of this text as positive, negative, or neutral: {text}")
 
 
 def my_chat_pipeline(message: str) -> str:
     """Conversational AI pipeline.  Replace with your chatbot / assistant call."""
-    # e.g. return chatbot.send(message)
-    return "I'd be happy to help you with that! Here's what I found."
+    return my_pipeline(message)
 
 
 def my_extraction_pipeline(document: str) -> str:
     """Document extraction pipeline.  Should return a JSON string.  Replace with yours."""
-    # e.g. return llm(f"Extract structured data from: {document}", response_format="json")
-    import json
-    return json.dumps({"name": "Jane Doe", "email": "jane@example.com", "amount": 99.99})
+    return my_pipeline(f"Extract structured data as JSON (name, email, amount) from: {document}")
 
 
 def my_summarizer(text: str) -> str:
     """Summarization pipeline.  Replace with your summarization call."""
-    # e.g. return llm(f"Summarize the following text: {text}")
-    return "The article discusses the impact of artificial intelligence on healthcare."
+    return my_pipeline(f"Summarize the following text: {text}")
 
 
 # ---------------------------------------------------------------------------
@@ -1589,20 +1599,47 @@ def init_cmd():
             '\n'
             '[storage]\n'
             '# db_path = "~/.promptry/promptry.db"\n'
-            '# mode = "sync"    # sync | async | off\n'
+            '# mode = "sync"                # sync | async | off\n'
             '\n'
             '[tracking]\n'
-            '# sample_rate = 1.0\n'
-            '# context_sample_rate = 0.1\n'
+            '# sample_rate = 1.0            # fraction of track() calls that write (1.0 = all)\n'
+            '# context_sample_rate = 0.1    # fraction of track_context() calls (lower in prod)\n'
             '\n'
             '[notifications]\n'
             '# webhook_url = "https://hooks.slack.com/services/..."\n'
             '# email = "you@example.com"\n'
             '\n'
             '[monitor]\n'
-            '# interval_minutes = 1440\n'
-            '# threshold = 0.05\n'
-            '# window = 30\n',
+            '# interval_minutes = 1440   # how often to run (daily)\n'
+            '# threshold = 0.05          # flag if score drops more than 5%\n'
+            '# window = 30               # number of recent runs to look at\n'
+            '\n'
+            '# --- Team / project sections (shared via git; API keys NEVER go here --\n'
+            '# they live in env vars, read by litellm; only key presence is reported) --\n'
+            '\n'
+            '[dashboard]\n'
+            '# default_days = 14           # default time window in the dashboard\n'
+            '\n'
+            '[judge]\n'
+            '# model = "gpt-4o-mini"        # LLM-judge model id for llm_judge / assert_semantic assertions\n'
+            '# max_prompt_chars = 8000      # cap judge-prompt size (token-spend guard); 0 = off\n'
+            '\n'
+            '[slo]                          # CI fails the run if a latency budget is breached\n'
+            '# max_latency_ms = 8000        # no single test slower than this (0 = not enforced)\n'
+            '# p95_latency_ms = 5000        # 95th-percentile test latency (0 = not enforced)\n'
+            '\n'
+            '# Model list shown in the dashboard Playground (repeat the block per model):\n'
+            '# [[models]]\n'
+            '# id = "gpt-4o-mini"\n'
+            '# provider = "openai"\n'
+            '# label = "GPT-4o mini"\n'
+            '\n'
+            '# Pricing overrides — $ per 1M tokens, fills a coverage gap in the rate table:\n'
+            '# [pricing.my-custom-model]\n'
+            '# in = 1.0\n'
+            '# cached = 0.5\n'
+            '# cache_write = 1.0\n'
+            '# out = 2.0\n',
             encoding="utf-8",
         )
         created.append("promptry.toml")
@@ -1619,14 +1656,16 @@ def init_cmd():
         console.print(f"[green]Created:[/green] {', '.join(created)}")
         console.print()
         console.print("Next steps:")
-        console.print("  1. Edit evals.py and hook up your LLM pipeline")
-        console.print("  2. Run: promptry run smoke-test --module evals")
-        console.print("  3. Run: promptry run rag-qa --module evals")
-        console.print("  4. Run: promptry run classification --module evals")
-        console.print("  5. Run: promptry run chat-quality --module evals")
-        console.print("  6. Run: promptry run extraction --module evals")
-        console.print("  7. Run: promptry run summarization --module evals")
-        console.print("  8. Run safety tests: promptry templates run --module evals")
+        console.print("  1. Set your provider API key: export OPENAI_API_KEY=... (or ANTHROPIC_API_KEY)")
+        console.print("  2. Edit evals.py and hook up my_pipeline() to your LLM/RAG system")
+        console.print("  3. Run: promptry doctor   (verify your setup)")
+        console.print("  4. Run: promptry run smoke-test --module evals")
+        console.print("  5. Run: promptry run rag-qa --module evals")
+        console.print("  6. Run: promptry run classification --module evals")
+        console.print("  7. Run: promptry run chat-quality --module evals")
+        console.print("  8. Run: promptry run extraction --module evals")
+        console.print("  9. Run: promptry run summarization --module evals")
+        console.print("  10. Run safety tests: promptry templates run --module evals")
     else:
         console.print("[yellow]Nothing to create, project already initialized.[/yellow]")
 

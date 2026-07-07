@@ -133,6 +133,33 @@ class TestInitCLI:
         # compile() will raise SyntaxError if the source is invalid
         compile(source, "evals.py", "exec")
 
+    def test_init_my_pipeline_raises_not_implemented(self, tmp_path, monkeypatch):
+        """The scaffolded my_pipeline must raise NotImplementedError instead of
+        returning a hardcoded placeholder string that fakes a passing eval."""
+        monkeypatch.chdir(tmp_path)
+        runner.invoke(app, ["init"])
+        monkeypatch.syspath_prepend(str(tmp_path))
+        import importlib
+        evals = importlib.import_module("evals")
+        with pytest.raises(NotImplementedError):
+            evals.my_pipeline("What is machine learning?")
+
+    def test_init_toml_has_commented_judge_block(self, tmp_path, monkeypatch):
+        """The unified promptry.toml scaffold should include a commented [judge] block."""
+        monkeypatch.chdir(tmp_path)
+        runner.invoke(app, ["init"])
+        content = (tmp_path / "promptry.toml").read_text(encoding="utf-8")
+        assert "[judge]" in content
+        assert "[models]" in content or "[[models]]" in content
+        assert "[pricing" in content
+
+    def test_init_next_steps_mentions_api_key_and_doctor(self, tmp_path, monkeypatch):
+        """Next-steps output should tell the user how to set an API key and to run doctor."""
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["init"])
+        assert "OPENAI_API_KEY" in result.output or "ANTHROPIC_API_KEY" in result.output
+        assert "promptry doctor" in result.output
+
 
 class TestTemplatesCLI:
 
