@@ -222,7 +222,10 @@ def _collect_failures(storage, suite_name: str, days: int, limit: int) -> list:
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     runs = storage.get_eval_runs(suite_name, limit=200)
-    failures: list = []
+
+    # Filter to in-window runs first, then fetch all their results in one
+    # batched query instead of one get_eval_results() call per run.
+    in_window_run_ids: list = []
     for run in runs:
         # best-effort timestamp parse; skip runs outside the window
         ts_raw = getattr(run, "timestamp", None) or getattr(run, "created_at", None)
@@ -233,11 +236,19 @@ def _collect_failures(storage, suite_name: str, days: int, limit: int) -> list:
         run_id = getattr(run, "id", None)
         if run_id is None:
             continue
-        try:
-            results = storage.get_eval_results(run_id)
-        except Exception:
-            continue
-        for r in results:
+        in_window_run_ids.append(run_id)
+
+    if not in_window_run_ids:
+        return []
+
+    try:
+        results_by_run = storage.get_eval_results_batch(in_window_run_ids)
+    except Exception:
+        return []
+
+    failures: list = []
+    for run_id in in_window_run_ids:
+        for r in results_by_run.get(run_id, []):
             if _attr(r, "passed", True):
                 continue
             failures.append(r)
