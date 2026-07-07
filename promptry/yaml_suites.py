@@ -174,6 +174,94 @@ def valid_assertion_keys() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Load-time validation of assertion values.
+#
+# Required sub-keys are checked while compiling the YAML, so a typo'd file
+# fails fast with a YamlSuiteError instead of surfacing at run time as a
+# KeyError recorded (and persisted) as a failed assertion.
+# ---------------------------------------------------------------------------
+
+def _require_subkeys(key: str, value: dict, required: tuple, where: str) -> None:
+    missing = [k for k in required if k not in value]
+    if missing:
+        raise YamlSuiteError(
+            f"{where}: '{key}' is missing required key(s): {', '.join(missing)} "
+            f"(got keys: {', '.join(sorted(value)) or '(none)'})"
+        )
+
+
+def _validate_str_or_mapping(key: str, value: Any, required: tuple, where: str) -> None:
+    """Value may be a plain string, or a mapping carrying ``required`` keys."""
+    if isinstance(value, str):
+        return
+    if isinstance(value, dict):
+        _require_subkeys(key, value, required, where)
+        return
+    raise YamlSuiteError(
+        f"{where}: '{key}' must be a string or a mapping with "
+        f"{'/'.join(required)}, got {type(value).__name__}"
+    )
+
+
+def _validate_mapping_only(key: str, value: Any, required: tuple, where: str) -> None:
+    """Value must be a mapping carrying all ``required`` keys."""
+    if not isinstance(value, dict):
+        raise YamlSuiteError(
+            f"{where}: '{key}' must be a mapping with {', '.join(required)}, "
+            f"got {type(value).__name__}"
+        )
+    _require_subkeys(key, value, required, where)
+
+
+def _validate_keywords(key: str, value: Any, where: str) -> None:
+    """contains/not_contains: a string or a list of strings."""
+    if isinstance(value, str):
+        return
+    if isinstance(value, (list, tuple)):
+        bad = [v for v in value if not isinstance(v, str)]
+        if bad:
+            raise YamlSuiteError(
+                f"{where}: '{key}' list items must all be strings, "
+                f"got {bad[0]!r} ({type(bad[0]).__name__})"
+            )
+        return
+    raise YamlSuiteError(
+        f"{where}: '{key}' must be a string or a list of strings, "
+        f"got {type(value).__name__}"
+    )
+
+
+def _validate_levenshtein(value: Any, where: str) -> None:
+    _validate_mapping_only("levenshtein", value, ("expected",), where)
+    if ("max_distance" in value) == ("min_ratio" in value):
+        raise YamlSuiteError(
+            f"{where}: 'levenshtein' requires exactly one of "
+            f"max_distance or min_ratio"
+        )
+
+
+def _validate_assertion_value(key: str, value: Any, where: str) -> None:
+    """Load-time shape check for one assertion entry."""
+    if key in ("contains", "not_contains"):
+        _validate_keywords(key, value, where)
+    elif key == "regex":
+        _validate_str_or_mapping(key, value, ("pattern",), where)
+    elif key in ("exact", "semantic"):
+        _validate_str_or_mapping(key, value, ("expected",), where)
+    elif key == "llm":
+        _validate_str_or_mapping(key, value, ("criteria",), where)
+    elif key == "grounded":
+        _validate_str_or_mapping(key, value, ("source",), where)
+    elif key == "levenshtein":
+        _validate_levenshtein(value, where)
+    elif key == "rouge_l":
+        _validate_mapping_only(key, value, ("expected", "min_score"), where)
+    elif key == "embedding_distance":
+        _validate_mapping_only(key, value, ("expected", "max_distance"), where)
+    # json_valid: any truthy marker is fine; schema: validated by the compiler.
+
+
+# ---------------------------------------------------------------------------
 # JSON-schema -> pydantic model (so `schema:` can be authored in YAML and still
 # flow through the existing assert_schema, which validates against a model).
 # ---------------------------------------------------------------------------
@@ -188,16 +276,62 @@ _JSON_TYPES: dict[str, Any] = {
 }
 
 
+# JSON-schema constructs the compiler cannot enforce. Silently degrading them
+# to Any would make e.g. an `enum` author believe values are being checked
+# when they are not (false PASS), so they are rejected loudly at load time.
+_UNSUPPORTED_SCHEMA_KEYS = (
+    "$ref", "anyOf", "oneOf", "allOf", "not", "enum", "items",
+    "patternProperties", "additionalProperties", "if", "then", "else",
+)
+
+_SCHEMA_SUPPORTED_MSG = (
+    "the supported subset is a flat object schema: "
+    "'type', 'properties' (each with a scalar 'type': "
+    "string/integer/number/boolean/array/object), and 'required'. "
+    "For anything richer, define the suite in Python with a pydantic model."
+)
+
+
+def _reject_unsupported_schema(spec: dict, where: str) -> None:
+    for bad in _UNSUPPORTED_SCHEMA_KEYS:
+        if bad in spec:
+            raise YamlSuiteError(
+                f"'schema' {where} uses unsupported construct '{bad}' -- "
+                f"{_SCHEMA_SUPPORTED_MSG}"
+            )
+
+
 def _model_from_json_schema(schema: Any):
     if not isinstance(schema, dict):
         raise YamlSuiteError("'schema' must be a JSON-schema mapping (e.g. {type: object, properties: {...}})")
     from pydantic import create_model
 
+    _reject_unsupported_schema(schema, "(top level)")
+
     props = schema.get("properties") or {}
     required = set(schema.get("required") or [])
     fields: dict[str, tuple] = {}
     for fname, fspec in props.items():
-        ftype = _JSON_TYPES.get((fspec or {}).get("type"), Any)
+        fspec = fspec or {}
+        if not isinstance(fspec, dict):
+            raise YamlSuiteError(
+                f"'schema' property '{fname}' must be a mapping like "
+                f"{{type: string}}, got {type(fspec).__name__}"
+            )
+        _reject_unsupported_schema(fspec, f"property '{fname}'")
+        if "properties" in fspec:
+            raise YamlSuiteError(
+                f"'schema' property '{fname}' declares nested 'properties', "
+                f"which the YAML schema compiler cannot enforce -- "
+                f"{_SCHEMA_SUPPORTED_MSG}"
+            )
+        ftype_name = fspec.get("type")
+        if ftype_name is not None and ftype_name not in _JSON_TYPES:
+            raise YamlSuiteError(
+                f"'schema' property '{fname}' has unsupported type "
+                f"{ftype_name!r} -- {_SCHEMA_SUPPORTED_MSG}"
+            )
+        ftype = _JSON_TYPES.get(ftype_name, Any)
         if fname in required:
             fields[fname] = (ftype, ...)
         else:
@@ -280,6 +414,8 @@ def _compile_expect(expect: Any, where: str) -> list[tuple[Callable, Any]]:
                 )
             if key == "schema":
                 value = _model_from_json_schema(value)
+            else:
+                _validate_assertion_value(key, value, where)
             compiled.append((handler, value))
     return compiled
 

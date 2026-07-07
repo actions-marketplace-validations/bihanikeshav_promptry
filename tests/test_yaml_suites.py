@@ -348,6 +348,182 @@ suites:
         assert result.overall_pass is True
 
 
+class TestLoadTimeValidation:
+    """Missing required sub-keys must fail at LOAD time with a YamlSuiteError,
+    not surface at run time as a KeyError recorded as a failed assertion."""
+
+    def _load(self, tmp_path, expect_block):
+        path = _write(tmp_path, f"""
+suites:
+  - name: v
+    model: m
+    prompt: "{{input}}"
+    cases:
+      - input: "x"
+        expect:
+{expect_block}
+""")
+        return load_yaml_suites(path)
+
+    @pytest.mark.parametrize("expect_block,needle", [
+        # mapping form missing its required sub-key
+        ("          - semantic: {threshold: 0.5}", "expected"),
+        ("          - exact: {case_sensitive: true}", "expected"),
+        ("          - regex: {fullmatch: false}", "pattern"),
+        ("          - llm: {threshold: 0.5}", "criteria"),
+        ("          - grounded: {threshold: 0.5}", "source"),
+        ("          - rouge_l: {expected: hi}", "min_score"),
+        ("          - rouge_l: {min_score: 0.5}", "expected"),
+        ("          - embedding_distance: {expected: hi}", "max_distance"),
+        ("          - embedding_distance: {max_distance: 0.5}", "expected"),
+        ("          - levenshtein: {min_ratio: 0.5}", "expected"),
+    ])
+    def test_missing_required_subkey_fails_at_load(self, tmp_path, expect_block, needle):
+        with pytest.raises(YamlSuiteError) as exc:
+            self._load(tmp_path, expect_block)
+        assert needle in str(exc.value)
+
+    def test_levenshtein_requires_exactly_one_threshold_neither(self, tmp_path):
+        with pytest.raises(YamlSuiteError, match="exactly one"):
+            self._load(tmp_path, "          - levenshtein: {expected: hi}")
+
+    def test_levenshtein_requires_exactly_one_threshold_both(self, tmp_path):
+        with pytest.raises(YamlSuiteError, match="exactly one"):
+            self._load(
+                tmp_path,
+                "          - levenshtein: {expected: hi, max_distance: 2, min_ratio: 0.5}",
+            )
+
+    def test_empty_mapping_where_string_expected(self, tmp_path):
+        with pytest.raises(YamlSuiteError, match="expected"):
+            self._load(tmp_path, "          - semantic: {}")
+
+    @pytest.mark.parametrize("key", ["contains", "not_contains"])
+    def test_contains_rejects_non_string_values(self, tmp_path, key):
+        with pytest.raises(YamlSuiteError, match="string"):
+            self._load(tmp_path, f"          - {key}: {{bad: mapping}}")
+
+    @pytest.mark.parametrize("key", ["contains", "not_contains"])
+    def test_contains_rejects_non_string_list_items(self, tmp_path, key):
+        with pytest.raises(YamlSuiteError, match="string"):
+            self._load(tmp_path, f"          - {key}: [ok, 42]")
+
+    def test_valid_forms_still_load(self, tmp_path):
+        # sanity: every documented valid form still compiles at load time
+        names = self._load(tmp_path, """
+          - contains: "a"
+          - contains: [a, b]
+          - not_contains: "z"
+          - regex: "(a|b)"
+          - regex: {pattern: "a", fullmatch: false}
+          - exact: "a"
+          - exact: {expected: "a", case_sensitive: false}
+          - semantic: {expected: "a", threshold: 0.5}
+          - levenshtein: {expected: "a", min_ratio: 0.5}
+          - levenshtein: {expected: "a", max_distance: 2}
+          - rouge_l: {expected: "a", min_score: 0.5}
+          - embedding_distance: {expected: "a", max_distance: 0.5}
+          - json_valid: true
+          - llm: "criteria here"
+          - llm: {criteria: "c", threshold: 0.5}
+          - grounded: {source: "s"}
+""")
+        assert names == ["v"]
+
+
+class TestSchemaUnsupportedConstructs:
+    """The JSON-schema compiler must reject constructs it can't enforce,
+    instead of silently degrading them to Any (false PASSes)."""
+
+    def _load_schema(self, tmp_path, schema_yaml):
+        path = _write(tmp_path, f"""
+suites:
+  - name: s
+    model: m
+    prompt: "{{input}}"
+    cases:
+      - input: "x"
+        expect:
+          - schema:
+{schema_yaml}
+""")
+        return load_yaml_suites(path)
+
+    def test_enum_rejected(self, tmp_path):
+        with pytest.raises(YamlSuiteError) as exc:
+            self._load_schema(tmp_path, """
+              type: object
+              properties:
+                status: {type: string, enum: [open, closed]}
+""")
+        assert "enum" in str(exc.value)
+
+    def test_ref_rejected(self, tmp_path):
+        with pytest.raises(YamlSuiteError) as exc:
+            self._load_schema(tmp_path, """
+              type: object
+              properties:
+                nested: {"$ref": "#/definitions/thing"}
+""")
+        assert "$ref" in str(exc.value)
+
+    def test_anyof_rejected(self, tmp_path):
+        with pytest.raises(YamlSuiteError) as exc:
+            self._load_schema(tmp_path, """
+              type: object
+              properties:
+                value:
+                  anyOf:
+                    - {type: string}
+                    - {type: number}
+""")
+        assert "anyOf" in str(exc.value)
+
+    def test_array_items_rejected(self, tmp_path):
+        with pytest.raises(YamlSuiteError) as exc:
+            self._load_schema(tmp_path, """
+              type: object
+              properties:
+                tags:
+                  type: array
+                  items: {type: string}
+""")
+        assert "items" in str(exc.value)
+
+    def test_nested_object_properties_rejected(self, tmp_path):
+        with pytest.raises(YamlSuiteError) as exc:
+            self._load_schema(tmp_path, """
+              type: object
+              properties:
+                address:
+                  type: object
+                  properties:
+                    city: {type: string}
+""")
+        msg = str(exc.value).lower()
+        assert "nested" in msg or "properties" in msg
+
+    def test_error_names_supported_subset(self, tmp_path):
+        with pytest.raises(YamlSuiteError) as exc:
+            self._load_schema(tmp_path, """
+              type: object
+              properties:
+                status: {type: string, enum: [a]}
+""")
+        # points the user at what IS supported
+        assert "type" in str(exc.value) and "properties" in str(exc.value)
+
+    def test_flat_schema_still_works(self, tmp_path):
+        names = self._load_schema(tmp_path, """
+              type: object
+              properties:
+                amount: {type: number}
+                name: {type: string}
+              required: [amount]
+""")
+        assert names == ["s"]
+
+
 class TestCliDiscovery:
     """CLI run/suites discover suites from an explicit .yaml or an
     auto-discovered evals.yaml/promptry.yaml."""
