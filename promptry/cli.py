@@ -309,30 +309,13 @@ def dataset_generate(
 
 
 def _suite_result_to_dict(result) -> dict:
-    """Convert a SuiteResult to a plain dict for report rendering."""
-    tests = []
-    for t in result.tests:
-        assertions = []
-        for a in t.assertions:
-            assertions.append({
-                "assertion_type": a.assertion_type,
-                "passed": a.passed,
-                "score": a.score,
-                "details": getattr(a, "details", None),
-            })
-        tests.append({
-            "test_name": t.test_name,
-            "passed": t.passed,
-            "latency_ms": t.latency_ms,
-            "error": t.error,
-            "assertions": assertions,
-        })
-    return {
-        "suite_name": result.suite_name,
-        "overall_pass": result.overall_pass,
-        "overall_score": result.overall_score,
-        "tests": tests,
-    }
+    """Convert a SuiteResult to a plain dict for report rendering.
+
+    Thin wrapper around ``SuiteResult.to_dict()`` -- the canonical shape
+    now lives on the model (see promptry/models.py) since it's the JSON
+    contract consumed by report.py and the dashboard.
+    """
+    return result.to_dict()
 
 
 def _compare_report_to_dict(report) -> dict:

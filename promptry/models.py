@@ -61,6 +61,29 @@ class TestResult:
     error: str | None = None
     latency_ms: float = 0.0
 
+    def to_dict(self) -> dict:
+        """Canonical dict shape consumed by report.py and the dashboard.
+
+        Assertions are read via getattr rather than an import of
+        AssertionResult (avoids the circular import noted above) and
+        matches the tolerant access pattern the pre-refactor helper used.
+        """
+        assertions = []
+        for a in self.assertions:
+            assertions.append({
+                "assertion_type": a.assertion_type,
+                "passed": a.passed,
+                "score": a.score,
+                "details": getattr(a, "details", None),
+            })
+        return {
+            "test_name": self.test_name,
+            "passed": self.passed,
+            "latency_ms": self.latency_ms,
+            "error": self.error,
+            "assertions": assertions,
+        }
+
 
 @dataclass
 class SuiteResult:
@@ -73,6 +96,21 @@ class SuiteResult:
     model_version: str | None = None
     run_id: int | None = None
 
+    def to_dict(self) -> dict:
+        """Canonical dict shape for report rendering.
+
+        Note: prompt_name/prompt_version/model_version/run_id are
+        intentionally NOT included -- this mirrors the pre-refactor
+        ``cli._suite_result_to_dict`` shape exactly, which is the JSON
+        contract consumed by report.py and the dashboard.
+        """
+        return {
+            "suite_name": self.suite_name,
+            "overall_pass": self.overall_pass,
+            "overall_score": self.overall_score,
+            "tests": [t.to_dict() for t in self.tests],
+        }
+
 
 # ---- comparison ----
 
@@ -82,6 +120,14 @@ class ComparisonResult:
     baseline_value: float
     current_value: float
     passed: bool
+
+    def to_dict(self) -> dict:
+        return {
+            "metric": self.metric,
+            "baseline_value": self.baseline_value,
+            "current_value": self.current_value,
+            "passed": self.passed,
+        }
 
 
 @dataclass
