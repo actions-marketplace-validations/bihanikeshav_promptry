@@ -69,6 +69,7 @@ include = ["promptry*"]
 
 [tool.setuptools.package-data]
 "promptry.dashboard" = ["static/**/*"]
+"promptry.data" = ["*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
