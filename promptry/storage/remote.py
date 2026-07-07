@@ -304,6 +304,9 @@ class RemoteStorage(BaseStorage):
     def list_prompt_summaries(self, offset: int = 0, limit: int = 200):
         return self._local.list_prompt_summaries(offset=offset, limit=limit)
 
+    def list_latest_contents(self, limit: int = 500):
+        return self._local.list_latest_contents(limit=limit)
+
     def prune_prompt_versions(self, name: str, keep_last: int = 1) -> int:
         return self._local.prune_prompt_versions(name, keep_last=keep_last)
 

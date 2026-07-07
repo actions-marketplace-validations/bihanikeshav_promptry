@@ -423,6 +423,32 @@ class SQLiteStorage(BaseStorage):
                 })
             return out
 
+    def list_latest_contents(self, limit: int = 500) -> list[tuple[str, str]]:
+        """(name, content) for the latest version of every prompt name.
+
+        "Latest" matches get_prompt()'s notion: MAX(version) per name. A
+        self-join on the per-name max version avoids the get_prompt() N+1
+        that prompt_search used to do (one query total instead of 1 + N).
+        """
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """
+                SELECT p.name AS name, p.content AS content
+                  FROM prompts p
+                  JOIN (
+                        SELECT name, MAX(version) AS max_version
+                          FROM prompts
+                         GROUP BY name
+                       ) latest
+                    ON p.name = latest.name AND p.version = latest.max_version
+                 ORDER BY p.name
+                 LIMIT ?
+                """,
+                (limit,),
+            )
+            return [(row["name"], row["content"]) for row in cur.fetchall()]
+
     def get_invocation_stats(self, name: str, days: int = 30) -> dict:
         """Per-call distribution for one prompt over the window: count plus
         min/avg/p50/p95/max for input tokens, output tokens, cost and
@@ -1120,8 +1146,14 @@ class SQLiteStorage(BaseStorage):
             REROUTES,
             cache_savings as _cache_savings,
             calculate_cost as _calc_cost,
+            ensure_prices_loaded as _ensure_prices_loaded,
             resolve_model as _resolve_model,
         )
+        # REROUTES is read directly below (the `if REROUTES:` prefilter), not
+        # through calculate_cost/resolve_model, so it must trigger the lazy
+        # persisted-price load itself or a refreshed reroute table would be
+        # silently ignored on this path.
+        _ensure_prices_loaded()
 
         where = ["created_at >= datetime('now', ? || ' days')"]
         params: list = [f"-{days}"]

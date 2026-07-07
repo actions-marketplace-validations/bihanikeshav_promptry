@@ -23,7 +23,15 @@ def _normalize(text: str) -> str:
 
 
 def _latest_contents(storage, limit: int = 500) -> list[tuple[str, str]]:
-    """(name, latest content) for every prompt name, skipping empties."""
+    """(name, latest content) for every prompt name, skipping empties.
+
+    Prefers storage.list_latest_contents() (one query). Falls back to the
+    older list_prompt_summaries() + get_prompt() N+1 for storages that don't
+    implement it yet (e.g. hand-rolled test stubs).
+    """
+    if hasattr(storage, "list_latest_contents"):
+        return [(name, content) for name, content in storage.list_latest_contents(limit=limit) if content]
+
     out: list[tuple[str, str]] = []
     if not hasattr(storage, "list_prompt_summaries") or not hasattr(storage, "get_prompt"):
         return out

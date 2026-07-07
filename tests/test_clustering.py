@@ -84,12 +84,19 @@ class _MockStorage:
     def __init__(self, runs, results_by_run):
         self._runs = runs
         self._results = results_by_run
+        self.batch_calls = 0
+        self.single_calls = 0
 
     def get_eval_runs(self, suite_name, limit=200):
         return self._runs
 
     def get_eval_results(self, run_id):
+        self.single_calls += 1
         return self._results.get(run_id, [])
+
+    def get_eval_results_batch(self, run_ids):
+        self.batch_calls += 1
+        return {rid: self._results.get(rid, []) for rid in run_ids}
 
 
 def test_cluster_failures_groups_by_signature_in_string_mode():
@@ -175,6 +182,23 @@ def test_cluster_failures_filters_runs_outside_window():
     # Only the fresh run should contribute
     assert any("new" in r for r in reps)
     assert not any("old" in r for r in reps)
+
+
+def test_cluster_failures_uses_one_batch_call_not_per_run():
+    """Perf: _collect_failures must fetch results for all in-window runs in a
+    single get_eval_results_batch() call, never per-run get_eval_results()."""
+    results_by_run = {
+        i: [FakeResult(assertion_type="contains", details={"missing": ["x"]})]
+        for i in range(1, 11)
+    }
+    storage = _MockStorage(
+        runs=[_MockRun(i) for i in range(1, 11)],
+        results_by_run=results_by_run,
+    )
+    report = cluster_failures("rag", days=30, min_cluster_size=1, mode="string", storage=storage)
+    assert report.total_failures == 10
+    assert storage.batch_calls == 1
+    assert storage.single_calls == 0
 
 
 def test_cluster_failures_populates_test_names_and_windows():

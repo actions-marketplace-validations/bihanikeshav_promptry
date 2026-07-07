@@ -58,6 +58,43 @@ class TestPromptStorage:
         assert len(records) == 2
         assert all(r.name == "a" for r in records)
 
+
+class TestListLatestContents:
+    """perf: single-query replacement for the get_prompt()-per-name N+1
+    prompt_search used to do."""
+
+    def test_returns_latest_version_content_per_name(self, storage):
+        storage.save_prompt("a", "A v1", "ha1")
+        storage.save_prompt("a", "A v2", "ha2")
+        storage.save_prompt("b", "B v1", "hb1")
+        out = dict(storage.list_latest_contents())
+        assert out == {"a": "A v2", "b": "B v1"}
+
+    def test_matches_get_prompt_latest_notion(self, storage):
+        """Whatever get_prompt(name) (no version) returns as latest content
+        must match what list_latest_contents() returns for that name."""
+        for name, versions in {"x": ["1", "2", "3"], "y": ["only"]}.items():
+            for i, content in enumerate(versions):
+                storage.save_prompt(name, content, f"{name}-h{i}")
+        latest_map = dict(storage.list_latest_contents())
+        for name in ("x", "y"):
+            assert latest_map[name] == storage.get_prompt(name).content
+
+    def test_empty_storage_returns_empty(self, storage):
+        assert storage.list_latest_contents() == []
+
+    def test_respects_limit(self, storage):
+        for i in range(5):
+            storage.save_prompt(f"p{i}", f"content {i}", f"h{i}")
+        out = storage.list_latest_contents(limit=2)
+        assert len(out) == 2
+
+    def test_ordered_by_name(self, storage):
+        storage.save_prompt("zeta", "z", "hz")
+        storage.save_prompt("alpha", "a", "ha")
+        out = storage.list_latest_contents()
+        assert [name for name, _ in out] == ["alpha", "zeta"]
+
     def test_tagging(self, storage):
         record = storage.save_prompt("test", "Content", "h1")
         storage.tag_prompt(record.id, "prod")

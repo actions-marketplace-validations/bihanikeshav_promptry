@@ -162,6 +162,9 @@ class AsyncWriter(BaseStorage):
     def list_prompt_summaries(self, offset=0, limit=200):
         return self._storage.list_prompt_summaries(offset=offset, limit=limit)
 
+    def list_latest_contents(self, limit=500):
+        return self._storage.list_latest_contents(limit=limit)
+
     def prune_prompt_versions(self, name, keep_last=1):
         return self._storage.prune_prompt_versions(name, keep_last=keep_last)
 

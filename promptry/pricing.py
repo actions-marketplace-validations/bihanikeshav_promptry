@@ -5,6 +5,8 @@ from provider invoices for finance purposes.
 """
 from __future__ import annotations
 
+import threading
+
 # Per 1M tokens USD. Provider-model -> (input, cached_read, cache_write, output)
 # Structured to capture each provider's caching economics:
 #   - OpenAI: cached reads 50% off, no cache write premium
@@ -81,6 +83,91 @@ REROUTES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Perf indexes over RATES/REROUTES.
+#
+# resolve_model()/_lookup_rates() do a fuzzy prefix match ("gpt-4o-2024-11-20"
+# -> "gpt-4o") by scanning keys longest-first so the more specific key wins.
+# Re-sorting the keys on every call is wasted work once the tables stop
+# changing at runtime (the common case), so precompute the sorted key lists
+# once and only recompute when RATES/REROUTES are actually mutated (feed
+# apply, litellm refresh, persisted-price load). Tests and other code also
+# poke RATES/REROUTES directly without calling that hook, so both lookups
+# fall back to a lazy re-sort whenever the precomputed list's length doesn't
+# match the live dict — cheap to check, and self-healing if a hook is missed.
+_rates_sorted_keys: list[str] = []
+_reroutes_sorted_keys: list[str] = []
+# Exact-match cache: literal queried model string -> the RATES key it resolves
+# to (or None if nothing matches). Keyed on the *pre-resolution* model string,
+# so repeated calls for the same served-model slug (e.g. every invocation of
+# "gpt-4o-2024-11-20") skip the prefix scan entirely. We deliberately cache the
+# MATCHED KEY, not the rates dict: the actual rates are re-read from RATES on
+# every hit, so a value overwrite at the same key (`RATES["gpt-4o"] = {...}`,
+# or a test-teardown `RATES.clear(); RATES.update(saved)`) is reflected
+# immediately without needing _recompute_rate_indexes() to run. If the cached
+# key has since been deleted from RATES (a same-length key swap), the hit is
+# treated as a miss and the model is re-resolved from scratch. Also cleared
+# whenever the indexes are recomputed (key-count changes).
+_rates_cache: dict[str, str | None] = {}
+
+
+def _recompute_rate_indexes() -> None:
+    """Refresh the precomputed sorted-key lists and clear the resolution
+    cache. Call after mutating RATES or REROUTES."""
+    global _rates_sorted_keys, _reroutes_sorted_keys
+    _rates_sorted_keys = sorted(RATES.keys(), key=len, reverse=True)
+    _reroutes_sorted_keys = sorted(REROUTES.keys(), key=len, reverse=True)
+    _rates_cache.clear()
+
+
+_recompute_rate_indexes()  # initial computation for the bundled snapshot
+
+
+def _rates_sort_keys() -> list[str]:
+    """Sorted RATES keys (longest first), self-healing if RATES was mutated
+    without going through _recompute_rate_indexes()."""
+    if len(_rates_sorted_keys) != len(RATES):
+        _recompute_rate_indexes()
+    return _rates_sorted_keys
+
+
+def _reroutes_sort_keys() -> list[str]:
+    """Sorted REROUTES keys (longest first), same self-healing as above."""
+    if len(_reroutes_sorted_keys) != len(REROUTES):
+        _recompute_rate_indexes()
+    return _reroutes_sorted_keys
+
+
+# ---------------------------------------------------------------------------
+# Lazy load of a previously-refreshed price feed.
+#
+# load_persisted_prices() reads and parses ~/.promptry/prices.json (or
+# PROMPTRY_PRICES_FILE). That's disk I/O on every import, paid even by
+# short-lived CLI invocations that never touch pricing. Defer it to the
+# first call of calculate_cost()/resolve_model()/is_known_model() (the three
+# entry points that need current rates), guarded so it only ever runs once.
+# ---------------------------------------------------------------------------
+_prices_loaded = False
+_prices_load_lock = threading.Lock()
+
+
+def ensure_prices_loaded() -> None:
+    """Apply a previously-refreshed price feed on first use. Idempotent and
+    safe to call from every pricing entry point — a no-op after the first
+    call. Every consumer of RATES/REROUTES/PRICES_META (CLI, dashboard,
+    projectconfig overrides, storage cost aggregation) must call this before
+    reading those globals directly, since only calculate_cost/resolve_model/
+    is_known_model trigger it implicitly."""
+    global _prices_loaded
+    if _prices_loaded:
+        return
+    with _prices_load_lock:
+        if _prices_loaded:
+            return
+        load_persisted_prices()
+        _prices_loaded = True
+
+
 def _as_date(when):
     """Coerce a date / datetime / 'YYYY-MM-DD...' string to a date, else None."""
     from datetime import date, datetime
@@ -107,11 +194,12 @@ def resolve_model(model: str, when=None) -> str:
     reroutes. `when` is the call's date; on/after a reroute's effective date the
     slug bills at its replacement. Without `when` we can't know which side of the
     cutoff a call is on, so no reroute is applied (back-compatible)."""
+    ensure_prices_loaded()
     if not model or when is None:
         return model
     reroute = REROUTES.get(model)
     if reroute is None:  # fuzzy: dated variants (grok-4-1-fast-non-reasoning-xxxx)
-        for key in sorted(REROUTES, key=len, reverse=True):
+        for key in _reroutes_sort_keys():
             if model.startswith(key):
                 reroute = REROUTES[key]
                 break
@@ -153,16 +241,53 @@ def calculate_cost(
 
 
 def _lookup_rates(model: str) -> dict | None:
-    """Fuzzy lookup: 'gpt-4o-2024-11-20' -> 'gpt-4o' via prefix matching."""
+    """Fuzzy lookup: 'gpt-4o-2024-11-20' -> 'gpt-4o' via prefix matching.
+
+    Exact-match cache keyed on the literal queried string, mapping to the
+    RATES key it resolves to (not the rates dict itself) so repeated calls
+    for the same served-model slug skip the prefix scan without ever serving
+    a stale value: on a hit we always re-read RATES[key] fresh, so a same-key
+    value overwrite (`RATES["gpt-4o"] = {...}`, or a test-teardown
+    `RATES.clear(); RATES.update(saved)`) is picked up immediately, with no
+    dependency on _recompute_rate_indexes() having been called. If the cached
+    key was since deleted from RATES (a same-length key swap), the fresh read
+    comes back None and we treat that as a cache miss and re-resolve from
+    scratch, so a deleted key's rates can never be handed back.
+    """
+    ensure_prices_loaded()
     if not model:
         return None
+    if model in _rates_cache:
+        key = _rates_cache[model]
+        if key is not None:
+            result = RATES.get(key)
+            if result is not None:
+                return result
+            # Cached key no longer exists (deleted); fall through and
+            # re-resolve instead of trusting the stale mapping.
+        else:
+            return None
     if model in RATES:
-        return RATES[model]
-    # Fallback: find best prefix match
-    for key in sorted(RATES.keys(), key=len, reverse=True):
-        if model.startswith(key):
-            return RATES[key]
-    return None
+        key = model
+        result = RATES[model]
+    else:
+        key = None
+        result = None
+        for candidate in _rates_sort_keys():
+            if model.startswith(candidate):
+                candidate_result = RATES.get(candidate)
+                if candidate_result is None:
+                    # The sorted-key index only self-heals on a length
+                    # mismatch (see _rates_sort_keys), so a same-key-count
+                    # swap (del one key, add another) can leave a deleted
+                    # key in the stale list. Skip it rather than treat it
+                    # as an authoritative match — keep scanning.
+                    continue
+                key = candidate
+                result = candidate_result
+                break
+    _rates_cache[model] = key
+    return result
 
 
 def estimate_tokens(text: str) -> int:
@@ -212,6 +337,8 @@ def refresh_rates_from_litellm() -> int:
         cw_m = (cw * 1_000_000) if cw is not None else in_m
         RATES[name] = {"in": in_m, "cached": cached_m, "cache_write": cw_m, "out": out_m}
         updated += 1
+    if updated:
+        _recompute_rate_indexes()
     return updated
 
 
@@ -317,6 +444,7 @@ def apply_feed(data: dict) -> int:
         PRICES_META["version"] = data["version"]
     PRICES_META["source"] = data.get("source", "feed")
     PRICES_META["updated"] = data.get("updated") or PRICES_META.get("updated")
+    _recompute_rate_indexes()
     return len(data["rates"])
 
 
@@ -380,8 +508,3 @@ def cache_savings(
         return None
     delta_per_token = (rates["in"] - rates["cached"]) / 1_000_000
     return max(0.0, round(cached_tokens * delta_per_token, 6))
-
-
-# Apply a previously-refreshed feed (if any) so the bundled snapshot is updated
-# the moment pricing is imported. Guarded — a bad cache never breaks costing.
-load_persisted_prices()
