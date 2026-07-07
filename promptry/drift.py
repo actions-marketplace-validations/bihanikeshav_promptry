@@ -58,6 +58,7 @@ class DriftMonitor:
         suite_name: str,
         window: int | None = None,
         threshold: float | None = None,
+        history: list | None = None,
     ) -> DriftReport:
         """Check if a suite's scores are drifting downward.
 
@@ -66,12 +67,18 @@ class DriftMonitor:
             window: how many recent runs to include (default from config)
             threshold: slope steeper than -threshold counts as drift
                 (default from config)
+            history: pre-fetched (timestamp, score) pairs (newest-first), same
+                shape as storage.get_score_history(). Pass this when the caller
+                already fetched the history (e.g. for a sparkline) to avoid a
+                second identical query. When omitted, fetched here exactly as
+                before.
         """
         config = get_config()
         window = window or config.monitor.window
         threshold = threshold if threshold is not None else config.monitor.threshold
 
-        history = self._storage.get_score_history(suite_name, limit=window)
+        if history is None:
+            history = self._storage.get_score_history(suite_name, limit=window)
 
         if len(history) < 2:
             return DriftReport(

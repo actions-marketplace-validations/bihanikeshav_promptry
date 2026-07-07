@@ -157,3 +157,37 @@ class TestDriftMonitor:
         report = DriftMonitor(storage=storage).check("outlier")
         assert report.latest_z is not None
         assert report.latest_z < -2  # strongly negative
+
+    def test_passing_history_gives_identical_report_to_no_history(self, storage):
+        """perf: passing a pre-fetched history must not change the result."""
+        scores = [0.95, 0.90, 0.82, 0.75, 0.65]
+        self._seed_runs(storage, "declining2", scores)
+        monitor = DriftMonitor(storage=storage)
+        without = monitor.check("declining2", threshold=0.01)
+        from promptry.config import get_config
+        history = storage.get_score_history("declining2", limit=get_config().monitor.window)
+        with_history = monitor.check("declining2", threshold=0.01, history=history)
+        assert with_history == without
+
+    def test_passing_history_skips_the_storage_fetch(self, storage):
+        """perf: check() must not call get_score_history when history is given."""
+        scores = [0.9, 0.8, 0.7, 0.6, 0.5]
+        self._seed_runs(storage, "prefetched", scores)
+        monitor = DriftMonitor(storage=storage)
+        history = storage.get_score_history("prefetched", limit=30)
+
+        calls = {"n": 0}
+        real_get_score_history = storage.get_score_history
+
+        def counting_get_score_history(*a, **kw):
+            calls["n"] += 1
+            return real_get_score_history(*a, **kw)
+
+        storage.get_score_history = counting_get_score_history
+        try:
+            report = monitor.check("prefetched", threshold=0.01, history=history)
+        finally:
+            storage.get_score_history = real_get_score_history
+
+        assert calls["n"] == 0
+        assert report.scores == [s for _, s in reversed(history)]

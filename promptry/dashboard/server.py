@@ -93,6 +93,7 @@ def onboarding_status():
 @app.get("/api/suites")
 def list_suites():
     storage = get_storage()
+    from promptry.config import get_config
     from promptry.drift import DriftMonitor
 
     names = storage.list_suite_names()
@@ -101,15 +102,22 @@ def list_suites():
     # Batch-fetch the latest run per suite (1 query instead of N)
     runs_by_suite = storage.get_eval_runs_batch(names, limit_per_suite=1)
 
+    # drift_monitor.check() would otherwise re-fetch this same history itself
+    # (with a limit of config.monitor.window). Fetch once here at whichever
+    # limit is larger, slice for the sparkline, and hand the rest to check()
+    # so it never re-queries.
+    drift_window = get_config().monitor.window
+    history_limit = max(10, drift_window)
+
     result = []
     for name in names:
         suite_runs = runs_by_suite.get(name, [])
         latest = suite_runs[0] if suite_runs else None
 
-        history = storage.get_score_history(name, limit=10)
-        sparkline = [score for _, score in reversed(history)]
+        history = storage.get_score_history(name, limit=history_limit)
+        sparkline = [score for _, score in reversed(history[:10])]
 
-        drift_report = drift_monitor.check(name)
+        drift_report = drift_monitor.check(name, history=history[:drift_window])
 
         result.append({
             "name": name,
