@@ -8,6 +8,10 @@ from promptry.feedback import analyze_votes
 from promptry.evaluator import suite, check_all
 from promptry.assertions import (
     assert_semantic,
+    assert_exact,
+    assert_levenshtein,
+    assert_rouge_l,
+    assert_embedding_distance,
     assert_contains,
     assert_not_contains,
     assert_schema,
@@ -82,6 +86,10 @@ __all__ = [
     "suite",
     "check_all",
     "assert_semantic",
+    "assert_exact",
+    "assert_levenshtein",
+    "assert_rouge_l",
+    "assert_embedding_distance",
     "assert_contains",
     "assert_not_contains",
     "assert_schema",

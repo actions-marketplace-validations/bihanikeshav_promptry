@@ -8,6 +8,10 @@ from promptry.assertions import (
     assert_json_valid,
     assert_matches,
     assert_grounded,
+    assert_exact,
+    assert_levenshtein,
+    assert_rouge_l,
+    assert_embedding_distance,
     clean_json,
 )
 
@@ -377,3 +381,184 @@ class TestAssertGrounded:
         with run_context():
             with pytest.raises(AssertionError, match="unparseable"):
                 assert_grounded("response", "source", judge=bad_judge)
+
+
+# ---- assert_exact ----
+
+
+class TestAssertExact:
+
+    def test_exact_match(self):
+        with run_context() as results:
+            score = assert_exact("invoice", "invoice")
+        assert score == 1.0
+        assert results[0].passed is True
+        assert results[0].assertion_type == "exact"
+
+    def test_mismatch_raises(self):
+        with run_context():
+            with pytest.raises(AssertionError, match="Expected 'invoice', got 'receipt'"):
+                assert_exact("receipt", "invoice")
+
+    def test_case_sensitive_by_default(self):
+        with run_context():
+            with pytest.raises(AssertionError):
+                assert_exact("Invoice", "invoice")
+
+    def test_case_insensitive_opt_in(self):
+        with run_context() as results:
+            score = assert_exact("Invoice", "invoice", case_sensitive=False)
+        assert score == 1.0
+        assert results[0].passed is True
+
+    def test_empty_strings_match(self):
+        with run_context() as results:
+            score = assert_exact("", "")
+        assert score == 1.0
+
+
+# ---- assert_levenshtein ----
+
+
+class TestAssertLevenshtein:
+
+    def test_identical_strings_zero_distance(self):
+        with run_context() as results:
+            score = assert_levenshtein("hello", "hello", max_distance=0)
+        assert score == 1.0
+        assert results[0].details["distance"] == 0
+        assert results[0].assertion_type == "levenshtein"
+
+    def test_max_distance_boundary_pass(self):
+        # "kitten" -> "sitting" is edit distance 3
+        with run_context() as results:
+            score = assert_levenshtein("kitten", "sitting", max_distance=3)
+        assert results[0].details["distance"] == 3
+        assert results[0].passed is True
+
+    def test_max_distance_boundary_fail(self):
+        with run_context():
+            with pytest.raises(AssertionError, match="Levenshtein distance"):
+                assert_levenshtein("kitten", "sitting", max_distance=2)
+
+    def test_min_ratio_boundary_pass(self):
+        # distance 3, longest len 7 -> ratio = 1 - 3/7 = 0.5714...
+        with run_context() as results:
+            score = assert_levenshtein("kitten", "sitting", min_ratio=0.57)
+        assert results[0].passed is True
+        assert score == pytest.approx(1 - 3 / 7)
+
+    def test_min_ratio_boundary_fail(self):
+        with run_context():
+            with pytest.raises(AssertionError):
+                assert_levenshtein("kitten", "sitting", min_ratio=0.58)
+
+    def test_both_thresholds_raises_value_error(self):
+        with pytest.raises(ValueError, match="exactly one"):
+            assert_levenshtein("a", "b", max_distance=1, min_ratio=0.5)
+
+    def test_no_thresholds_raises_value_error(self):
+        with pytest.raises(ValueError, match="exactly one"):
+            assert_levenshtein("a", "b")
+
+    def test_empty_vs_empty(self):
+        with run_context() as results:
+            score = assert_levenshtein("", "", max_distance=0)
+        assert score == 1.0
+        assert results[0].details["distance"] == 0
+
+    def test_empty_vs_nonempty(self):
+        with run_context() as results:
+            score = assert_levenshtein("", "abc", max_distance=3)
+        assert results[0].details["distance"] == 3
+        assert results[0].passed is True
+
+
+# ---- assert_rouge_l ----
+
+
+class TestAssertRougeL:
+
+    def test_identical_text_perfect_score(self):
+        with run_context() as results:
+            score = assert_rouge_l("the quick brown fox", "the quick brown fox", min_score=1.0)
+        assert score == 1.0
+        assert results[0].assertion_type == "rouge_l"
+
+    def test_partial_overlap(self):
+        with run_context() as results:
+            score = assert_rouge_l("the quick fox", "the quick brown fox", min_score=0.5)
+        # LCS = ["the", "quick", "fox"] = 3; precision = 3/3 = 1.0; recall = 3/4 = 0.75
+        # F1 = 2*1.0*0.75/(1.0+0.75) = 0.857...
+        assert score == pytest.approx(2 * 1.0 * 0.75 / (1.0 + 0.75))
+        assert results[0].passed is True
+
+    def test_below_min_score_raises(self):
+        with run_context():
+            with pytest.raises(AssertionError, match="ROUGE-L F1"):
+                assert_rouge_l("completely different", "the quick brown fox", min_score=0.5)
+
+    def test_both_empty_defined_as_one(self):
+        with run_context() as results:
+            score = assert_rouge_l("", "", min_score=1.0)
+        assert score == 1.0
+        assert results[0].passed is True
+
+    def test_actual_empty_expected_nonempty(self):
+        with run_context():
+            with pytest.raises(AssertionError):
+                assert_rouge_l("", "some reference text", min_score=0.1)
+
+    def test_expected_empty_actual_nonempty(self):
+        with run_context() as results:
+            with pytest.raises(AssertionError):
+                score = assert_rouge_l("some actual text", "", min_score=0.1)
+        assert results[0].score == 0.0
+
+    def test_whitespace_only_treated_as_empty(self):
+        with run_context() as results:
+            score = assert_rouge_l("   ", "   ", min_score=1.0)
+        assert score == 1.0
+
+
+# ---- assert_embedding_distance ----
+
+
+class TestAssertEmbeddingDistance:
+    """Stubs promptry.embeddings.similarity so no model download is needed."""
+
+    def test_close_passes(self, monkeypatch):
+        import promptry.embeddings as embeddings
+        monkeypatch.setattr(embeddings, "similarity", lambda a, b: 0.95)
+
+        with run_context() as results:
+            score = assert_embedding_distance("actual", "expected", max_distance=0.2)
+        assert score == pytest.approx(0.05)
+        assert results[0].passed is True
+        assert results[0].assertion_type == "embedding_distance"
+
+    def test_boundary_exact_pass(self, monkeypatch):
+        import promptry.embeddings as embeddings
+        monkeypatch.setattr(embeddings, "similarity", lambda a, b: 0.8)
+
+        with run_context() as results:
+            score = assert_embedding_distance("actual", "expected", max_distance=0.2)
+        assert score == pytest.approx(0.2)
+        assert results[0].passed is True
+
+    def test_far_apart_raises(self, monkeypatch):
+        import promptry.embeddings as embeddings
+        monkeypatch.setattr(embeddings, "similarity", lambda a, b: 0.1)
+
+        with run_context():
+            with pytest.raises(AssertionError, match="Embedding distance"):
+                assert_embedding_distance("actual", "expected", max_distance=0.2)
+
+    def test_identical_zero_distance(self, monkeypatch):
+        import promptry.embeddings as embeddings
+        monkeypatch.setattr(embeddings, "similarity", lambda a, b: 1.0)
+
+        with run_context() as results:
+            score = assert_embedding_distance("same", "same", max_distance=0.0)
+        assert score == 0.0
+        assert results[0].passed is True
