@@ -155,6 +155,100 @@ class TestNewSuiteYaml:
         names = load_yaml_suites(tmp_path / "evals.yaml")
         assert names == ["fresh-suite"]
 
+    def test_run_hint_uses_module_flag_when_evals_py_exists(self, tmp_path, monkeypatch):
+        """After `init` both evals.py and evals.yaml exist; default discovery
+        imports evals.py, so the printed run command must pass --module."""
+        monkeypatch.chdir(tmp_path)
+        runner.invoke(app, ["init"])
+        assert (tmp_path / "evals.py").exists()
+
+        result = runner.invoke(app, [
+            "new", "suite",
+            "--name", "hinted",
+            "--yaml",
+            "--pipeline", "wiznewmod:my_pipeline",
+            "--case", "hi::contains::hello",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "promptry run hinted --module evals.yaml" in result.output
+
+    def test_run_hint_bare_when_no_evals_py(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, [
+            "new", "suite",
+            "--name", "bare",
+            "--yaml",
+            "--pipeline", "wiznewmod:my_pipeline",
+            "--case", "hi::contains::hello",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "promptry run bare" in result.output
+        assert "--module" not in result.output
+
+    def test_run_hint_custom_yaml_output(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, [
+            "new", "suite",
+            "--name", "custom-out",
+            "--yaml",
+            "--pipeline", "wiznewmod:my_pipeline",
+            "--case", "hi::contains::hello",
+            "--output", "custom.yaml",
+        ])
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "custom.yaml").exists()
+        assert "promptry run custom-out --module custom.yaml" in result.output
+
+    def test_run_hint_custom_python_output(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, [
+            "new", "suite",
+            "--name", "custom-py",
+            "--python",
+            "--pipeline", "wiznewmod:my_pipeline",
+            "--case", "hi::contains::hello",
+            "--output", "mysuites.py",
+        ])
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "mysuites.py").exists()
+        assert "promptry run custom-py --module mysuites" in result.output
+
+    def test_refuses_to_clobber_invalid_yaml(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        yaml_path = tmp_path / "evals.yaml"
+        broken = "suites: [unclosed\n  - ::: {{{\n"
+        yaml_path.write_text(broken, encoding="utf-8")
+
+        result = runner.invoke(app, [
+            "new", "suite",
+            "--name", "nope",
+            "--yaml",
+            "--pipeline", "wiznewmod:my_pipeline",
+            "--case", "hi::contains::hello",
+        ])
+        assert result.exit_code != 0
+        assert "--output" in result.output
+        # file untouched
+        assert yaml_path.read_text(encoding="utf-8") == broken
+
+    def test_refuses_to_clobber_yaml_without_suites_list(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        yaml_path = tmp_path / "evals.yaml"
+        other = "someone_elses_config: true\nvalues: [1, 2, 3]\n"
+        yaml_path.write_text(other, encoding="utf-8")
+
+        result = runner.invoke(app, [
+            "new", "suite",
+            "--name", "nope",
+            "--yaml",
+            "--pipeline", "wiznewmod:my_pipeline",
+            "--case", "hi::contains::hello",
+        ])
+        assert result.exit_code != 0
+        assert "suites" in result.output
+        # file untouched
+        assert yaml_path.read_text(encoding="utf-8") == other
+
 
 class TestNewSuitePython:
 

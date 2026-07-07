@@ -1177,6 +1177,11 @@ def _write_yaml_suite(path: Path, suite_dict: dict) -> None:
     correct but re-serializes the file -- any existing comments/formatting in
     a *non-empty* evals.yaml are not preserved (an accepted wizard trade-off;
     see the task report).
+
+    Never clobbers a file it can't safely merge into: invalid YAML, or a
+    document that isn't the expected ``{suites: [...]}`` shape, raises
+    ValueError and leaves the file untouched. A file that parses to ``None``
+    (empty, or the comments-only ``init`` scaffold) is treated as fresh.
     """
     import yaml
 
@@ -1184,9 +1189,20 @@ def _write_yaml_suite(path: Path, suite_dict: dict) -> None:
     if path.is_file():
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError:
-            data = None
-    if not isinstance(data, dict) or not isinstance(data.get("suites"), list):
+        except yaml.YAMLError as e:
+            raise ValueError(
+                f"{path} exists but is not valid YAML ({e}). "
+                f"Fix the file, or write the new suite elsewhere with --output."
+            ) from e
+        if data is not None and not (
+            isinstance(data, dict) and isinstance(data.get("suites"), list)
+        ):
+            raise ValueError(
+                f"{path} exists but doesn't have the expected top-level "
+                f"'suites:' list -- refusing to overwrite it. "
+                f"Fix the file, or write the new suite elsewhere with --output."
+            )
+    if data is None:
         data = {"suites": []}
 
     data["suites"].append(suite_dict)
@@ -1385,15 +1401,42 @@ def new_suite_cmd(
     if yaml_mode:
         target = output or (Path.cwd() / "evals.yaml")
         suite_dict = _build_yaml_suite_dict(name, description, pipeline, model, prompt, grouped)
-        _write_yaml_suite(target, suite_dict)
+        try:
+            _write_yaml_suite(target, suite_dict)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1)
     else:
         target = output or (Path.cwd() / "evals.py")
         block = _build_python_block(name, description, pipeline, model, prompt, grouped)
         _write_python_suite(target, block)
 
+    run_command = _run_command_for(name, target, output, yaml_mode)
+
     console.print(f"[green]Wrote[/green] suite '{name}' to {target}")
     console.print()
-    console.print(f"Run it with: promptry run {name}")
+    console.print(f"Run it with: {run_command}")
+
+
+def _run_command_for(name: str, target: Path, output: Optional[Path], yaml_mode: bool) -> str:
+    """Build the exact `promptry run` command for the suite just written.
+
+    A bare `promptry run <name>` only works when default suite discovery
+    (--module evals, YAML fallback only if evals.py is absent) will find the
+    target file, so:
+
+    - custom --output: always needs an explicit --module (the YAML path, or
+      the .py file's module name);
+    - default evals.yaml while an evals.py exists in cwd (e.g. right after
+      `promptry init`, which scaffolds both): discovery would import evals.py
+      and miss the YAML suite, so pass --module evals.yaml explicitly.
+    """
+    if output is not None:
+        module_arg = str(output) if yaml_mode else Path(output).stem
+        return f"promptry run {name} --module {module_arg}"
+    if yaml_mode and (Path.cwd() / "evals.py").is_file():
+        return f"promptry run {name} --module {target.name}"
+    return f"promptry run {name}"
 
 
 # ---- init ----
