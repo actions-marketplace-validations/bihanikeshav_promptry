@@ -538,9 +538,11 @@ def run_cmd(
 
         try:
             from promptry.storage import get_storage
-            baseline_dict = load_baseline_dict(get_storage(), result, compare)
+            storage = get_storage()
         except Exception:
             baseline_dict = None
+        else:
+            baseline_dict = load_baseline_dict(storage, result, compare)
         md_content = render_markdown_summary(results_dict, baseline_dict)
         markdown.write_text(md_content, encoding="utf-8")
         out.print(f"[green]Markdown summary written to[/green] {markdown}")
