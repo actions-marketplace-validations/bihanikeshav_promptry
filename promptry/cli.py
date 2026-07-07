@@ -16,7 +16,7 @@ from promptry.registry import PromptRegistry
 app = typer.Typer(
     name="promptry",
     help="Regression protection for LLM pipelines.",
-    add_completion=False,
+    add_completion=True,
     no_args_is_help=True,
 )
 prompt_app = typer.Typer(help="Manage prompt versions.", no_args_is_help=True)
@@ -268,7 +268,7 @@ def dataset_generate(
     output: Path = typer.Option(
         Path("generated_suite.py"), "--output", "-o", help="Path to write the Python file."
     ),
-    count: Optional[int] = typer.Option(None, "--count", "-n", help="Override the count in the spec."),
+    count: Optional[int] = typer.Option(None, "--count", help="Override the count in the spec."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print to stdout instead of writing a file."),
 ):
     """Generate a @suite-decorated Python file from an LLM using a spec."""
@@ -366,10 +366,15 @@ def _import_module(module_path: str):
         raise typer.Exit(1)
 
 
+def _list_suite_names(suites) -> str:
+    """Format registered suite names for an 'unknown suite' error message."""
+    return ", ".join(s.name for s in suites) or "(none)"
+
+
 @app.command("run")
 def run_cmd(
     suite_name: str = typer.Argument(..., help="Suite to run."),
-    module: str = typer.Option(..., "--module", "-m", help="Python module with suite definitions."),
+    module: str = typer.Option("evals", "--module", "-m", help="Python module with suite definitions (default: evals)."),
     compare: Optional[str] = typer.Option(None, "--compare", "-c", help="Tag to compare against."),
     prompt_name: Optional[str] = typer.Option(None, "--prompt-name"),
     prompt_version: Optional[int] = typer.Option(None, "--prompt-version"),
@@ -383,6 +388,12 @@ def run_cmd(
 
     from promptry.runner import run_suite
     from promptry.comparison import compare_with_baseline, format_comparison, explain_regression
+    from promptry.evaluator import get_suite, list_suites
+
+    if get_suite(suite_name) is None:
+        available = _list_suite_names(list_suites())
+        console.print(f"[red]Suite '{suite_name}' not found.[/red] Available: {available}")
+        raise typer.Exit(1)
 
     try:
         result = run_suite(
@@ -450,6 +461,12 @@ def run_cmd(
             console.print(fmt_output)
 
             if any(not c.passed for c in comparisons):
+                try:
+                    from promptry.notifications import notify_regression
+
+                    notify_regression(result, details=f"Compare against '{compare}' baseline")
+                except Exception:
+                    pass
                 raise typer.Exit(1)
 
     # Build results dict once for any report output.
@@ -536,7 +553,7 @@ def _load_baseline_dict(current, baseline_tag: Optional[str]) -> Optional[dict]:
 
 @app.command("suites")
 def suites_cmd(
-    module: str = typer.Option(..., "--module", "-m", help="Python module with suite definitions."),
+    module: str = typer.Option("evals", "--module", "-m", help="Python module with suite definitions (default: evals)."),
 ):
     """List registered eval suites."""
     _import_module(module)
@@ -556,9 +573,9 @@ def suites_cmd(
 @app.command("drift")
 def drift_cmd(
     suite_name: str = typer.Argument(..., help="Suite to check."),
-    module: str = typer.Option(..., "--module", "-m", help="Python module with suite definitions."),
+    module: str = typer.Option("evals", "--module", "-m", help="Python module with suite definitions (default: evals)."),
     window: Optional[int] = typer.Option(None, "--window", "-w"),
-    threshold: Optional[float] = typer.Option(None, "--threshold", "-t"),
+    threshold: Optional[float] = typer.Option(None, "--threshold"),
 ):
     """Check for score drift in a suite. Exit code 1 if drifting."""
     _import_module(module)
@@ -577,7 +594,7 @@ def drift_cmd(
 @app.command("compare")
 def compare_cmd(
     suite_name: str = typer.Argument(..., help="Suite to compare on."),
-    candidate: str = typer.Option(..., "--candidate", "-c", help="Candidate model version."),
+    candidate: str = typer.Option(..., "--candidate", help="Candidate model version."),
     baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline model version (auto-detected if omitted)."),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write HTML report to file."),
 ):
@@ -631,7 +648,7 @@ def compare_cmd(
 @monitor_app.command("start")
 def monitor_start(
     suite_name: str = typer.Argument(..., help="Suite to monitor."),
-    module: str = typer.Option(..., "--module", "-m", help="Python module with suite definitions."),
+    module: str = typer.Option("evals", "--module", "-m", help="Python module with suite definitions (default: evals)."),
     interval: int = typer.Option(1440, "--interval", "-i", help="Run interval in minutes."),
 ):
     """Start background monitoring."""
@@ -693,7 +710,7 @@ def monitor_status():
 
 @templates_app.command("list")
 def templates_list(
-    category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category."),
+    category: Optional[str] = typer.Option(None, "--category", help="Filter by category."),
 ):
     """List available safety/jailbreak test templates."""
     from promptry.templates import get_templates, get_categories
@@ -719,9 +736,9 @@ def templates_list(
 
 @templates_app.command("run")
 def templates_run(
-    module: str = typer.Option(..., "--module", "-m", help="Python module with a pipeline function."),
+    module: str = typer.Option("evals", "--module", "-m", help="Python module with a pipeline function (default: evals)."),
     func: str = typer.Option("pipeline", "--func", "-f", help="Function name to use as the pipeline."),
-    category: Optional[str] = typer.Option(None, "--category", "-c", help="Only run this category."),
+    category: Optional[str] = typer.Option(None, "--category", help="Only run this category."),
 ):
     """Run safety templates against a pipeline function.
 
@@ -840,7 +857,7 @@ def _run_suite_reload(suite_name: Optional[str], module: str, compare: Optional[
         if suite_name:
             targets = [s for s in suites if s.name == suite_name]
             if not targets:
-                available = ", ".join(s.name for s in suites) or "(none)"
+                available = _list_suite_names(suites)
                 console.print(f"[red]Suite '{suite_name}' not found.[/red] Available: {available}")
                 return
         else:
@@ -936,7 +953,7 @@ def watch_cmd(
 def sample_cmd(
     suite_name: Optional[str] = typer.Argument(None, help="Suite to run (default: all suites in module)."),
     module: str = typer.Option("evals", "--module", "-m", help="Module containing suites."),
-    every: int = typer.Option(60, "--every", "-n", help="Sample interval in seconds (minimum 5)."),
+    every: int = typer.Option(60, "--every", help="Sample interval in seconds (minimum 5)."),
     compare: Optional[str] = typer.Option(None, "--compare", "-c", help="Baseline tag to compare against each run."),
     max_runs: Optional[int] = typer.Option(None, "--max-runs", help="Upper bound on iterations (default: unlimited)."),
 ):
@@ -1346,6 +1363,20 @@ def cost_report_cmd(
 
         console.print(date_table)
 
+    # --- un-priced model warning ---
+    if hasattr(storage, "list_invocations"):
+        from promptry import pricing
+
+        inv_rows = storage.list_invocations(name=name, days=days, limit=100000)
+        if model:
+            inv_rows = [r for r in inv_rows if r.get("model") == model]
+        unpriced_calls = [r for r in inv_rows if r.get("model") and not pricing.is_known_model(r["model"])]
+        if unpriced_calls:
+            console.print(
+                f"\n[yellow]{len(unpriced_calls)} calls on un-priced models counted as $0"
+                f" — run 'promptry prices --check'[/yellow]"
+            )
+
 
 def _print_prices_table():
     """Render the current rate table + provenance + active reroutes."""
@@ -1616,6 +1647,7 @@ def doctor_cmd():
     """Check environment health: dependencies, config, storage, and optional extras."""
     ok_count = 0
     warn_count = 0
+    fail_count = 0
 
     def _ok(label: str, detail: str = ""):
         nonlocal ok_count
@@ -1634,8 +1666,8 @@ def doctor_cmd():
         console.print(msg)
 
     def _fail(label: str, detail: str = ""):
-        nonlocal warn_count  # failures also count toward warnings for summary
-        warn_count += 1
+        nonlocal fail_count
+        fail_count += 1
         msg = f"[red]FAIL[/red] {label}"
         if detail:
             msg += f"  ({detail})"
@@ -1763,7 +1795,19 @@ def doctor_cmd():
     else:
         _warn("LLM judge", "not configured -- call set_judge() to enable assert_llm")
 
-    console.print(f"\n{ok_count} ok, {warn_count} warnings")
+    # 11. Provider API key set (optional -- pipelines may not call an LLM directly)
+    from promptry.projectconfig import PROVIDER_ENV
+    import os
+    configured_providers = [prov for prov, env in PROVIDER_ENV.items() if os.environ.get(env)]
+    if configured_providers:
+        _ok("Provider API key", ", ".join(sorted(configured_providers)))
+    else:
+        _warn("Provider API key", "no known provider key set (" + ", ".join(sorted(PROVIDER_ENV.values())) + ")")
+
+    console.print(f"\n{ok_count} ok, {warn_count} warnings, {fail_count} failed")
+
+    if fail_count:
+        raise typer.Exit(1)
 
 
 @garak_app.command("import")

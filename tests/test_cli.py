@@ -236,6 +236,25 @@ class TestCostReport:
         # Should show no data for gpt-4o since only claude-sonnet was saved
         assert "No prompts with token/cost metadata" in result.output or "model-test" not in result.output
 
+    def test_cost_report_warns_on_unpriced_model(self, tmp_path, monkeypatch):
+        """cost-report should call out un-priced models with a warning + tip."""
+        from promptry.storage import Storage
+
+        db_path = tmp_path / "test_cost4.db"
+        monkeypatch.setenv("PROMPTRY_DB", str(db_path))
+        from promptry.config import reset_config
+        reset_config()
+
+        storage = Storage(db_path=db_path)
+        meta = {"tokens_in": 100, "tokens_out": 50, "cost": 0.0, "model": "totally-unpriced-model-xyz"}
+        storage.record_invocation("unpriced-test", metadata=meta)
+        storage.close()
+
+        result = runner.invoke(app, ["cost-report", "--days", "30"])
+        assert result.exit_code == 0
+        assert "un-priced models" in result.output
+        assert "promptry prices --check" in result.output
+
 
 class TestDoctor:
 
@@ -259,6 +278,69 @@ class TestDoctor:
         result = runner.invoke(app, ["doctor"])
         assert result.exit_code == 0
         assert "Disk space" in result.output
+
+    def test_doctor_summary_breaks_out_fail_count(self):
+        """The summary line should report ok/warnings/failed as separate counts."""
+        result = runner.invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        assert "failed" in result.output
+
+    def test_doctor_exits_nonzero_on_forced_fail(self, monkeypatch):
+        """A forced failure (e.g. storage unreachable) should set exit code 1."""
+        import promptry.storage as storage_mod
+
+        def _broken_storage():
+            raise RuntimeError("storage boom")
+
+        monkeypatch.setattr(storage_mod, "get_storage", _broken_storage)
+        result = runner.invoke(app, ["doctor"])
+        assert result.exit_code == 1
+        assert "FAIL" in result.output
+        assert "1 failed" in result.output
+
+    def test_doctor_checks_provider_api_key(self, monkeypatch):
+        """doctor should warn when no known provider API key is set."""
+        from promptry.projectconfig import PROVIDER_ENV
+        for env in PROVIDER_ENV.values():
+            monkeypatch.delenv(env, raising=False)
+        result = runner.invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        assert "Provider API key" in result.output
+
+
+class TestRunCLI:
+
+    def _write_evals_module(self, tmp_path, monkeypatch, module_name="evals"):
+        mod_file = tmp_path / f"{module_name}.py"
+        mod_file.write_text(
+            "from promptry.evaluator import suite\n"
+            "from promptry.assertions import assert_contains\n\n"
+            "@suite(\"smoke\")\n"
+            "def test_smoke():\n"
+            "    assert_contains(\"hello world\", [\"hello\"])\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.syspath_prepend(str(tmp_path))
+        import sys
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(module_name + "."):
+                sys.modules.pop(name, None)
+
+    def test_run_without_module_defaults_to_evals(self, tmp_path, monkeypatch):
+        """Mirrors the dashboard onboarding card's `promptry run <name>` with no --module,
+        against a freshly-registered 'evals' module in the project directory."""
+        self._write_evals_module(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["run", "smoke"])
+        assert result.exit_code == 0, result.output
+        assert "PASS" in result.output
+
+    def test_run_unknown_suite_lists_available_suites(self, tmp_path, monkeypatch):
+        self._write_evals_module(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["run", "does-not-exist"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+        assert "smoke" in result.output
 
 
 class TestCompare:
