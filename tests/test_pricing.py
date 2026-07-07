@@ -259,6 +259,43 @@ class TestRateIndexPerf:
         finally:
             pass  # autouse fixture restores RATES/REROUTES + indexes
 
+    def test_cache_reflects_same_key_value_overwrite_without_recompute(self):
+        # Prime the cache, then overwrite RATES["gpt-4o"] in place (same key,
+        # same key count) WITHOUT calling _recompute_rate_indexes(). The
+        # cached resolution must not shadow the new value.
+        assert _lookup_rates("gpt-4o") == RATES["gpt-4o"]
+        RATES["gpt-4o"] = {"in": 999.0, "cached": 9.0, "cache_write": 9.0, "out": 999.0}
+        assert _lookup_rates("gpt-4o")["in"] == 999.0
+        assert _lookup_rates("gpt-4o")["out"] == 999.0
+
+    def test_cache_reflects_clear_and_update_teardown_pattern(self):
+        # Mirrors tests/test_cli.py TestPricesCLI._isolate_prices: a fixture
+        # snapshots RATES, a test mutates it, and teardown restores via
+        # RATES.clear(); RATES.update(saved) — with no explicit recompute
+        # call. If teardown restores DIFFERENT values for the same key set,
+        # the cache must not keep serving what was cached before the clear.
+        assert _lookup_rates("gpt-4o") == RATES["gpt-4o"]
+        saved_key_count = len(RATES)
+        changed = {k: dict(v) for k, v in RATES.items()}
+        changed["gpt-4o"] = {"in": 111.0, "cached": 1.0, "cache_write": 1.0, "out": 222.0}
+        RATES.clear()
+        RATES.update(changed)
+        assert len(RATES) == saved_key_count  # same key set, no recompute triggered
+        assert _lookup_rates("gpt-4o")["in"] == pytest.approx(111.0)
+        assert _lookup_rates("gpt-4o")["out"] == pytest.approx(222.0)
+
+    def test_cache_does_not_leak_deleted_keys_rates(self):
+        # Prime the cache for "gpt-4o", then delete that key and add a
+        # different one so the total key count is unchanged (no length
+        # mismatch to trigger self-healing). The deleted key's rates must
+        # never be handed back for a query that no longer matches anything.
+        old_rate = dict(_lookup_rates("gpt-4o"))
+        del RATES["gpt-4o"]
+        RATES["zzz-replacement-model"] = old_rate
+        result = _lookup_rates("gpt-4o")
+        assert result is None
+        assert _lookup_rates("zzz-replacement-model") == old_rate
+
 
 class TestLazyLoad:
     def test_ensure_prices_loaded_is_idempotent(self):

@@ -97,11 +97,18 @@ REROUTES = {
 # match the live dict — cheap to check, and self-healing if a hook is missed.
 _rates_sorted_keys: list[str] = []
 _reroutes_sorted_keys: list[str] = []
-# Exact-match cache: literal queried model string -> resolved rates dict (or
-# None). Keyed on the *pre-resolution* model string, so repeated calls for
-# the same served-model slug (e.g. every invocation of "gpt-4o-2024-11-20")
-# skip the prefix scan entirely. Cleared whenever the indexes are recomputed.
-_rates_cache: dict[str, dict | None] = {}
+# Exact-match cache: literal queried model string -> the RATES key it resolves
+# to (or None if nothing matches). Keyed on the *pre-resolution* model string,
+# so repeated calls for the same served-model slug (e.g. every invocation of
+# "gpt-4o-2024-11-20") skip the prefix scan entirely. We deliberately cache the
+# MATCHED KEY, not the rates dict: the actual rates are re-read from RATES on
+# every hit, so a value overwrite at the same key (`RATES["gpt-4o"] = {...}`,
+# or a test-teardown `RATES.clear(); RATES.update(saved)`) is reflected
+# immediately without needing _recompute_rate_indexes() to run. If the cached
+# key has since been deleted from RATES (a same-length key swap), the hit is
+# treated as a miss and the model is re-resolved from scratch. Also cleared
+# whenever the indexes are recomputed (key-count changes).
+_rates_cache: dict[str, str | None] = {}
 
 
 def _recompute_rate_indexes() -> None:
@@ -236,24 +243,50 @@ def calculate_cost(
 def _lookup_rates(model: str) -> dict | None:
     """Fuzzy lookup: 'gpt-4o-2024-11-20' -> 'gpt-4o' via prefix matching.
 
-    Exact-match cache keyed on the literal queried string, so repeated calls
-    for the same served-model slug skip the prefix scan entirely. The cache
-    is cleared whenever RATES changes (see _recompute_rate_indexes).
+    Exact-match cache keyed on the literal queried string, mapping to the
+    RATES key it resolves to (not the rates dict itself) so repeated calls
+    for the same served-model slug skip the prefix scan without ever serving
+    a stale value: on a hit we always re-read RATES[key] fresh, so a same-key
+    value overwrite (`RATES["gpt-4o"] = {...}`, or a test-teardown
+    `RATES.clear(); RATES.update(saved)`) is picked up immediately, with no
+    dependency on _recompute_rate_indexes() having been called. If the cached
+    key was since deleted from RATES (a same-length key swap), the fresh read
+    comes back None and we treat that as a cache miss and re-resolve from
+    scratch, so a deleted key's rates can never be handed back.
     """
     ensure_prices_loaded()
     if not model:
         return None
     if model in _rates_cache:
-        return _rates_cache[model]
+        key = _rates_cache[model]
+        if key is not None:
+            result = RATES.get(key)
+            if result is not None:
+                return result
+            # Cached key no longer exists (deleted); fall through and
+            # re-resolve instead of trusting the stale mapping.
+        else:
+            return None
     if model in RATES:
+        key = model
         result = RATES[model]
     else:
+        key = None
         result = None
-        for key in _rates_sort_keys():
-            if model.startswith(key):
-                result = RATES[key]
+        for candidate in _rates_sort_keys():
+            if model.startswith(candidate):
+                candidate_result = RATES.get(candidate)
+                if candidate_result is None:
+                    # The sorted-key index only self-heals on a length
+                    # mismatch (see _rates_sort_keys), so a same-key-count
+                    # swap (del one key, add another) can leave a deleted
+                    # key in the stale list. Skip it rather than treat it
+                    # as an authoritative match — keep scanning.
+                    continue
+                key = candidate
+                result = candidate_result
                 break
-    _rates_cache[model] = result
+    _rates_cache[model] = key
     return result
 
 
