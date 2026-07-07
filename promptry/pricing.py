@@ -16,6 +16,15 @@ RATES = {
     "gpt-4o":           {"in": 2.50, "cached": 1.25, "cache_write": 2.50, "out": 10.00},
     "gpt-4o-mini":      {"in": 0.15, "cached": 0.075, "cache_write": 0.15, "out": 0.60},
     "gpt-4.1":          {"in": 2.00, "cached": 0.50, "cache_write": 2.00, "out": 8.00},
+    "gpt-4.1-mini":     {"in": 0.40, "cached": 0.10, "cache_write": 0.40, "out": 1.60},
+    # gpt-4.1-nano. MUST be an explicit entry: the fuzzy prefix match would
+    # otherwise resolve it to the "gpt-4.1" tier ($2/$8) and overcount ~20x.
+    # Some integrations log the litellm-style "openai/gpt-4.1-nano" slug (and it
+    # surfaces as served_model), which can't prefix-match anything — price both.
+    "gpt-4.1-nano":         {"in": 0.10, "cached": 0.025, "cache_write": 0.10, "out": 0.40},
+    "openai/gpt-4.1-nano":  {"in": 0.10, "cached": 0.025, "cache_write": 0.10, "out": 0.40},
+    # gpt-5.4-nano. Served as gpt-5.4-nano-2026-03-17, covered by prefix match.
+    "gpt-5.4-nano":     {"in": 0.20, "cached": 0.02, "cache_write": 0.20, "out": 1.25},
 
     # Anthropic (5-min TTL ephemeral cache assumed)
     "claude-opus-4":         {"in": 15.00, "cached": 1.50, "cache_write": 18.75, "out": 75.00},
