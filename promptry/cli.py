@@ -1876,6 +1876,343 @@ def garak_import(
     console.print(format_import_summary(summary))
 
 
+# ---------------------------------------------------------------------------
+# Task 16: wire built-but-unexposed engines into the CLI.
+#
+# These commands are purely additive (new commands only) to minimize merge
+# conflicts with concurrent work on the existing run/suites/watch/compare/
+# drift commands above.
+# ---------------------------------------------------------------------------
+
+
+def _load_callable(spec: str):
+    """Resolve a "module.path:function_name" spec to the function object."""
+    if ":" not in spec:
+        console.print(f"[red]Error:[/red] Expected 'module:function', got '{spec}'.")
+        raise typer.Exit(1)
+    module_path, func_name = spec.split(":", 1)
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        console.print(f"[red]Error:[/red] Could not import '{module_path}': {e}")
+        raise typer.Exit(1)
+    try:
+        return getattr(module, func_name)
+    except AttributeError:
+        console.print(f"[red]Error:[/red] '{module_path}' has no attribute '{func_name}'.")
+        raise typer.Exit(1)
+
+
+@app.command("lint")
+def lint_cmd(
+    name: Optional[str] = typer.Argument(None, help="Saved prompt name to lint (latest or --version)."),
+    file: Optional[Path] = typer.Option(None, "--file", "-f", help="Lint a template from a file instead of the registry."),
+    version: Optional[int] = typer.Option(None, "--version", "-v", help="Specific version to lint (with NAME)."),
+):
+    """Lint a prompt template for placeholder/format footguns.
+
+    Example: promptry lint my-prompt
+             promptry lint --file prompt.txt
+
+    Exit code 1 if any 'error'-level finding is present (CI-gate friendly).
+    """
+    if not name and not file:
+        console.print("[red]Error:[/red] Provide a prompt NAME or --file.")
+        raise typer.Exit(1)
+    if name and file:
+        console.print("[red]Error:[/red] Provide either NAME or --file, not both.")
+        raise typer.Exit(1)
+
+    if file:
+        if not file.is_file():
+            console.print(f"[red]Error:[/red] File not found: {file}")
+            raise typer.Exit(1)
+        template = file.read_text(encoding="utf-8")
+        label = str(file)
+    else:
+        registry = _get_registry()
+        record = registry.get(name, version)
+        if not record:
+            v_str = f" v{version}" if version else ""
+            console.print(f"[red]Error:[/red] Prompt '{name}{v_str}' not found.")
+            raise typer.Exit(1)
+        template = record.content
+        label = f"{name} v{record.version}"
+
+    from promptry.lint import lint_prompt
+
+    findings = lint_prompt(template)
+
+    if not findings:
+        console.print(f"[green]OK[/green] {label}: no issues found.")
+        raise typer.Exit(0)
+
+    level_style = {"error": "red", "warning": "yellow", "info": "cyan"}
+    table = Table(show_header=True, header_style="bold", title=f"Lint: {label}")
+    table.add_column("Level")
+    table.add_column("Message")
+    has_error = False
+    for f in findings:
+        level = f["level"]
+        has_error = has_error or level == "error"
+        style = level_style.get(level, "")
+        level_str = f"[{style}]{level}[/{style}]" if style else level
+        table.add_row(level_str, f["message"])
+    console.print(table)
+
+    if has_error:
+        raise typer.Exit(1)
+
+
+@prompt_app.command("search")
+def prompt_search_cmd(
+    query: str = typer.Argument(..., help="Free-text search query."),
+    top_k: int = typer.Option(10, "--top-k", "-k", help="Max results to show."),
+):
+    """Search prompts by meaning (semantic if available, else keyword overlap).
+
+    Example: promptry prompt search "summarize customer complaints"
+    """
+    from promptry.storage import get_storage
+    from promptry.prompt_search import search_prompts
+
+    storage = get_storage()
+    result = search_prompts(storage, query, top_k=top_k)
+
+    if not result["results"]:
+        console.print(
+            "[yellow]No matching prompts found.[/yellow] "
+            "Save some first with 'promptry prompt save --name <name>'."
+        )
+        raise typer.Exit(0)
+
+    table = Table(show_header=True, header_style="bold", title=f"Search: '{query}' (mode: {result['mode']})")
+    table.add_column("Name")
+    table.add_column("Score", justify="right")
+    table.add_column("Preview")
+    for r in result["results"]:
+        table.add_row(r["name"], f"{r['score']:.4f}", r["preview"])
+    console.print(table)
+
+
+@prompt_app.command("duplicates")
+def prompt_duplicates_cmd(
+    threshold: float = typer.Option(0.85, "--threshold", "-t", help="Similarity threshold (0-1) above which prompts are flagged."),
+):
+    """Find prompts whose latest content is near-identical (a fork that should be a version).
+
+    Example: promptry prompt duplicates --threshold 0.9
+    """
+    from promptry.storage import get_storage
+    from promptry.prompt_search import near_duplicates
+
+    storage = get_storage()
+    result = near_duplicates(storage, threshold=threshold)
+
+    if not result["pairs"]:
+        console.print("[green]No near-duplicate prompts found.[/green]")
+        raise typer.Exit(0)
+
+    table = Table(show_header=True, header_style="bold", title=f"Near-duplicates (mode: {result['mode']}, threshold: {threshold})")
+    table.add_column("Prompt A")
+    table.add_column("Prompt B")
+    table.add_column("Similarity", justify="right")
+    for p in result["pairs"]:
+        table.add_row(p["a"], p["b"], f"{p['similarity']:.4f}")
+    console.print(table)
+
+
+@app.command("cluster")
+def cluster_cmd(
+    suite_name: str = typer.Argument(..., help="Suite to analyze."),
+    days: int = typer.Option(7, "--days", "-d", help="Number of days to look back."),
+    min_cluster_size: int = typer.Option(2, "--min-size", help="Minimum cluster size to report."),
+):
+    """Cluster recent failed assertions for a suite into patterns.
+
+    Example: promptry cluster my-suite --days 14
+    """
+    from promptry.clustering import cluster_failures, format_clustering_report
+
+    report = cluster_failures(suite_name, days=days, min_cluster_size=min_cluster_size)
+    console.print(format_clustering_report(report))
+
+    if report.total_failures == 0:
+        console.print(f"[yellow]Tip:[/yellow] run 'promptry run {suite_name}' a few times to accumulate failure history.")
+
+
+@app.command("scan")
+def scan_cmd(
+    days: int = typer.Option(7, "--days", "-d", help="Number of days to look back."),
+    name: Optional[str] = typer.Option(None, "--name", "-n", help="Filter by prompt name."),
+    limit: int = typer.Option(500, "--limit", help="Max invocations to scan."),
+    fail_on_hit: bool = typer.Option(False, "--fail-on-hit", help="Exit 1 if any secret/PII is found (CI gate)."),
+):
+    """Scan captured invocations for secrets/PII (regex-based tripwire).
+
+    Requires captured input/output text -- pass input_text/output_text to
+    record_invocation() (or use promptry.capture) to populate it.
+
+    Example: promptry scan --days 30 --fail-on-hit
+    """
+    from promptry.storage import get_storage
+    from promptry.pii import scan_invocation
+
+    storage = get_storage()
+    invocations = storage.list_invocations(name=name, days=days, limit=limit, captured_only=True)
+
+    if not invocations:
+        console.print(
+            "[yellow]No captured invocations found in the window.[/yellow] "
+            "Capture text via record_invocation(..., input_text=..., output_text=...)."
+        )
+        raise typer.Exit(0)
+
+    sev_style = {"high": "red", "medium": "yellow", "low": "cyan"}
+    table = Table(show_header=True, header_style="bold", title=f"PII/secret scan (last {days}d)")
+    table.add_column("Invocation")
+    table.add_column("Type")
+    table.add_column("Severity")
+    table.add_column("Sample")
+
+    hit_count = 0
+    for inv in invocations:
+        full = storage.get_invocation(inv["id"])
+        if not full:
+            continue
+        result = scan_invocation(full.get("input_text"), full.get("output_text"))
+        for side in ("input", "output"):
+            for finding in result[side]:
+                hit_count += 1
+                style = sev_style.get(finding["severity"], "")
+                sev = f"[{style}]{finding['severity']}[/{style}]" if style else finding["severity"]
+                table.add_row(str(inv["id"]), f"{finding['type']} ({side})", sev, finding["sample"])
+
+    if hit_count == 0:
+        console.print("[green]No secrets or PII found.[/green]")
+        raise typer.Exit(0)
+
+    console.print(table)
+    console.print(f"\n{hit_count} finding(s) across {len(invocations)} invocation(s) scanned.")
+
+    if fail_on_hit:
+        raise typer.Exit(1)
+
+
+@app.command("replay")
+def replay_cmd(
+    captures: Path = typer.Argument(..., exists=True, readable=True, help="Path to a JSONL capture file."),
+    pipeline: str = typer.Option(..., "--pipeline", help="module:function to replay each captured input through."),
+    compare: Optional[str] = typer.Option(None, "--compare", help="module:function(candidate, baseline) -> bool. Defaults to exact equality."),
+    concurrency: int = typer.Option(8, "--concurrency", help="Parallel pipeline calls (must be > 0)."),
+    max_examples: int = typer.Option(5, "--max-examples", help="Max drifted examples to display."),
+    task: Optional[str] = typer.Option(None, "--task", help="Only replay captures for this task name."),
+    limit: Optional[int] = typer.Option(None, "--limit", help="Max captures to replay."),
+):
+    """Replay captured production inputs through the current pipeline and diff against the recorded output.
+
+    Example: promptry replay captures.jsonl --pipeline mymodule:my_pipeline
+    """
+    if concurrency <= 0:
+        console.print("[red]Error:[/red] --concurrency must be > 0.")
+        raise typer.Exit(1)
+
+    from promptry.capture import load_captures, replay_captures
+
+    caps = load_captures(captures, task=task, limit=limit)
+    if not caps:
+        console.print(
+            f"[yellow]No captures found in {captures}.[/yellow] "
+            "Record production traffic first with promptry.capture.CaptureRecorder."
+        )
+        raise typer.Exit(0)
+
+    pipeline_fn = _load_callable(pipeline)
+    compare_fn = _load_callable(compare) if compare else None
+
+    result = replay_captures(
+        caps, pipeline_fn, compare=compare_fn, max_examples=max_examples, concurrency=concurrency
+    )
+
+    console.print(
+        f"Captures: {result.captures}  Matched: {result.matched}  "
+        f"Drifted: {result.drifted}  Errors: {result.errors}"
+    )
+
+    if result.examples_drifted:
+        table = Table(show_header=True, header_style="bold", title="Drifted / errored examples")
+        table.add_column("Task")
+        table.add_column("Input")
+        table.add_column("Expected")
+        table.add_column("Got / Error")
+        for ex in result.examples_drifted:
+            got = ex.get("got", ex.get("error", ""))
+            table.add_row(
+                str(ex.get("task", "")),
+                str(ex.get("input", ""))[:60],
+                str(ex.get("expected", ""))[:60],
+                str(got)[:60],
+            )
+        console.print(table)
+
+    if result.drifted or result.errors:
+        raise typer.Exit(1)
+
+
+@app.command("golden")
+def golden_cmd(
+    prompt_name: str = typer.Argument(..., help="Prompt name with golden examples."),
+    model: str = typer.Option(..., "--model", help="Model to evaluate against the golden set."),
+    threshold: float = typer.Option(0.8, "--threshold", help="Similarity threshold to count an example as passed."),
+    temperature: float = typer.Option(0.0, "--temperature", help="Model sampling temperature."),
+    concurrency: int = typer.Option(8, "--concurrency", help="Parallel model calls (must be > 0)."),
+):
+    """Re-run a prompt's golden examples through MODEL and score drift vs the recorded reference.
+
+    Example: promptry golden my-prompt --model gpt-4o
+    """
+    if concurrency <= 0:
+        console.print("[red]Error:[/red] --concurrency must be > 0.")
+        raise typer.Exit(1)
+
+    from promptry.storage import get_storage
+    from promptry.eval_from_trace import run_golden_set
+
+    storage = get_storage()
+    result = run_golden_set(
+        storage, prompt_name, model, threshold=threshold, temperature=temperature, concurrency=concurrency
+    )
+
+    if result["count"] == 0:
+        console.print(
+            f"[yellow]No golden examples for '{prompt_name}'.[/yellow] "
+            "Promote a captured invocation into a golden example first (see promptry.eval_from_trace / the dashboard)."
+        )
+        raise typer.Exit(0)
+
+    table = Table(
+        show_header=True, header_style="bold",
+        title=f"Golden set: {prompt_name} vs {model} (mode: {result['mode']})",
+    )
+    table.add_column("ID")
+    table.add_column("Score", justify="right")
+    table.add_column("Passed")
+    table.add_column("Output preview")
+    table.add_column("Error")
+    for r in result["results"]:
+        passed_str = "[green]yes[/green]" if r["passed"] else "[red]no[/red]"
+        table.add_row(str(r["id"]), f"{r['score']:.4f}", passed_str, r["output_preview"], r["error"] or "")
+    console.print(table)
+
+    console.print(
+        f"\nAccuracy: {result['accuracy'] * 100:.1f}% "
+        f"({result['passed']}/{result['count']}) threshold={threshold}"
+    )
+
+    if result["accuracy"] < threshold:
+        raise typer.Exit(1)
+
+
 def main():
     app()
 
