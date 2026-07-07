@@ -84,12 +84,17 @@ _default_registry: PromptRegistry | None = None
 _track_cache: dict[str, None] = {}  # bounded LRU-ish cache, max 10k entries
 _TRACK_CACHE_MAX = 10_000
 _track_lock = threading.Lock()
+_registry_lock = threading.Lock()
 
 
 def _get_registry() -> PromptRegistry:
     global _default_registry
-    if _default_registry is None:
-        _default_registry = PromptRegistry()
+    if _default_registry is not None:
+        return _default_registry
+    with _registry_lock:
+        # double-checked: another thread may have built it while we waited.
+        if _default_registry is None:
+            _default_registry = PromptRegistry()
     return _default_registry
 
 

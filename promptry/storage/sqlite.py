@@ -233,6 +233,11 @@ class SQLiteStorage(BaseStorage):
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        # Set busy_timeout FIRST so any later pragma/statement that meets a
+        # transient writer lock (WAL checkpoint, a second connection in
+        # async/remote mode) waits and retries instead of failing outright
+        # with "database is locked".
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row

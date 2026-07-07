@@ -3,6 +3,8 @@
 Default is SQLite. The BaseStorage interface lets you plug in your own.
 Storage mode (sync/async/off/remote) is handled by get_storage().
 """
+import threading
+
 from promptry.storage.base import BaseStorage
 from promptry.storage.sqlite import SQLiteStorage
 
@@ -10,6 +12,12 @@ from promptry.storage.sqlite import SQLiteStorage
 Storage = SQLiteStorage
 
 _storage_instance: BaseStorage | None = None
+# Guards singleton creation. Without it, threads racing on the first track()
+# each build their own SQLiteStorage (separate connection + separate write
+# lock), so their version-number increments collide on UNIQUE(name, version)
+# and writes get silently dropped. One instance = one connection whose
+# self._lock serializes every writer.
+_storage_lock = threading.Lock()
 
 
 def get_storage() -> BaseStorage:
@@ -24,24 +32,29 @@ def get_storage() -> BaseStorage:
     if _storage_instance is not None:
         return _storage_instance
 
-    from promptry.config import get_config
+    with _storage_lock:
+        # double-checked: another thread may have built it while we waited.
+        if _storage_instance is not None:
+            return _storage_instance
 
-    config = get_config()
+        from promptry.config import get_config
 
-    if config.storage.mode == "remote":
-        from promptry.storage.remote import RemoteStorage
-        storage = RemoteStorage(
-            endpoint=config.storage.endpoint,
-            api_key=config.storage.api_key,
-        )
-    elif config.storage.mode == "async":
-        from promptry.writer import AsyncWriter
-        storage = AsyncWriter(SQLiteStorage())
-    else:
-        storage = SQLiteStorage()
+        config = get_config()
 
-    _storage_instance = storage
-    return storage
+        if config.storage.mode == "remote":
+            from promptry.storage.remote import RemoteStorage
+            storage = RemoteStorage(
+                endpoint=config.storage.endpoint,
+                api_key=config.storage.api_key,
+            )
+        elif config.storage.mode == "async":
+            from promptry.writer import AsyncWriter
+            storage = AsyncWriter(SQLiteStorage())
+        else:
+            storage = SQLiteStorage()
+
+        _storage_instance = storage
+        return storage
 
 
 def reset_storage():
