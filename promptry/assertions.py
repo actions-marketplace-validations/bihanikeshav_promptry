@@ -21,46 +21,16 @@ from promptry.evaluator import AssertionResult, append_result
 if TYPE_CHECKING:
     from promptry.conversation import Conversation
 
-# lazy-loaded embedding model -- only pay the cost if you actually
-# use assert_semantic. first call downloads ~80MB, subsequent calls instant.
-# default model comes from config (all-MiniLM-L6-v2), overridable via set_model().
-_model = None
-_model_name_override: str | None = None
+# Embedding model access + cache now live in promptry.embeddings. These
+# names stay here as re-exports for back-compat (several modules and
+# possibly external callers import them from promptry.assertions).
+from promptry.embeddings import get_embedder as _get_model, set_model, encode as _encode, cosine_similarity as _cosine_similarity
 
 # LLM judge callable for assert_llm. the user sets this to their own
 # LLM wrapper function: takes a string prompt, returns a string response.
 _judge: Callable[[str], str] | None = None
 
 _assertions_lock = threading.Lock()
-
-
-def _get_model():
-    global _model
-    with _assertions_lock:
-        if _model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError:
-                raise ImportError(
-                    "sentence-transformers is required for semantic assertions. "
-                    "Please ensure promptry is properly installed with: pip install --upgrade promptry"
-                )
-            from promptry.config import get_config
-            name = _model_name_override or get_config().model.embedding_model
-            _model = SentenceTransformer(name)
-        return _model
-
-
-def set_model(name: str):
-    """Override the embedding model (e.g. for a larger one).
-
-    Takes priority over the config value. Default from config
-    is all-MiniLM-L6-v2.
-    """
-    global _model, _model_name_override
-    with _assertions_lock:
-        _model_name_override = name
-        _model = None
 
 
 def set_judge(fn: Callable[[str], str]):
@@ -116,10 +86,8 @@ def assert_semantic(actual: str, expected: str, threshold: float | None = None) 
         from promptry.config import get_config
         threshold = get_config().model.semantic_threshold
 
-    model = _get_model()
-    embeddings = model.encode([actual, expected])
-    from sentence_transformers.util import cos_sim  # guarded by _get_model above
-    score = float(cos_sim(embeddings[0], embeddings[1])[0][0])
+    embeddings = _encode([actual, expected])
+    score = _cosine_similarity(embeddings[0], embeddings[1])
 
     passed = score >= threshold
     append_result(AssertionResult(
@@ -1167,15 +1135,12 @@ def assert_conversation_coherent(
         ))
         return 1.0
 
-    model = _get_model()
-    from sentence_transformers.util import cos_sim  # guarded by _get_model
-
     texts = [t.content for t in turns]
-    embeddings = model.encode(texts)
+    embeddings = _encode(texts)
 
     pairwise: list[float] = []
     for i in range(len(turns) - 1):
-        sim = float(cos_sim(embeddings[i], embeddings[i + 1])[0][0])
+        sim = _cosine_similarity(embeddings[i], embeddings[i + 1])
         pairwise.append(sim)
 
     min_sim = min(pairwise)
@@ -1226,17 +1191,14 @@ def assert_no_repetition(
         ))
         return 0.0
 
-    model = _get_model()
-    from sentence_transformers.util import cos_sim  # guarded by _get_model
-
     texts = [t.content for t in turns]
-    embeddings = model.encode(texts)
+    embeddings = _encode(texts)
 
     max_sim = 0.0
     worst_pair: tuple[int, int] | None = None
     for i in range(len(turns)):
         for j in range(i + 1, len(turns)):
-            sim = float(cos_sim(embeddings[i], embeddings[j])[0][0])
+            sim = _cosine_similarity(embeddings[i], embeddings[j])
             if sim > max_sim:
                 max_sim = sim
                 worst_pair = (i, j)

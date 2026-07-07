@@ -27,10 +27,8 @@ def _similarity(a: str, b: str) -> tuple[float, str]:
     """Cosine similarity of two outputs (semantic), else token-Jaccard."""
     a, b = a or "", b or ""
     try:
-        from promptry.assertions import _get_model
-        from sentence_transformers.util import cos_sim
-        emb = _get_model().encode([a, b], convert_to_tensor=True)
-        return float(cos_sim(emb[0], emb[1])[0][0]), "semantic"
+        from promptry.embeddings import similarity
+        return similarity(a, b), "semantic"
     except Exception:
         ta, tb = set(_normalize(a).split()), set(_normalize(b).split())
         if not ta and not tb:

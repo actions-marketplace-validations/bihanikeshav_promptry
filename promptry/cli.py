@@ -1731,8 +1731,8 @@ def doctor_cmd():
 
     # 7. Embedding model downloaded (optional)
     try:
-        from promptry.assertions import _get_model
-        _get_model()
+        from promptry.embeddings import get_embedder
+        get_embedder()
         from promptry.config import get_config as _gc
         _ok("Embedding model", _gc().model.embedding_model)
     except ImportError:

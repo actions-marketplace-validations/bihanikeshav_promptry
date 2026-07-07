@@ -35,11 +35,10 @@ def _latest_contents(storage, limit: int = 500) -> list[tuple[str, str]]:
 
 
 def _embeddings(texts: list[str]):
-    """Encode texts with the shared model, or return None if unavailable."""
+    """Encode texts with the shared model (cached), or None if unavailable."""
     try:
-        from promptry.assertions import _get_model
-        model = _get_model()
-        return model.encode(texts, convert_to_tensor=True)
+        from promptry.embeddings import encode
+        return encode(texts)
     except Exception:
         return None
 
@@ -65,11 +64,10 @@ def near_duplicates(storage, threshold: float = 0.85, limit: int = 500) -> dict:
     pairs: list[dict] = []
     emb = _embeddings(texts)
     if emb is not None:
-        from sentence_transformers.util import cos_sim
-        sims = cos_sim(emb, emb)  # n x n matrix
+        from promptry.embeddings import cosine_similarity
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
-                sim = float(sims[i][j])
+                sim = cosine_similarity(emb[i], emb[j])
                 if sim >= threshold:
                     pairs.append({"a": names[i], "b": names[j], "similarity": round(sim, 4)})
         mode = "semantic"
@@ -99,10 +97,10 @@ def search_prompts(storage, query: str, top_k: int = 10, limit: int = 500) -> di
     scored: list[tuple[str, float, str]] = []
     emb = _embeddings(texts + [query])
     if emb is not None:
-        from sentence_transformers.util import cos_sim
+        from promptry.embeddings import cosine_similarity
         q = emb[-1]
         for i in range(len(items)):
-            scored.append((names[i], float(cos_sim(emb[i], q)[0][0]), texts[i]))
+            scored.append((names[i], cosine_similarity(emb[i], q), texts[i]))
         mode = "semantic"
     else:
         q_toks = set(_normalize(query).split())

@@ -305,9 +305,26 @@ class _FakeModel:
 
 
 def _patch_model(vectors: dict[str, list[float]]):
-    """Patch the lazy model loader in promptry.assertions."""
-    import promptry.assertions as _a
-    return patch.object(_a, "_get_model", lambda: _FakeModel(vectors))
+    """Patch the lazy model loader in promptry.embeddings.
+
+    Uses a unique model name per call so the process-level encode cache
+    (keyed by model name) never leaks fake vectors from one test into
+    another that happens to reuse a text like "a" or "b".
+    """
+    import uuid
+    import promptry.embeddings as _e
+    _e.set_model(f"test-fake-{uuid.uuid4()}")
+    return patch.object(_e, "get_embedder", lambda: _FakeModel(vectors))
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_embedding_model():
+    """Semantic tests above override the model name via _patch_model(); make
+    sure that override doesn't leak into other test modules that load the
+    real embedding model in the same pytest process."""
+    yield
+    import promptry.embeddings as _e
+    _e.set_model(None)
 
 
 # cos_sim is used inside the assertions; we need it to be available.

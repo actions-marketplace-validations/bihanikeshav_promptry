@@ -311,9 +311,7 @@ def _cluster_semantic(
     highest-similarity existing cluster if above threshold, else new.
     """
     try:
-        from promptry.assertions import _get_model
-        model = _get_model()
-        from sentence_transformers.util import cos_sim
+        from promptry.embeddings import encode, cosine_similarity
     except Exception:
         # fallback to string mode
         return _cluster_string(rows)
@@ -322,7 +320,10 @@ def _cluster_semantic(
         return []
 
     sigs = [s for s, _ in rows]
-    embeddings = model.encode(sigs, convert_to_tensor=True)
+    try:
+        embeddings = encode(sigs)
+    except Exception:
+        return _cluster_string(rows)
 
     # Track cluster centroids as the FIRST member's embedding.
     cluster_centroids: list = []
@@ -334,7 +335,7 @@ def _cluster_semantic(
         best_idx = -1
         best_sim = -1.0
         for ci, centroid in enumerate(cluster_centroids):
-            sim = float(cos_sim(emb, centroid)[0][0])
+            sim = cosine_similarity(emb, centroid)
             if sim > best_sim:
                 best_sim = sim
                 best_idx = ci
