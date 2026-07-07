@@ -1,4 +1,7 @@
 """Tests for HTML report generation."""
+import json
+import xml.etree.ElementTree as ET
+
 import pytest
 from typer.testing import CliRunner
 
@@ -6,6 +9,8 @@ from promptry.report import (
     render_run_report,
     render_compare_report,
     render_markdown_summary,
+    render_json,
+    render_junit,
 )
 
 
@@ -143,6 +148,200 @@ def compare_data_keep():
         "verdict": "keep_baseline",
         "verdict_reason": "Candidate scores -0.300 lower.",
     }
+
+
+@pytest.fixture
+def drift_data():
+    """Minimal dict matching DriftReport shape (dataclasses.asdict)."""
+    return {
+        "suite_name": "smoke-test",
+        "window": 20,
+        "scores": [0.9, 0.88, 0.85, 0.80],
+        "slope": -0.03,
+        "mean_score": 0.8575,
+        "latest_score": 0.80,
+        "is_drifting": True,
+        "threshold": 0.02,
+        "message": "Scores trending down.",
+        "stddev_score": 0.04,
+        "latest_z": -1.4,
+        "p_value": 0.03,
+        "confidence": "medium",
+    }
+
+
+@pytest.fixture
+def drift_data_stable():
+    return {
+        "suite_name": "rag-qa",
+        "window": 10,
+        "scores": [0.9, 0.9, 0.91],
+        "slope": 0.001,
+        "mean_score": 0.903,
+        "latest_score": 0.91,
+        "is_drifting": False,
+        "threshold": 0.02,
+        "message": "No significant drift.",
+        "stddev_score": 0.005,
+        "latest_z": 0.3,
+        "p_value": None,
+        "confidence": "insufficient",
+    }
+
+
+# ---------------------------------------------------------------------------
+# render_json
+# ---------------------------------------------------------------------------
+
+class TestRenderJson:
+
+    def test_round_trips_run_data(self, run_results):
+        content = render_json(run_results)
+        assert json.loads(content) == run_results
+
+    def test_round_trips_failing_run_data(self, run_results_failing):
+        content = render_json(run_results_failing)
+        assert json.loads(content) == run_results_failing
+
+    def test_round_trips_compare_data(self, compare_data):
+        content = render_json(compare_data)
+        assert json.loads(content) == compare_data
+
+    def test_round_trips_drift_data(self, drift_data):
+        content = render_json(drift_data)
+        assert json.loads(content) == drift_data
+
+    def test_output_is_valid_json_only(self, run_results):
+        """No stray decoration -- the whole string must parse as JSON."""
+        content = render_json(run_results)
+        json.loads(content)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# render_junit
+# ---------------------------------------------------------------------------
+
+class TestRenderJunitRun:
+
+    def test_parses_as_xml(self, run_results):
+        xml_str = render_junit(run_results)
+        root = ET.fromstring(xml_str)
+        assert root.tag == "testsuites"
+
+    def test_one_testsuite_per_suite(self, run_results):
+        root = ET.fromstring(render_junit(run_results))
+        suites = root.findall("testsuite")
+        assert len(suites) == 1
+        assert suites[0].get("name") == "smoke-test"
+
+    def test_one_testcase_per_test(self, run_results):
+        root = ET.fromstring(render_junit(run_results))
+        suite = root.find("testsuite")
+        cases = suite.findall("testcase")
+        assert len(cases) == 1
+        assert cases[0].get("name") == "test_basic_quality"
+
+    def test_counts_match(self, run_results_failing):
+        root = ET.fromstring(render_junit(run_results_failing))
+        suite = root.find("testsuite")
+        assert suite.get("tests") == str(len(run_results_failing["tests"]))
+        n_failed = sum(1 for t in run_results_failing["tests"] if not t["passed"])
+        assert suite.get("failures") == str(n_failed)
+
+    def test_failure_element_present_for_failing_test(self, run_results_failing):
+        root = ET.fromstring(render_junit(run_results_failing))
+        suite = root.find("testsuite")
+        case = suite.findall("testcase")[0]
+        failure = case.find("failure")
+        assert failure is not None
+        assert failure.get("message")
+
+    def test_passing_test_has_no_failure_element(self, run_results):
+        root = ET.fromstring(render_junit(run_results))
+        case = root.find("testsuite").find("testcase")
+        assert case.find("failure") is None
+
+    def test_empty_tests_list(self):
+        xml_str = render_junit({
+            "suite_name": "empty",
+            "overall_pass": True,
+            "overall_score": 0.0,
+            "tests": [],
+        })
+        root = ET.fromstring(xml_str)
+        suite = root.find("testsuite")
+        assert suite.get("tests") == "0"
+        assert suite.get("failures") == "0"
+
+
+class TestRenderJunitCompare:
+
+    def test_parses_as_xml(self, compare_data):
+        xml_str = render_junit(compare_data)
+        root = ET.fromstring(xml_str)
+        assert root.tag == "testsuites"
+
+    def test_testcase_per_assertion_plus_overall(self, compare_data):
+        root = ET.fromstring(render_junit(compare_data))
+        suite = root.find("testsuite")
+        cases = suite.findall("testcase")
+        # one per assertion_comparisons entry, plus one "overall"
+        assert len(cases) == len(compare_data["assertion_comparisons"]) + 1
+        names = [c.get("name") for c in cases]
+        assert "overall" in names
+        assert "semantic" in names
+
+    def test_switch_verdict_overall_passes(self, compare_data):
+        root = ET.fromstring(render_junit(compare_data))
+        suite = root.find("testsuite")
+        overall = [c for c in suite.findall("testcase") if c.get("name") == "overall"][0]
+        assert overall.find("failure") is None
+
+    def test_keep_baseline_verdict_overall_fails(self, compare_data_keep):
+        root = ET.fromstring(render_junit(compare_data_keep))
+        suite = root.find("testsuite")
+        overall = [c for c in suite.findall("testcase") if c.get("name") == "overall"][0]
+        failure = overall.find("failure")
+        assert failure is not None
+        assert failure.get("message")
+
+    def test_no_assertion_comparisons(self, compare_data_keep):
+        xml_str = render_junit(compare_data_keep)
+        root = ET.fromstring(xml_str)
+        suite = root.find("testsuite")
+        cases = suite.findall("testcase")
+        assert len(cases) == 1
+        assert cases[0].get("name") == "overall"
+
+
+class TestRenderJunitDrift:
+
+    def test_parses_as_xml(self, drift_data):
+        xml_str = render_junit(drift_data)
+        root = ET.fromstring(xml_str)
+        assert root.tag == "testsuites"
+
+    def test_drifting_reports_failure(self, drift_data):
+        root = ET.fromstring(render_junit(drift_data))
+        suite = root.find("testsuite")
+        assert suite.get("failures") == "1"
+        case = suite.find("testcase")
+        assert case.get("name") == "smoke-test"
+        assert case.find("failure") is not None
+
+    def test_stable_reports_no_failure(self, drift_data_stable):
+        root = ET.fromstring(render_junit(drift_data_stable))
+        suite = root.find("testsuite")
+        assert suite.get("failures") == "0"
+        case = suite.find("testcase")
+        assert case.find("failure") is None
+
+
+class TestRenderJunitUnrecognizedShape:
+
+    def test_raises_value_error(self):
+        with pytest.raises(ValueError):
+            render_junit({"unexpected": "shape"})
 
 
 # ---------------------------------------------------------------------------

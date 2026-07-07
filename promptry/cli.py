@@ -319,42 +319,13 @@ def _suite_result_to_dict(result) -> dict:
 
 
 def _compare_report_to_dict(report) -> dict:
-    """Convert a ModelCompareReport to a plain dict for report rendering."""
-    def _model_stats_dict(s):
-        return {
-            "model_version": s.model_version,
-            "run_count": s.run_count,
-            "overall_mean": s.overall_mean,
-            "overall_std": s.overall_std,
-            "overall_min": s.overall_min,
-            "overall_max": s.overall_max,
-            "avg_cost_per_call": s.avg_cost_per_call,
-        }
+    """Convert a ModelCompareReport to a plain dict for report rendering.
 
-    assertion_comparisons = []
-    for ac in report.assertion_comparisons:
-        assertion_comparisons.append({
-            "assertion_type": ac.assertion_type,
-            "baseline_mean": ac.baseline_mean,
-            "baseline_std": ac.baseline_std,
-            "candidate_score": ac.candidate_score,
-            "delta": ac.delta,
-            "verdict": ac.verdict,
-        })
-
-    return {
-        "suite_name": report.suite_name,
-        "baseline": _model_stats_dict(report.baseline),
-        "candidate": _model_stats_dict(report.candidate),
-        "overall_delta": report.overall_delta,
-        "percentile": report.percentile,
-        "assertion_comparisons": assertion_comparisons,
-        "cost_ratio": report.cost_ratio,
-        "score_per_dollar_baseline": report.score_per_dollar_baseline,
-        "score_per_dollar_candidate": report.score_per_dollar_candidate,
-        "verdict": report.verdict,
-        "verdict_reason": report.verdict_reason,
-    }
+    Thin wrapper around ``ModelCompareReport.to_dict()`` -- the canonical
+    shape now lives on the model (see promptry/model_compare.py), same
+    pattern as ``_suite_result_to_dict``.
+    """
+    return report.to_dict()
 
 
 def _import_module(module_path: str):

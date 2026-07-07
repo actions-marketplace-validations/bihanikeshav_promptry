@@ -38,6 +38,24 @@ class ModelStats:
     total_cost: float = 0.0
     avg_cost_per_call: float = 0.0
 
+    def to_dict(self) -> dict:
+        """Canonical dict shape consumed by report.py / the JSON contract.
+
+        Note: ``scores`` and ``assertion_stats`` are intentionally NOT
+        included here -- this mirrors the pre-existing
+        ``cli._compare_report_to_dict`` shape exactly, which is what
+        ``report.render_compare_report`` and the dashboard already expect.
+        """
+        return {
+            "model_version": self.model_version,
+            "run_count": self.run_count,
+            "overall_mean": self.overall_mean,
+            "overall_std": self.overall_std,
+            "overall_min": self.overall_min,
+            "overall_max": self.overall_max,
+            "avg_cost_per_call": self.avg_cost_per_call,
+        }
+
 
 @dataclass
 class AssertionComparison:
@@ -47,6 +65,16 @@ class AssertionComparison:
     candidate_score: float
     delta: float
     verdict: str  # "better", "worse", "comparable"
+
+    def to_dict(self) -> dict:
+        return {
+            "assertion_type": self.assertion_type,
+            "baseline_mean": self.baseline_mean,
+            "baseline_std": self.baseline_std,
+            "candidate_score": self.candidate_score,
+            "delta": self.delta,
+            "verdict": self.verdict,
+        }
 
 
 @dataclass
@@ -63,6 +91,28 @@ class ModelCompareReport:
     score_per_dollar_candidate: float | None
     verdict: str  # "switch", "comparable", "keep_baseline"
     verdict_reason: str
+
+    def to_dict(self) -> dict:
+        """Canonical dict shape -- the JSON contract for ``compare --format json``.
+
+        Matches the shape the pre-existing ``cli._compare_report_to_dict``
+        helper produced (and that ``report.render_compare_report`` /
+        ``render_junit`` expect), just moved onto the model per the Task 5
+        deferred item.
+        """
+        return {
+            "suite_name": self.suite_name,
+            "baseline": self.baseline.to_dict(),
+            "candidate": self.candidate.to_dict(),
+            "overall_delta": self.overall_delta,
+            "percentile": self.percentile,
+            "assertion_comparisons": [ac.to_dict() for ac in self.assertion_comparisons],
+            "cost_ratio": self.cost_ratio,
+            "score_per_dollar_baseline": self.score_per_dollar_baseline,
+            "score_per_dollar_candidate": self.score_per_dollar_candidate,
+            "verdict": self.verdict,
+            "verdict_reason": self.verdict_reason,
+        }
 
 
 def _mean(values: list[float]) -> float:
