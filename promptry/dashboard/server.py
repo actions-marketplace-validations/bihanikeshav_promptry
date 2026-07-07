@@ -1002,10 +1002,7 @@ def playground_model(body: _PlaygroundModelReq):
     promptry's rate table.
     """
     import time as _time
-    try:
-        import litellm
-    except ImportError:
-        raise HTTPException(status_code=503, detail="Playground is unavailable: litellm dependency missing. Reinstall with pip install --upgrade promptry")
+    from promptry import llm
 
     messages = []
     if body.system.strip():
@@ -1018,18 +1015,18 @@ def playground_model(body: _PlaygroundModelReq):
 
     start = _time.time()
     try:
-        resp = litellm.completion(
+        # Raw response so we can read token usage; text is pulled out below.
+        resp = llm.completion(
             model=body.model, messages=messages, temperature=body.temperature,
         )
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Playground is unavailable: litellm dependency missing. Reinstall with pip install --upgrade promptry")
     except Exception as e:
         # Surface provider/auth errors clearly to the dashboard.
         raise HTTPException(status_code=502, detail=f"Model call failed: {e}")
     latency_ms = round((_time.time() - start) * 1000)
 
-    try:
-        text = resp.choices[0].message.content or ""
-    except Exception:
-        text = ""
+    text = llm._content(resp)
     usage = getattr(resp, "usage", None)
     tokens_in = int(getattr(usage, "prompt_tokens", 0) or 0)
     tokens_out = int(getattr(usage, "completion_tokens", 0) or 0)

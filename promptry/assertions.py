@@ -90,8 +90,19 @@ def set_judge(fn: Callable[[str], str]):
 
 
 def get_judge() -> Callable[[str], str] | None:
+    """Return the active LLM judge.
+
+    An explicit judge set via :func:`set_judge` wins; otherwise fall back to
+    :func:`promptry.llm.get_default_judge`, which auto-builds one from the
+    unified config's ``[judge] model`` (or returns ``None`` if nothing is
+    configured).
+    """
     with _assertions_lock:
-        return _judge
+        explicit = _judge
+    if explicit is not None:
+        return explicit
+    from promptry.llm import get_default_judge
+    return get_default_judge()
 
 
 def assert_semantic(actual: str, expected: str, threshold: float | None = None) -> float:

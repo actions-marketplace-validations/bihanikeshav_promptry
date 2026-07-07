@@ -47,7 +47,9 @@ def analyze_votes(
         result["analysis"] = (
             f"{len(downvotes)} downvote(s) found. "
             f"{len(messages)} with comments. "
-            "Configure a judge to get pattern analysis."
+            "Configure a judge to get pattern analysis: add a [judge] block to "
+            "promptry.toml (e.g. model = \"gpt-4o-mini\"), or call "
+            "promptry.assertions.set_judge(fn) in your eval module."
         )
         return result
 

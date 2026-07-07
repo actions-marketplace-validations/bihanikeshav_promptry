@@ -39,16 +39,12 @@ def _similarity(a: str, b: str) -> tuple[float, str]:
 
 def _call_model(model: str, input_text: str, temperature: float) -> str:
     """Re-issue a recorded input to a model and return its text output."""
-    import litellm
-    resp = litellm.completion(
-        model=model,
-        messages=[{"role": "user", "content": input_text}],
+    from promptry.llm import complete
+    return complete(
+        model,
+        [{"role": "user", "content": input_text}],
         temperature=temperature,
     )
-    try:
-        return resp.choices[0].message.content or ""
-    except Exception:
-        return ""
 
 
 def run_golden_set(storage, prompt_name: str, model: str,

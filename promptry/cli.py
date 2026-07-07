@@ -278,9 +278,9 @@ def dataset_generate(
     judge = get_judge()
     if judge is None:
         console.print(
-            "[red]Error:[/red] No LLM judge configured. "
-            "Call promptry.assertions.set_judge(fn) in a promptry_config.py "
-            "or similar before running this command."
+            "[red]Error:[/red] No LLM judge configured. Configure one either by "
+            "adding a [judge] block to promptry.toml (e.g. model = \"gpt-4o-mini\"), "
+            "or by calling promptry.assertions.set_judge(fn) in your eval module."
         )
         raise typer.Exit(1)
 
