@@ -1,7 +1,51 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { Wordmark } from "./ui";
-import { backendHost } from "../api/client";
+import { backendHost, getCostData } from "../api/client";
+import type { CostResponse } from "../api/types";
+
+function fmtTok(n: number): string {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return String(n);
+}
+
+/** Compact today's-activity readout pinned above the connection status:
+ *  spend / calls / tokens from the ledger, plus eval pass count. */
+function WorkspaceStats({ counters }: { counters: SideNavCounters }) {
+  const [cost, setCost] = useState<CostResponse | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => getCostData(1).then((d) => { if (alive) setCost(d); }).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  const s = cost?.summary;
+  const suites = counters.suites ?? 0;
+  const regressions = counters.regressions ?? 0;
+  const Row = ({ label, value, color }: { label: string; value: string; color?: string }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+      <span style={{ color: "var(--muted)" }}>{label}</span>
+      <span className="mono" style={{ color: color || "var(--text-dim)", fontSize: 10.5 }}>{value}</span>
+    </div>
+  );
+  return (
+    <div style={{ marginTop: "auto", padding: "10px 12px 8px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 4, fontSize: 10.5 }}>
+      <div style={{ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--muted)", fontFamily: "var(--font-mono)", marginBottom: 1 }}>Today</div>
+      <Row label="spend" value={s ? "$" + s.total_cost.toFixed(2) : "—"} />
+      <Row label="calls" value={s ? s.total_calls.toLocaleString() : "—"} />
+      <Row label="tok i/o" value={s ? `${fmtTok(s.total_tokens_in)}/${fmtTok(s.total_tokens_out)}` : "—"} />
+      {suites > 0 && (
+        <Row
+          label="evals"
+          value={`${suites - regressions}/${suites}`}
+          color={regressions > 0 ? "var(--error)" : "var(--success)"}
+        />
+      )}
+    </div>
+  );
+}
 
 /** The installed promptry version, read from /api/health (single source of
  *  truth: the pip-installed package). Empty string until it resolves. */
@@ -35,7 +79,7 @@ function ConnectionStatus() {
   }, []);
   const color = state === "connected" ? "var(--success)" : state === "offline" ? "var(--error)" : "var(--muted)";
   return (
-    <div style={{ marginTop: "auto", padding: "8px 10px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
+    <div style={{ padding: "8px 10px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{ width: 7, height: 7, borderRadius: 999, background: color, boxShadow: `0 0 0 3px color-mix(in oklch, ${color} 18%, transparent)` }} />
       <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {state === "offline" ? "disconnected" : backendHost()}
@@ -304,6 +348,7 @@ export function SideNav({
         );
       })}
 
+      <WorkspaceStats counters={counters} />
       <ConnectionStatus />
     </aside>
   );

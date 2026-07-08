@@ -49,19 +49,8 @@ html, body {
   text-rendering: optimizeLegibility;
   font-feature-settings: "ss01", "cv11";
 }
-/* Fixed viewport shell: the app owns its own scroll regions, the document
-   itself never scrolls. */
-html, body, #root { height: 100vh; overflow: hidden; }
+body { min-height: 100vh; }
 a { color: inherit; text-decoration: none; }
-
-/* Overview must never show a scrollbar at any viewport height. Every grid
-   stays visible; when the window gets shorter we trim ROWS from the list grids
-   (keeping each grid and its "… more" footer) instead of dropping whole grids
-   or scrolling. Rows fall away 5 -> 4 -> 3 -> 2 as height shrinks. */
-@media (max-height: 900px) { .ov-list .ov-row:nth-child(n+5) { display: none; } }
-@media (max-height: 800px) { .ov-list .ov-row:nth-child(n+4) { display: none; } }
-@media (max-height: 720px) { .ov-list .ov-row:nth-child(n+3) { display: none; } }
-@media (max-height: 640px) { .ov-list .ov-row:nth-child(n+2) { display: none; } }
 button { font-family: inherit; color: inherit; }
 ::selection { background: var(--accent-soft); color: var(--text); }
 

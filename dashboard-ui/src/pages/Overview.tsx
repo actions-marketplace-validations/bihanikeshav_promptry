@@ -124,7 +124,7 @@ function SectionCard({ title, sub, action, children, style }: { title: string; s
         </div>
         {action}
       </div>
-      <div style={{ overflow: "hidden", minHeight: 0, flex: 1 }}>{children}</div>
+      {children}
     </div>
   );
 }
@@ -209,7 +209,7 @@ export default function Overview() {
   const breachedCount = budgets.filter((b) => b.breached).length;
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 8, minHeight: 0 }}>
+    <div>
       <PageHeader
         eyebrow="~/promptry · overview"
         title="Overview"
@@ -220,8 +220,8 @@ export default function Overview() {
         <OnboardingCard />
       ) : (
       <>
-      {/* eval-health hero + cost KPIs + budget governance — ~10% more compact */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 10, alignItems: "stretch", zoom: 0.9 }}>
+      {/* eval-health hero + cost KPIs + budget governance */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 16, marginBottom: 16, alignItems: "stretch" }}>
         {/* Suite health hero: summary stat band + weakest-first list */}
         <div className="card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -249,9 +249,9 @@ export default function Overview() {
             </Empty>
           ) : (
             <table className="pr">
-              <tbody className="ov-list">
+              <tbody>
                 {health.map((s) => (
-                  <tr className="ov-row" key={s.name} onClick={() => navigate(`/suite/${encodeURIComponent(s.name)}`)}>
+                  <tr key={s.name} onClick={() => navigate(`/suite/${encodeURIComponent(s.name)}`)}>
                     <td>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <span style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</span>
@@ -324,17 +324,17 @@ export default function Overview() {
         </div>
       </div>
 
-      {/* spend by module + recent feedback — always shown; rows trim to fit */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 10, flex: 1, minHeight: 0 }}>
+      {/* spend by module + live activity */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 16 }}>
         <SectionCard title="Spend by module · 30d" action={<button className="btn" onClick={() => navigate("/cost")}>Cost detail ›</button>}>
           {byModule.length === 0 ? (
             <Empty text="No cost recorded yet — track each live call and spend breaks down here by module.">
               <CopyField value={'promptry.track_invocation("my-prompt", metadata={"model": "gpt-4o", "cost": 0.002})'} />
             </Empty>
           ) : (
-            <div className="ov-list" style={{ padding: "12px 16px" }}>
+            <div style={{ padding: "12px 16px" }}>
               {byModule.map((r) => (
-                <div className="ov-row" key={r.module} style={{ marginBottom: 11 }}>
+                <div key={r.module} style={{ marginBottom: 11 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                     <span style={{ fontSize: 12.5, fontFamily: "var(--font-mono)", color: "var(--text)" }}>
                       {r.module}<span style={{ color: "var(--muted)", marginLeft: 6, fontSize: 11 }}>{r.calls.toLocaleString()} calls</span>
@@ -357,9 +357,9 @@ export default function Overview() {
             </Empty>
           ) : (
             <table className="pr" style={{ tableLayout: "fixed", width: "100%" }}>
-              <tbody className="ov-list">
+              <tbody>
                 {recentFb.map((r) => (
-                  <tr className="ov-row" key={r.id} onClick={() => r.invocation_id && navigate(`/invocations/${r.invocation_id}`, { state: { from: [{ label: "feedback", to: "/feedback" }] } })} style={{ cursor: r.invocation_id ? "pointer" : "default" }}>
+                  <tr key={r.id} onClick={() => r.invocation_id && navigate(`/invocations/${r.invocation_id}`, { state: { from: [{ label: "feedback", to: "/feedback" }] } })} style={{ cursor: r.invocation_id ? "pointer" : "default" }}>
                     <td style={{ width: 26, paddingRight: 0 }}>
                       <span title={r.rating != null ? `rating ${r.rating}` : "no rating"} style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: ratingColor(r.rating) }} />
                     </td>
