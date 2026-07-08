@@ -6,7 +6,7 @@ import { getCostData, listBudgets, listFeedback, getFeedbackStats, getOnboarding
 import type { LayoutContext } from "../components/Layout";
 import type { CostResponse, BudgetStatus, FeedbackRow, FeedbackStats, OnboardingStatus } from "../api/types";
 
-const DOCS_URL = "https://promptry.meownikov.xyz";
+const DOCS_URL = "https://promptry.meownikov.xyz/docs.html";
 
 /* First-run getting-started card. Replaces the zero-value KPI grid when the
    user has recorded nothing yet — three numbered steps, each with a

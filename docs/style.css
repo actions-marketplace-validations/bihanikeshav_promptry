@@ -53,6 +53,9 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+/* Keep #hash jumps clear of the 56px sticky nav so section titles aren't
+   scrolled underneath it. */
+html { scroll-padding-top: 76px; }
 
 /* Thin, theme-matched scrollbars everywhere (Firefox + WebKit). The thumb
    floats inside a transparent border via background-clip, so it reads as a
@@ -1639,6 +1642,9 @@ hr.rule { border: 0; border-top: 1px solid var(--line); margin: 0; }
   padding-top: 40px;
 }
 .docs-body h1 { font-family: var(--f-sans); font-weight: 500; font-size: clamp(28px, 3vw, 36px); letter-spacing: -0.03em; color: var(--ink); margin: 0 0 16px; }
+/* scroll-margin so a heading targeted by a sidebar #hash (or the JS search
+   jump) lands below the sticky nav rather than under it. */
+.docs-body h1, .docs-body h2, .docs-body h3 { scroll-margin-top: 76px; }
 .docs-body h2 { font-family: var(--f-sans); font-weight: 500; font-size: 22px; letter-spacing: -0.02em; color: var(--ink); margin: 48px 0 12px; padding-top: 32px; border-top: 1px solid var(--line); }
 .docs-body h2:first-of-type { border-top: none; padding-top: 0; margin-top: 24px; }
 .docs-body h3 { font-family: var(--f-sans); font-weight: 500; font-size: 17px; letter-spacing: -0.01em; color: var(--ink); margin: 28px 0 10px; }
