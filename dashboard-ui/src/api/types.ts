@@ -227,6 +227,103 @@ export interface Diff2Response {
   cache_suggestion: CacheSuggestion;
 }
 
+/* ---- Per-prompt prefix-cache analysis (input placement) ---- */
+export type CacheRecommendation =
+  | "move_inputs_to_end"
+  | "already_optimal"
+  | "too_small"
+  | "no_variables";
+
+export interface CacheSegment {
+  type: "static" | "var";
+  text: string;
+  name?: string;
+}
+
+export interface PromptCacheAnalysis {
+  name: string;
+  version: number;
+  content: string;
+  total_chars: number;
+  total_tokens: number;
+  variables: string[];
+  first_variable: string | null;
+  cacheable_prefix_chars: number;
+  cacheable_prefix_tokens: number;
+  static_total_chars: number;
+  static_total_tokens: number;
+  reorder_gain_tokens: number;
+  min_cache_tokens: number;
+  threshold_tokens: number;
+  meets_threshold: boolean;
+  segments: CacheSegment[];
+  recommendation: CacheRecommendation;
+  rationale: string;
+}
+
+/** One row in the ranked all-prompts cache-analysis list. */
+export interface CacheAnalysisRow {
+  name: string;
+  version: number;
+  recommendation: CacheRecommendation;
+  cacheable_prefix_tokens: number;
+  static_total_tokens: number;
+  reorder_gain_tokens: number;
+  total_tokens: number;
+  threshold_tokens: number;
+  meets_threshold: boolean;
+  first_variable: string | null;
+}
+
+export interface CacheAnalysisList {
+  prompts: CacheAnalysisRow[];
+}
+
+/* ---- Shorten analysis (flag redundant / filler wording, measure savings) ---- */
+export type ShortenKind =
+  | "duplicate"
+  | "filler"
+  | "redundant_format"
+  | "whitespace"
+  | "semantic_duplicate";
+
+export interface ShortenFinding {
+  kind: ShortenKind;
+  message: string;
+  /** The offending span of static text (for display / manual editing). */
+  text: string;
+  /** The earlier sentence this one duplicates/paraphrases (for duplicate &
+   *  semantic_duplicate findings), so the UI can show the pair. */
+  counterpart?: string | null;
+  /** Estimated input tokens saved if this is removed/tightened. */
+  tokens: number;
+  /** Cosine similarity for semantic_duplicate findings, else null. */
+  similarity?: number | null;
+}
+
+export interface PromptShortenAnalysis {
+  name: string;
+  version: number;
+  content: string;
+  total_tokens: number;
+  est_tokens_saved: number;
+  /** False when the [semantic] extra isn't installed (rule-based findings only). */
+  semantic_available: boolean;
+  findings: ShortenFinding[];
+}
+
+export interface ShortenRow {
+  name: string;
+  version: number;
+  est_tokens_saved: number;
+  finding_count: number;
+  total_tokens: number;
+}
+
+export interface ShortenAnalysisList {
+  prompts: ShortenRow[];
+}
+
 /* ---- Suite creator: candidates + create request ---- */
 export type SuiteCandidateSource = "golden" | "feedback";
 
@@ -366,6 +463,10 @@ export interface ProjectConfig {
   key_env: Record<string, string>;
   /** Optional per-provider env-var-name aliases (name only, never the secret). */
   keys?: Record<string, string>;
+  /** Whether the live prompt CMS is enabled ([dashboard] cms = true). When
+   *  false, prompt-write surfaces (edit content, promote, apply consolidation)
+   *  are disabled with an "enable the CMS" hint. */
+  cms_enabled?: boolean;
   path: string;
 }
 

@@ -27,6 +27,10 @@ import type {
   PiiScan,
   NearDuplicates,
   Diff2Response,
+  CacheAnalysisList,
+  PromptCacheAnalysis,
+  ShortenAnalysisList,
+  PromptShortenAnalysis,
   SuiteCandidatesResponse,
   CreateSuiteRequest,
   CreateSuiteResponse,
@@ -153,6 +157,26 @@ export function getPromptDiff2(a: string, b: string): Promise<Diff2Response> {
   return fetchJson(
     `/api/prompts/diff2?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`
   );
+}
+
+/** All prompts ranked by prefix-cache reorder opportunity. */
+export function getCacheAnalysisList(): Promise<CacheAnalysisList> {
+  return fetchJson(`/api/prompts/cache-analysis`);
+}
+
+/** Full per-prompt input-placement cache analysis (segment breakdown). */
+export function getPromptCacheAnalysis(name: string): Promise<PromptCacheAnalysis> {
+  return fetchJson(`/api/prompts/${encodeURIComponent(name)}/cache-analysis`);
+}
+
+/** All prompts ranked by estimated shorten savings. */
+export function getShortenAnalysisList(): Promise<ShortenAnalysisList> {
+  return fetchJson(`/api/prompts/shorten-analysis`);
+}
+
+/** Per-prompt shorten analysis: redundant/filler findings + measured savings. */
+export function getPromptShortenAnalysis(name: string): Promise<PromptShortenAnalysis> {
+  return fetchJson(`/api/prompts/${encodeURIComponent(name)}/shorten-analysis`);
 }
 
 // ---- Suite creator ----
