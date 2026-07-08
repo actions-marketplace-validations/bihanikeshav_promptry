@@ -21,8 +21,9 @@ from typing import Callable
 from promptry.projectconfig import load_project_config
 
 _LITELLM_MISSING = (
-    "litellm is required for LLM calls but is not installed. "
-    "Reinstall with: pip install --upgrade promptry"
+    "Running model completions needs the optional 'llm' dependencies, which "
+    "are not installed.\n"
+    "Install them with:  pip install 'promptry[llm]'   (or 'promptry[full]')"
 )
 
 

@@ -32,7 +32,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,semantic]"
+          # [full] so every optional feature (semantic + llm providers) is
+          # exercised; core stays light for end users via the split extras.
+          pip install -e ".[dev,full]"
 
       - name: Run tests
         run: pytest -m "not slow" -q

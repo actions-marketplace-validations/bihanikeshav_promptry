@@ -1949,7 +1949,7 @@ def doctor_cmd():
         import sentence_transformers  # noqa: F401
         _ok("sentence-transformers", sentence_transformers.__version__)
     except ImportError:
-        _warn("sentence-transformers", "not installed -- needed for semantic assertions")
+        _warn("sentence-transformers", "not installed -- run: pip install 'promptry[semantic]'")
 
     # 7. Embedding model downloaded (optional)
     try:
@@ -1975,12 +1975,15 @@ def doctor_cmd():
     else:
         _warn("Dashboard deps", "fastapi/uvicorn not installed -- please reinstall with pip install --upgrade promptry")
 
-    # 9. Python packages -- optional extras with versions
+    # 9. Python packages -- optional extras with versions.
+    #   [semantic] -> sentence-transformers, chromadb
+    #   [llm]      -> litellm, openai, anthropic
     _extras = [
         ("sentence-transformers", "sentence_transformers"),
-        ("fastapi", "fastapi"),
-        ("uvicorn", "uvicorn"),
-        ("mcp", "mcp"),
+        ("chromadb", "chromadb"),
+        ("litellm", "litellm"),
+        ("openai", "openai"),
+        ("anthropic", "anthropic"),
     ]
     installed_extras = []
     for display_name, import_name in _extras:

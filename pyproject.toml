@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promptry"
-version = "1.0.2"
+version = "1.0.3"
 description = "Regression protection for LLM pipelines"
 readme = "README.md"
 license = "MIT"
@@ -13,7 +13,7 @@ authors = [
     {name = "Keshav", email = "keshav@meownikov.xyz"},
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -25,6 +25,10 @@ classifiers = [
 ]
 keywords = ["llm", "prompts", "regression", "testing", "eval", "drift"]
 
+# Core stays deliberately small: CLI, prompt registry, deterministic
+# assertions (exact/text/schema/json/rouge/levenshtein), drift, cost tracking
+# from the bundled price snapshot, the local dashboard, and the MCP server.
+# Anything that pulls torch-sized weights or a provider SDK lives in an extra.
 dependencies = [
     "typer>=0.9.0",
     "pydantic>=2.0.0",
@@ -32,24 +36,34 @@ dependencies = [
     "mcp>=1.0.0",
     "tomli>=1.1.0; python_version < '3.11'",
     "watchfiles>=0.21.0",
-    "sentence-transformers>=2.2.0",
+    "pyyaml>=6.0",
+    # Dashboard ships in core -- it's a thin FastAPI app over the local SQLite
+    # DB, no heavy transitive deps.
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
-    "openai>=1.0.0",
-    "litellm>=1.0.0",
-    "anthropic>=0.25.0",
-    "pyyaml>=6.0",
-    "chromadb>=0.5.0",
 ]
 
 [project.optional-dependencies]
-semantic = []
-dashboard = []
-openai = []
-litellm = []
-anthropic = []
-dataset-gen = []
-integration = []
+# Semantic assertions, embedding-distance, RAG context retrieval, and failure
+# clustering. Pulls sentence-transformers (torch) + chromadb -- the heavy set.
+semantic = [
+    "sentence-transformers>=2.2.0",
+    "chromadb>=0.5.0",
+]
+# Running real model completions, assert_llm judging, and live price refresh.
+llm = [
+    "litellm>=1.0.0",
+    "openai>=1.0.0",
+    "anthropic>=0.25.0",
+]
+# Everything -- restores the pre-0.10 "batteries included" install.
+full = [
+    "sentence-transformers>=2.2.0",
+    "chromadb>=0.5.0",
+    "litellm>=1.0.0",
+    "openai>=1.0.0",
+    "anthropic>=0.25.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

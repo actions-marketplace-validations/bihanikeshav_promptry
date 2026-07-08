@@ -169,7 +169,9 @@ class TestGetEmbedderMissingDependency:
     def test_raises_helpful_import_error(self):
         embeddings.set_model("whatever")
         with patch.dict("sys.modules", {"sentence_transformers": None}):
-            with pytest.raises(ImportError, match="sentence-transformers"):
+            # The error must name the exact extra to install, not a bare
+            # ModuleNotFoundError.
+            with pytest.raises(ImportError, match=r"promptry\[semantic\]"):
                 embeddings.get_embedder()
 
 

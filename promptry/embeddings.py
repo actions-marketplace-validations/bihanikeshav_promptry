@@ -52,11 +52,14 @@ def get_embedder():
         if _model is None:
             try:
                 from sentence_transformers import SentenceTransformer
-            except ImportError:
+            except ImportError as e:
                 raise ImportError(
-                    "sentence-transformers is required for semantic assertions. "
-                    "Please ensure promptry is properly installed with: pip install --upgrade promptry"
-                )
+                    "Semantic assertions (assert_semantic, embedding distance, "
+                    "RAG context, clustering) need the optional 'semantic' "
+                    "dependencies, which are not installed.\n"
+                    "Install them with:  pip install 'promptry[semantic]'   "
+                    "(or 'promptry[full]')"
+                ) from e
             from promptry.config import get_config
             name = _model_name_override or get_config().model.embedding_model
             _model = SentenceTransformer(name)
