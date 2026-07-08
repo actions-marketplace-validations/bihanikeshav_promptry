@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { SideNav } from "./SideNav";
-import { ActivityFooter } from "./ActivityFooter";
 import { CommandK } from "./CommandK";
 import { getSuites, getPrompts } from "../api/client";
 import type { SuiteSummary, PromptSummary } from "../api/types";
@@ -61,7 +60,6 @@ export default function Layout() {
         >
           <Outlet context={ctx} />
         </main>
-        <ActivityFooter suites={suites} />
       </div>
       <CommandK
         open={cmdOpen}

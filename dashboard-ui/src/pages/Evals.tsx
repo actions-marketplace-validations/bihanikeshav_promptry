@@ -240,10 +240,10 @@ export default function Evals() {
                   <td className="r">
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
                       <button
-                        className="btn btn-ghost"
+                        className="btn"
                         onClick={(e) => { e.stopPropagation(); navigate(`/suites/new?edit=${encodeURIComponent(s.name)}`); }}
                         title="Edit this suite"
-                        style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)" }}
+                        style={{ fontSize: 11, padding: "3px 12px", color: "var(--accent)", borderColor: "var(--accent-line)" }}
                       >
                         Edit
                       </button>

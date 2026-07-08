@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { KPI, PageHeader, Sparkline, StatusPill, CopyField } from "../components/ui";
+import { ActivityFooter } from "../components/ActivityFooter";
 import { pct, relTime, usd, scoreColor } from "../utils";
 import { getCostData, listBudgets, listFeedback, getFeedbackStats, getOnboardingStatus } from "../api/client";
 import type { LayoutContext } from "../components/Layout";
@@ -124,7 +125,7 @@ function SectionCard({ title, sub, action, children, style }: { title: string; s
         </div>
         {action}
       </div>
-      {children}
+      <div style={{ overflowY: "auto", minHeight: 0, flex: 1 }}>{children}</div>
     </div>
   );
 }
@@ -209,7 +210,8 @@ export default function Overview() {
   const breachedCount = budgets.filter((b) => b.breached).length;
 
   return (
-    <div>
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 12px)", minHeight: 0 }}>
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 10 }}>
       <PageHeader
         eyebrow="~/promptry · overview"
         title="Overview"
@@ -221,7 +223,7 @@ export default function Overview() {
       ) : (
       <>
       {/* eval-health hero + cost KPIs + budget governance */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 16, marginBottom: 16, alignItems: "stretch" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 10, alignItems: "stretch" }}>
         {/* Suite health hero: summary stat band + weakest-first list */}
         <div className="card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -325,7 +327,7 @@ export default function Overview() {
       </div>
 
       {/* spend by module + live activity */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 10, flex: 1, minHeight: 0 }}>
         <SectionCard title="Spend by module · 30d" action={<button className="btn" onClick={() => navigate("/cost")}>Cost detail ›</button>}>
           {byModule.length === 0 ? (
             <Empty text="No cost recorded yet — track each live call and spend breaks down here by module.">
@@ -385,6 +387,8 @@ export default function Overview() {
       </div>
       </>
       )}
+      </div>
+      <ActivityFooter suites={suites} />
     </div>
   );
 }
