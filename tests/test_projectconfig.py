@@ -161,3 +161,35 @@ class TestSaveRoundTrip:
         # save invalidates the cache, so the next load sees the new value
         assert load_project_config()["judge"]["model"] == "written-model"
         assert config_path().is_file()
+
+
+class TestKeyAliases:
+    """[keys] lets a non-standard env-var name back a provider's key."""
+
+    def test_default_env_names_without_alias(self, tmp_path):
+        assert projectconfig.key_env_names()["openai"] == "OPENAI_API_KEY"
+
+    def test_alias_overrides_env_name(self, tmp_path):
+        (tmp_path / "promptry.toml").write_text(
+            '[keys]\nopenai = "MY_OPENAI_KEY"\n', encoding="utf-8")
+        reset_project_config()
+        assert projectconfig.key_env_names()["openai"] == "MY_OPENAI_KEY"
+        assert projectconfig.key_env_names()["anthropic"] == "ANTHROPIC_API_KEY"
+
+    def test_status_and_bridge_use_alias(self, tmp_path, monkeypatch):
+        (tmp_path / "promptry.toml").write_text(
+            '[keys]\nopenai = "MY_OPENAI_KEY"\n', encoding="utf-8")
+        reset_project_config()
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("MY_OPENAI_KEY", "sk-test")
+        assert projectconfig.key_status()["openai"] is True
+        applied = projectconfig.apply_key_aliases()
+        assert applied == 1
+        import os
+        assert os.environ.get("OPENAI_API_KEY") == "sk-test"
+
+    def test_blank_alias_falls_back_to_default(self, tmp_path):
+        (tmp_path / "promptry.toml").write_text(
+            '[keys]\nopenai = "   "\n', encoding="utf-8")
+        reset_project_config()
+        assert projectconfig.key_env_names()["openai"] == "OPENAI_API_KEY"

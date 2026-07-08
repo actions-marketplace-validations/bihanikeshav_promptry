@@ -37,6 +37,13 @@ def completion(model: str, messages: list[dict], **kwargs):
         import litellm
     except ImportError as e:  # pragma: no cover - litellm is a core dep
         raise ImportError(_LITELLM_MISSING) from e
+    # Bridge any non-standard provider key var (config [keys] alias) to the
+    # canonical name litellm reads, so aliased keys actually authenticate.
+    try:
+        from promptry.projectconfig import apply_key_aliases
+        apply_key_aliases()
+    except Exception:
+        pass
     return litellm.completion(model=model, messages=messages, **kwargs)
 
 

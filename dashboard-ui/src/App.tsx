@@ -27,7 +27,7 @@ export default function App() {
         <Route path="/suite/:name/diff" element={<RunDiff />} />
         <Route path="/prompts" element={<Prompts />} />
         <Route path="/prompts/:name" element={<PromptDetail />} />
-        <Route path="/duplicates" element={<Duplicates />} />
+        <Route path="/cache" element={<Duplicates />} />
         <Route path="/suites/new" element={<SuiteCreate />} />
         <Route path="/models" element={<Models />} />
         <Route path="/cost" element={<Cost />} />

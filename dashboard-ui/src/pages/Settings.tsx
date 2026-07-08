@@ -10,9 +10,20 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [draft, setDraft] = useState({ id: "", provider: "openai", label: "" });
+  const [editKey, setEditKey] = useState<string | null>(null);
+  const [keyDraft, setKeyDraft] = useState("");
 
   const load = () => getConfig().then(setCfg).catch(() => setCfg(null));
   useEffect(() => { load(); }, []);
+
+  async function saveKeyAlias(provider: string, envName: string) {
+    setSaving(true);
+    try {
+      await updateConfig({ keys: { ...(cfg?.keys || {}), [provider]: envName.trim() } });
+      setEditKey(null); setKeyDraft("");
+      await load();
+    } finally { setSaving(false); }
+  }
 
   async function persist(models: ModelEntry[], dashboard?: Record<string, number | string | boolean>) {
     setSaving(true);
@@ -41,17 +52,39 @@ export default function Settings() {
       <div className="card" style={{ padding: 16, marginBottom: 18 }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>Provider API keys</div>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2, marginBottom: 12 }}>
-          Detected from environment variables — never stored in config or the database.
+          Auto-detected from environment variables — never stored in config or the database.
+          Key not detected? Click it to point promptry at your variable's name.
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {PROVIDERS.map((p) => {
             const ok = cfg.key_status[p];
-            const env = { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", xai: "XAI_API_KEY", google: "GEMINI_API_KEY", azure: "AZURE_OPENAI_API_KEY" }[p];
+            const env = cfg.key_env?.[p] || p.toUpperCase() + "_API_KEY";
+            const editing = editKey === p;
             return (
-              <div key={p} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg-elev)" }}>
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: ok ? "var(--success)" : "var(--muted)" }} />
-                <span style={{ fontSize: 12.5, fontWeight: 600 }}>{p}</span>
-                <span className="mono" style={{ fontSize: 10.5, color: ok ? "var(--success)" : "var(--muted)" }}>{ok ? "set" : `set ${env}`}</span>
+              <div key={p} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg-elev)" }}>
+                <div
+                  onClick={() => { if (!ok) { setEditKey(editing ? null : p); setKeyDraft(env); } }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, cursor: ok ? "default" : "pointer" }}
+                  title={ok ? `Detected in ${env}` : "Click to set the env-var name"}
+                >
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: ok ? "var(--success)" : "var(--muted)" }} />
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>{p}</span>
+                  <span className="mono" style={{ fontSize: 10.5, color: ok ? "var(--success)" : "var(--muted)" }}>{ok ? "set" : `set ${env}`}</span>
+                </div>
+                {editing && !ok && (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      className="inp mono"
+                      style={{ fontSize: 11, width: 190, padding: "3px 6px" }}
+                      placeholder="e.g. MY_OPENAI_KEY"
+                      value={keyDraft}
+                      autoFocus
+                      onChange={(e) => setKeyDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && keyDraft.trim()) saveKeyAlias(p, keyDraft); }}
+                    />
+                    <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} disabled={saving || !keyDraft.trim()} onClick={() => saveKeyAlias(p, keyDraft)}>Save</button>
+                  </div>
+                )}
               </div>
             );
           })}

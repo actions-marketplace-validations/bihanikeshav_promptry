@@ -73,7 +73,7 @@ export default function Prompts() {
 
       {dupes && dupes.pairs.length > 0 && (
         <div className="card" style={{ padding: "12px 16px", marginBottom: 18, borderColor: "var(--warning)" }}>
-          <div onClick={() => navigate("/duplicates")} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <div onClick={() => navigate("/cache")} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
             <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--warning)" }} />
             <span style={{ fontSize: 12.5, fontWeight: 600 }}>
               {dupes.pairs.length} near-duplicate{dupes.pairs.length > 1 ? "s" : ""}

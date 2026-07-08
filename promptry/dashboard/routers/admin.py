@@ -67,6 +67,7 @@ def get_project_config():
         "dashboard": data.get("dashboard", {}),
         "pricing": data.get("pricing", {}),
         "key_status": projectconfig.key_status(),
+        "key_env": projectconfig.key_env_names(),
         "path": str(projectconfig.config_path()),
     }
 
@@ -76,6 +77,7 @@ class _ConfigUpdate(BaseModel):
     judge: Optional[dict] = None
     dashboard: Optional[dict] = None
     pricing: Optional[dict] = None
+    keys: Optional[dict] = None
 
 
 @router.post("/api/config")
@@ -96,6 +98,12 @@ def update_project_config(body: _ConfigUpdate):
         data["dashboard"] = {**data.get("dashboard", {}), **body.dashboard}
     if body.pricing is not None:
         data["pricing"] = body.pricing
+    if body.keys is not None:
+        # Only the env-var NAME per provider (e.g. {"openai": "MY_OPENAI_KEY"}) —
+        # never a secret value. Blank entries clear the alias.
+        cleaned = {k: v.strip() for k, v in body.keys.items()
+                   if isinstance(v, str) and v.strip()}
+        data["keys"] = cleaned
     projectconfig.save_project_config(data)
     projectconfig.apply_pricing_overrides()
     return {"ok": True, "path": str(projectconfig.config_path())}

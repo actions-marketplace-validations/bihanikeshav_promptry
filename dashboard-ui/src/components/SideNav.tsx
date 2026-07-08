@@ -83,8 +83,8 @@ const BASE_ITEMS: NavItem[] = [
     ),
   },
   {
-    to: "/duplicates",
-    label: "Duplicates",
+    to: "/cache",
+    label: "Cache optimization",
     icon: (
       <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round">
         <rect x="2.5" y="2.5" width="7" height="7" rx="1.5" />

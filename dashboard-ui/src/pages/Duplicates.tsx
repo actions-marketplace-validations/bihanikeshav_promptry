@@ -107,9 +107,9 @@ export default function Duplicates() {
   return (
     <div>
       <PageHeader
-        eyebrow="~/promptry · duplicates"
-        title="Near-duplicate consolidation"
-        description="Prompts that have drifted into near-copies of each other. Consolidate them onto one canonical name to cut maintenance and unlock prompt caching on the shared prefix."
+        eyebrow="~/promptry · cache optimization"
+        title="Cache optimization"
+        description="Cut token cost and latency by maximizing prompt-prefix cache hits. Today: find near-duplicate prompts that have drifted into forks and consolidate them onto one canonical name with a shared cacheable prefix. (Prompt-restructuring suggestions coming next.)"
         tags={data ? [data.mode, `${pairs.length} pair${pairs.length === 1 ? "" : "s"}`] : undefined}
       />
 

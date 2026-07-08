@@ -243,10 +243,40 @@ def save_project_config(data: dict) -> None:
     reset_project_config()  # next read reflects the write
 
 
+def key_env_names() -> dict[str, str]:
+    """The env-var name each provider's key is read from — the standard name
+    (OPENAI_API_KEY, …) unless the user aliased it in ``[keys]`` of the config,
+    e.g. ``[keys] openai = "MY_OPENAI_KEY"`` for a non-standard variable name.
+    Only the variable NAME is configurable; the secret value stays in the env."""
+    overrides = (load_project_config().get("keys") or {})
+    out: dict[str, str] = {}
+    for prov, default_env in PROVIDER_ENV.items():
+        alias = overrides.get(prov)
+        out[prov] = alias if isinstance(alias, str) and alias.strip() else default_env
+    return out
+
+
 def key_status() -> dict[str, bool]:
-    """Which provider keys are present in the environment (True/False).
-    Never returns the key values themselves."""
-    return {prov: bool(os.environ.get(env)) for prov, env in PROVIDER_ENV.items()}
+    """Which provider keys are present in the environment (True/False),
+    honoring any ``[keys]`` env-var-name aliases. Never returns the values."""
+    return {prov: bool(os.environ.get(env)) for prov, env in key_env_names().items()}
+
+
+def apply_key_aliases() -> int:
+    """Bridge aliased provider keys to the standard env var litellm expects.
+
+    litellm only reads the canonical names (OPENAI_API_KEY, …). When a user has
+    their key under a non-standard variable and aliased it in ``[keys]``, copy
+    that value into the canonical variable (without overwriting one already set)
+    so provider calls actually succeed. Returns the number of aliases applied.
+    Call before dispatching an LLM request."""
+    applied = 0
+    for prov, env in key_env_names().items():
+        default_env = PROVIDER_ENV[prov]
+        if env != default_env and os.environ.get(env) and not os.environ.get(default_env):
+            os.environ[default_env] = os.environ[env]
+            applied += 1
+    return applied
 
 
 def apply_pricing_overrides() -> int:

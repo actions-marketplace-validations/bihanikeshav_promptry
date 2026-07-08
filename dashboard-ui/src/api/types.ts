@@ -332,6 +332,10 @@ export interface ProjectConfig {
   dashboard: Record<string, number | string | boolean>;
   pricing: Record<string, Record<string, number>>;
   key_status: Record<string, boolean>;
+  /** Effective env-var name each provider's key is read from (standard or aliased). */
+  key_env: Record<string, string>;
+  /** Optional per-provider env-var-name aliases (name only, never the secret). */
+  keys?: Record<string, string>;
   path: string;
 }
 
