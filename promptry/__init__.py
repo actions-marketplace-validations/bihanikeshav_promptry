@@ -1,6 +1,14 @@
 """promptry - regression protection for LLM pipelines."""
 
-__version__ = "1.0.2"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    # Single source of truth: the version declared in pyproject.toml and
+    # baked into the installed package's metadata. Avoids the literal drifting
+    # out of sync with what pip actually installed.
+    __version__ = _pkg_version("promptry")
+except PackageNotFoundError:  # running from a source tree without an install
+    __version__ = "0+unknown"
 
 from promptry.registry import track, track_context, track_invocation, vote, save_dataset, load_dataset, PromptRegistry
 from promptry.prompts import seed_prompt, get_prompt_template, render_prompt
