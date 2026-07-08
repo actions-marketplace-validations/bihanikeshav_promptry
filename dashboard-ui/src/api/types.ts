@@ -256,7 +256,8 @@ export type SuiteAssertionType =
 
 export interface SuiteAssertionInput {
   type: SuiteAssertionType;
-  value: string;
+  // string for most assertions; a keyword list for contains / not_contains.
+  value: string | string[];
 }
 
 export interface SuiteCaseInput {

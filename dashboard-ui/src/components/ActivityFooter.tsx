@@ -16,6 +16,9 @@ export function ActivityFooter({ suites }: { suites: SuiteSummary[] }) {
   return (
     <div
       style={{
+        position: "sticky",
+        bottom: 0,
+        zIndex: 30,
         borderTop: "1px solid var(--border)",
         background: "var(--bg-elev)",
         padding: "7px 24px",

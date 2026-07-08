@@ -5,6 +5,7 @@ import { TemplateEditor } from "../components/TemplateEditor";
 import { getConfig, getSuiteCandidates, createSuite, getSuiteDefinition, getRecordedContext } from "../api/client";
 import type {
   SuiteAssertionType,
+  SuiteAssertionInput,
   SuiteCandidate,
   SuiteCaseInput,
   CreateSuiteResponse,
@@ -353,7 +354,11 @@ export default function SuiteCreate() {
             asserts: (c.expect || []).map((e) => ({
               id: nextId(),
               type: e.type,
-              value: typeof e.value === "string" ? e.value : JSON.stringify(e.value ?? ""),
+              value: typeof e.value === "string"
+                ? e.value
+                : Array.isArray(e.value)
+                  ? e.value.join(", ")
+                  : JSON.stringify(e.value ?? ""),
             })),
           })),
         );
@@ -393,10 +398,16 @@ export default function SuiteCreate() {
     cases
       .filter((c) => c.input.trim())
       .map((c) => {
-        const resolve = (a: AssertDraft) => {
+        const resolve = (a: AssertDraft): SuiteAssertionInput => {
           const def = ASSERT_TYPES.find((t) => t.v === a.type);
-          const value = a.value.trim() || (def?.usesExpected ? c.expected.trim() : "");
-          return { type: a.type, value };
+          const raw = a.value.trim() || (def?.usesExpected ? c.expected.trim() : "");
+          // contains / not_contains take a keyword LIST; a comma-separated
+          // entry (matching the "keyword1, keyword2" hint) becomes an array so
+          // list-valued suites round-trip through edit without degrading.
+          if ((a.type === "contains" || a.type === "not_contains") && raw.includes(",")) {
+            return { type: a.type, value: raw.split(",").map((s) => s.trim()).filter(Boolean) };
+          }
+          return { type: a.type, value: raw };
         };
         const expect = [...c.asserts, ...suiteAsserts].map(resolve);
         const hasRef = expect.some((e) => e.type === "semantic" || e.type === "exact" || e.type === "grounded");
