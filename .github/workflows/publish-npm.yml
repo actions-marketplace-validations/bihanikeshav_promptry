@@ -3,6 +3,7 @@ name: Publish JS to npm
 on:
   release:
     types: [published]
+  workflow_dispatch: {}
 
 permissions: {}
 
@@ -20,7 +21,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install dependencies
         run: npm ci
@@ -62,7 +63,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Update npm for trusted publishing support
         run: npm install -g npm@latest
