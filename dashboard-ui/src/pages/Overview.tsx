@@ -124,7 +124,7 @@ function SectionCard({ title, sub, action, children, style }: { title: string; s
         </div>
         {action}
       </div>
-      <div style={{ overflowY: "auto", minHeight: 0, flex: 1 }}>{children}</div>
+      <div style={{ overflow: "hidden", minHeight: 0, flex: 1 }}>{children}</div>
     </div>
   );
 }
@@ -209,7 +209,7 @@ export default function Overview() {
   const breachedCount = budgets.filter((b) => b.breached).length;
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 8, minHeight: 0 }}>
       <PageHeader
         eyebrow="~/promptry · overview"
         title="Overview"
@@ -220,8 +220,8 @@ export default function Overview() {
         <OnboardingCard />
       ) : (
       <>
-      {/* eval-health hero + cost KPIs + budget governance */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 10, alignItems: "stretch" }}>
+      {/* eval-health hero + cost KPIs + budget governance — ~10% more compact */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 10, alignItems: "stretch", zoom: 0.9 }}>
         {/* Suite health hero: summary stat band + weakest-first list */}
         <div className="card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -249,7 +249,7 @@ export default function Overview() {
             </Empty>
           ) : (
             <table className="pr">
-              <tbody className="ov-suite">
+              <tbody className="ov-list">
                 {health.map((s) => (
                   <tr className="ov-row" key={s.name} onClick={() => navigate(`/suite/${encodeURIComponent(s.name)}`)}>
                     <td>
@@ -324,17 +324,17 @@ export default function Overview() {
         </div>
       </div>
 
-      {/* spend by module + live activity — dropped first on short viewports */}
-      <div className="ov-secondary" style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 10, flex: 1, minHeight: 0 }}>
+      {/* spend by module + recent feedback — always shown; rows trim to fit */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 10, flex: 1, minHeight: 0 }}>
         <SectionCard title="Spend by module · 30d" action={<button className="btn" onClick={() => navigate("/cost")}>Cost detail ›</button>}>
           {byModule.length === 0 ? (
             <Empty text="No cost recorded yet — track each live call and spend breaks down here by module.">
               <CopyField value={'promptry.track_invocation("my-prompt", metadata={"model": "gpt-4o", "cost": 0.002})'} />
             </Empty>
           ) : (
-            <div style={{ padding: "12px 16px" }}>
+            <div className="ov-list" style={{ padding: "12px 16px" }}>
               {byModule.map((r) => (
-                <div key={r.module} style={{ marginBottom: 11 }}>
+                <div className="ov-row" key={r.module} style={{ marginBottom: 11 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                     <span style={{ fontSize: 12.5, fontFamily: "var(--font-mono)", color: "var(--text)" }}>
                       {r.module}<span style={{ color: "var(--muted)", marginLeft: 6, fontSize: 11 }}>{r.calls.toLocaleString()} calls</span>
@@ -357,9 +357,9 @@ export default function Overview() {
             </Empty>
           ) : (
             <table className="pr" style={{ tableLayout: "fixed", width: "100%" }}>
-              <tbody>
+              <tbody className="ov-list">
                 {recentFb.map((r) => (
-                  <tr key={r.id} onClick={() => r.invocation_id && navigate(`/invocations/${r.invocation_id}`, { state: { from: [{ label: "feedback", to: "/feedback" }] } })} style={{ cursor: r.invocation_id ? "pointer" : "default" }}>
+                  <tr className="ov-row" key={r.id} onClick={() => r.invocation_id && navigate(`/invocations/${r.invocation_id}`, { state: { from: [{ label: "feedback", to: "/feedback" }] } })} style={{ cursor: r.invocation_id ? "pointer" : "default" }}>
                     <td style={{ width: 26, paddingRight: 0 }}>
                       <span title={r.rating != null ? `rating ${r.rating}` : "no rating"} style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: ratingColor(r.rating) }} />
                     </td>
