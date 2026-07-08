@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.0.4 (2026-07-09)
+
+Cache optimization — a dashboard page (`/cache`) and CLI (`promptry cache`) with
+three modes for cutting input-token cost, plus a prompt-CMS gate.
+
+### Cache optimization
+
+- **Reorder inputs** — per-prompt prefix-cache readiness. Prefix caching reuses
+  the request up to the first interpolated input and only activates above
+  ~1024 tokens, so the lever is ordering: static instructions first,
+  `{{inputs}}` last. Shows each prompt's cacheable prefix now vs. if inputs
+  moved to the end, judged against real telemetry, and honestly reports
+  "too small to cache" below the floor. (`prompt_diff.prefix_cache_analysis`,
+  `GET /api/prompts[/{name}]/cache-analysis`.)
+- **Consolidate** — near-duplicate forks shown side-by-side (both prompts equal
+  weight, local no-refetch ↔ swap), with a CMS-gated Apply to make one adopt the
+  other's wording. Fixes the previous cross-prompt "% shared" framing.
+- **Shorten** — flags redundant/filler wording in a prompt's static text and
+  measures the tokens it costs: duplicate/near-duplicate sentences, a curated
+  filler lexicon, over-repeated format keywords, and (with `[semantic]`)
+  embedding-based semantic redundancy. Each redundancy pair is highlighted
+  inline in its own colour against its original; filler is advisory. Flag-only —
+  no rewriting, no model calls. (`prompt_diff.shorten_analysis`,
+  `GET /api/prompts[/{name}]/shorten-analysis`.)
+- **CLI**: `promptry cache`, `promptry cache <name>`, `promptry cache --shorten`,
+  all with `--json` for CI.
+
+### Prompt CMS gate
+
+- Prompt-write actions in the dashboard (edit content, promote to env, apply a
+  consolidation) are gated behind `[dashboard] cms = true` in `promptry.toml`,
+  **off by default** — editing from the dashboard only takes effect if the app
+  fetches its prompts from promptry (`render_prompt`/`get_prompt`). When off, the
+  buttons are disabled with a hint and the API returns 403.
+
 ## 1.0.3 (2026-07-08)
 
 Packaging and honesty pass — no functional changes to the core.
