@@ -39,6 +39,21 @@ Probable cause:
 pip install promptry
 ```
 
+Core stays small on purpose — CLI, prompt registry, deterministic assertions
+(exact / text / schema / JSON / rouge / levenshtein), drift, cost tracking from
+the bundled price snapshot, the local **dashboard**, and the MCP server. Add an
+extra only when you need it:
+
+```bash
+pip install 'promptry[semantic]'   # assert_semantic, embedding distance, RAG context, clustering (sentence-transformers + chromadb)
+pip install 'promptry[llm]'        # run real model completions / assert_llm judging / live price refresh (litellm + openai + anthropic)
+pip install 'promptry[full]'       # everything
+```
+
+If you call a feature whose extra isn't installed, promptry raises a clear error
+telling you the exact `pip install` to run — it never fails with a bare
+`ModuleNotFoundError`.
+
 ## Quick start
 
 ```bash
@@ -163,7 +178,7 @@ jobs:
       pull-requests: write  # required for PR comments
     steps:
       - uses: actions/checkout@v4
-      - uses: bihanikeshav/promptry@v0.10.0
+      - uses: bihanikeshav/promptry@v1
         with:
           suite: rag-regression
           module: evals
@@ -216,7 +231,24 @@ The [full guide](docs/guide.md) covers all assertions, cost tracking, model comp
 
 Promptry is local-first by design. If you need a hosted, always-on observability product for production traffic with team seats and SSO, use LangSmith or Arize — different product category. Promptry runs against one SQLite file on your machine: wire it into CI so a bad prompt change never reaches production, manage your live prompts from the dashboard, and keep a per-call ledger of cost and traces without sending anything to a vendor.
 
-Shipped: everything in the feature table above, across Python + JS + CLI + dashboard + MCP + GitHub Action — including the live prompt CMS with environment promotion, the per-call invocations ledger with opt-in request/response capture and feedback ingest, cost-by-module drill-down with budgets, and regression bisect.
+### Maturity
+
+promptry is Beta: the core is stable and tested, the surrounding surfaces are
+usable but still moving. Honest status per component:
+
+| Component | Status | Notes |
+| --- | --- | --- |
+| Prompt registry + versioning | **Stable** | SQLite-backed, covered by tests |
+| Eval suites (YAML + Python) + assertions | **Stable** | deterministic assertions are the core |
+| Drift detection | **Stable** | statistical tests over recorded runs |
+| Cost tracking + bundled price snapshot | **Stable** | reroute-aware pricing |
+| CLI + GitHub Action | **Stable** | wire into CI today |
+| Dashboard (local web UI) | **Beta** | broad feature set, UI still evolving |
+| MCP server | **Beta** | create + run evals from an LLM agent |
+| JS client (`promptry-js`) | **Beta** | HTTP telemetry only, no local SQLite |
+| VS Code extension | **Experimental** | thin wrapper over the CLI |
+| Semantic assertions / RAG (`[semantic]`) | **Beta** | optional, needs the extra |
+| Agent trajectory analysis, LLM root-cause | **Experimental** | on the roadmap |
 
 Reroute-aware pricing ships in 0.10: when a provider retires a slug and silently
 serves a pricier model (e.g. xAI's 2026-05-15 grok-4-fast → grok-4.3 at ~6x), the

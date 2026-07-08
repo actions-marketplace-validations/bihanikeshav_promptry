@@ -899,7 +899,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - uses: bihanikeshav/promptry@v0.10.0
+      - uses: bihanikeshav/promptry@v1
         with:
           suite: rag-regression
           module: evals
