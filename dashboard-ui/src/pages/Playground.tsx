@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PageHeader, Select } from "../components/ui";
 import { runPlaygroundModel, getConfig, getPrompts, getPromptContent } from "../api/client";
 import { templateVars } from "../utils";
@@ -157,6 +158,7 @@ interface ModelRunRecord {
 
 /* -------- component -------- */
 export default function Playground() {
+  const [searchParams] = useSearchParams();
   const [sys, setSys] = useState("");
   const [user, setUser] = useState("");
   const [vars, setVars] = useState<Record<string, string>>({});
@@ -222,7 +224,11 @@ export default function Playground() {
       .then((ps) => {
         const names = ps.map((p) => p.name);
         setRegistry(names);
-        if (names.length) loadFromRegistry(names[0]);
+        // Honor a ?prompt=<name> deep-link (e.g. from the Duplicates page),
+        // otherwise start on the first tracked prompt.
+        const requested = searchParams.get("prompt");
+        const initial = requested && names.includes(requested) ? requested : names[0];
+        if (initial) loadFromRegistry(initial);
       })
       .catch(() => setRegistry([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps

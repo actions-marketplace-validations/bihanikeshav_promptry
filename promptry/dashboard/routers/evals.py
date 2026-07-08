@@ -1,7 +1,11 @@
 """Suite, run, diff, and model-comparison routes."""
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any, Optional
+
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from promptry.dashboard.util import dc_to_dict as _dc_to_dict
 
@@ -334,3 +338,92 @@ def model_compare(
         raise HTTPException(status_code=404, detail=str(exc))
 
     return _dc_to_dict(report)
+
+
+# ---- Suite creator (assemble + persist an evals.yaml suite) ----
+
+@router.get("/api/suite-candidates")
+def suite_candidates(
+    source: str = Query("golden"),
+    name: Optional[str] = Query(default=None),
+    min_rating: float = Query(default=1.0),
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Candidate eval cases to seed the suite creator, sourced from golden
+    examples (``source=golden``) or positive-feedback invocations
+    (``source=feedback``, rating >= min_rating). Returns the candidates plus a
+    ``capture_note`` explaining when question/response/context are empty."""
+    from promptry.dashboard.server import get_storage
+    from promptry.suite_builder import suite_candidates as _candidates, CAPTURE_NOTE
+
+    storage = get_storage()
+    try:
+        candidates = _candidates(
+            storage, source=source, name=name, min_rating=min_rating, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"candidates": candidates, "capture_note": CAPTURE_NOTE}
+
+
+class _ExpectIn(BaseModel):
+    type: str
+    value: Any = None
+
+
+class _CaseIn(BaseModel):
+    input: str
+    context: Optional[str] = None
+    expect: list[_ExpectIn] = []
+
+
+class _CreateSuiteIn(BaseModel):
+    name: str
+    model: Optional[str] = None
+    prompt: Optional[str] = None
+    pipeline: Optional[str] = None
+    description: str = ""
+    cases: list[_CaseIn]
+    output: Optional[str] = None
+    overwrite: bool = False
+
+
+@router.post("/api/suites")
+def create_suite(body: _CreateSuiteIn):
+    """Persist an assembled suite into a declarative ``evals.yaml``.
+
+    Body: ``{name, model, prompt, cases:[{input, context?, expect:[{type,value}]}]}``
+    (use ``pipeline`` instead of ``model``/``prompt`` to call an existing
+    pipeline). Rejects a name that already exists unless ``overwrite=true``."""
+    from promptry.suite_builder import build_suite_dict, write_yaml_suite
+
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="suite 'name' is required")
+    if not body.cases:
+        raise HTTPException(status_code=400, detail="at least one case is required")
+    if not body.pipeline and not (body.model and body.prompt):
+        raise HTTPException(
+            status_code=400,
+            detail="provide either 'pipeline' or both 'model' and 'prompt'",
+        )
+
+    suite = build_suite_dict(
+        name=name,
+        cases=[c.model_dump() for c in body.cases],
+        model=body.model,
+        prompt=body.prompt,
+        pipeline=body.pipeline,
+        description=body.description,
+    )
+
+    target = Path(body.output) if body.output else (Path.cwd() / "evals.yaml")
+    try:
+        write_yaml_suite(target, suite, overwrite=body.overwrite)
+    except ValueError as exc:
+        # A name collision (without overwrite) is a conflict; other shape
+        # problems are bad requests.
+        status = 409 if "already exists" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc))
+
+    return {"name": name, "cases": len(suite["cases"]), "path": str(target)}

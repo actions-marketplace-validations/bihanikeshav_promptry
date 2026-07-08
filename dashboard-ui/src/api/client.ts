@@ -26,6 +26,10 @@ import type {
   OnlineDrift,
   PiiScan,
   NearDuplicates,
+  Diff2Response,
+  SuiteCandidatesResponse,
+  CreateSuiteRequest,
+  CreateSuiteResponse,
   GoldenExample,
   GoldenRunResult,
   OnboardingStatus,
@@ -140,6 +144,38 @@ export function getOnlineDrift(name: string, days = 30): Promise<OnlineDrift> {
 
 export function getNearDuplicates(threshold = 0.85): Promise<NearDuplicates> {
   return fetchJson(`/api/prompts/near-duplicates?threshold=${threshold}`);
+}
+
+/** Side-by-side content diff of two prompts + shared-prefix / cache analysis. */
+export function getPromptDiff2(a: string, b: string): Promise<Diff2Response> {
+  return fetchJson(
+    `/api/prompts/diff2?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`
+  );
+}
+
+// ---- Suite creator ----
+
+export function getSuiteCandidates(params: {
+  source: "golden" | "feedback";
+  name?: string;
+  minRating?: number;
+  limit?: number;
+}): Promise<SuiteCandidatesResponse> {
+  const q = new URLSearchParams({ source: params.source });
+  if (params.name) q.set("name", params.name);
+  if (params.minRating != null) q.set("min_rating", String(params.minRating));
+  if (params.limit != null) q.set("limit", String(params.limit));
+  return fetchJson(`/api/suite-candidates?${q.toString()}`);
+}
+
+export async function createSuite(body: CreateSuiteRequest): Promise<CreateSuiteResponse> {
+  const res = await fetch(`${BASE}/api/suites`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+  return res.json();
 }
 
 // ---- Eval-from-trace: per-prompt golden set ----

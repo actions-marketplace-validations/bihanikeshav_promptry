@@ -162,6 +162,48 @@ def prompt_diff(
             console.print(line)
 
 
+@prompt_app.command("diff2")
+def prompt_diff2(
+    a: str = typer.Argument(..., help="First prompt name."),
+    b: str = typer.Argument(..., help="Second prompt name."),
+):
+    """Diff the latest content of two (possibly unrelated) prompts and
+    report a prompt-prefix cache suggestion. Named diff2 to avoid colliding
+    with 'prompt diff <name> <v1> <v2>' (same-prompt version diff)."""
+    from promptry.prompt_diff import cache_analysis, diff_prompts
+
+    registry = _get_registry()
+    rec_a = registry.get(a)
+    rec_b = registry.get(b)
+    if rec_a is None:
+        console.print(f"[red]Error:[/red] Prompt '{a}' not found.")
+        raise typer.Exit(1)
+    if rec_b is None:
+        console.print(f"[red]Error:[/red] Prompt '{b}' not found.")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]{a}[/bold] v{rec_a.version}  vs  [bold]{b}[/bold] v{rec_b.version}")
+    console.print()
+    for seg in diff_prompts(rec_a.content, rec_b.content):
+        if seg["type"] == "equal":
+            console.print(seg["text"], end="")
+        elif seg["type"] == "delete":
+            console.print(f"[red]{seg['text']}[/red]", end="")
+        elif seg["type"] == "insert":
+            console.print(f"[green]{seg['text']}[/green]", end="")
+    console.print()
+
+    analysis = cache_analysis(rec_a.content, rec_b.content)
+    console.print()
+    console.print(
+        f"[bold]Shared prefix:[/bold] {analysis['shared_prefix_chars']} chars "
+        f"({analysis['shared_prefix_ratio']:.0%} of the shorter prompt)"
+    )
+    suggested_str = "[green]yes[/green]" if analysis["suggested"] else "[dim]no[/dim]"
+    console.print(f"[bold]Cache suggestion:[/bold] {suggested_str}")
+    console.print(analysis["rationale"])
+
+
 @prompt_app.command("tag")
 def prompt_tag(
     name: str = typer.Argument(..., help="Prompt name."),
@@ -1134,34 +1176,13 @@ def _write_yaml_suite(path: Path, suite_dict: dict) -> None:
     document that isn't the expected ``{suites: [...]}`` shape, raises
     ValueError and leaves the file untouched. A file that parses to ``None``
     (empty, or the comments-only ``init`` scaffold) is treated as fresh.
+
+    The actual write lives in :func:`promptry.suite_builder.write_yaml_suite`
+    so the wizard and the dashboard suite-creator share one code path.
     """
-    import yaml
+    from promptry.suite_builder import write_yaml_suite
 
-    data = None
-    if path.is_file():
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as e:
-            raise ValueError(
-                f"{path} exists but is not valid YAML ({e}). "
-                f"Fix the file, or write the new suite elsewhere with --output."
-            ) from e
-        if data is not None and not (
-            isinstance(data, dict) and isinstance(data.get("suites"), list)
-        ):
-            raise ValueError(
-                f"{path} exists but doesn't have the expected top-level "
-                f"'suites:' list -- refusing to overwrite it. "
-                f"Fix the file, or write the new suite elsewhere with --output."
-            )
-    if data is None:
-        data = {"suites": []}
-
-    data["suites"].append(suite_dict)
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
-        encoding="utf-8",
-    )
+    write_yaml_suite(path, suite_dict, elsewhere_hint="elsewhere with --output")
 
 
 def _py_assertion_call(assertion: str, output_var: str, value: str) -> str:

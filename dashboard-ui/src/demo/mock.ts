@@ -378,6 +378,43 @@ const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => a
     { a: "summary.tldr", b: "summary.section", similarity: 0.88 },
     { a: "intent.router", b: "support.classify", similarity: 0.86 },
   ] })],
+  [/^\/api\/prompts\/diff2$/, (_m, q) => {
+    const a = q.get("a") || "summary.tldr";
+    const b = q.get("b") || "summary.section";
+    const shared = "You are a concise summarizer. Read the passage below and ";
+    const ca = CONTENT[a] || (shared + "produce a one-sentence TL;DR.");
+    const cb = CONTENT[b] || (shared + "produce a short section summary with a heading.");
+    const ratio = 0.62;
+    return {
+      a: { name: a, latest_version: 3, content: ca },
+      b: { name: b, latest_version: 2, content: cb },
+      diff: [
+        { type: "equal", text: shared },
+        { type: "delete", text: "produce a one-sentence TL;DR." },
+        { type: "insert", text: "produce a short section summary with a heading." },
+      ],
+      shared_prefix_chars: shared.length,
+      shared_prefix_ratio: ratio,
+      cache_suggestion: {
+        suggested: ratio >= 0.5,
+        rationale: `The first ${shared.length} characters are identical. Caching the shared prefix would cut input cost on every call to both prompts.`,
+      },
+    };
+  }],
+  [/^\/api\/suite-candidates$/, (_m, q) => {
+    const source = q.get("source") || "golden";
+    const cands = source === "feedback"
+      ? [
+          { question: "How do I export my data?", context: "", response: "", source: "feedback", request_id: "req_8812", prompt_name: "rag.answer" },
+          { question: "Does the free plan include SSO?", context: "billing.md#sso: SSO is on Team and Enterprise.", response: "SSO is available on Team and Enterprise plans.", source: "feedback", request_id: "req_8790", prompt_name: "rag.answer" },
+        ]
+      : [
+          { question: "What is the rate limit on the free plan?", context: "billing.md#limits: 100 rpm, 10k/day.", response: "100 requests per minute (10k/day).", source: "golden", request_id: "req_9001", prompt_name: "rag.answer" },
+          { question: "Can I self-host?", context: "docs/deploy.md: Docker and Helm supported.", response: "Yes — via Docker or Helm.", source: "golden", request_id: "req_9002", prompt_name: "rag.answer" },
+        ];
+    const someMissing = cands.some((c) => !c.context || !c.response);
+    return { candidates: cands, capture_note: someMissing ? "Some candidates have no captured context/response — enable capture to include full RAG cases." : null };
+  }],
   [/^\/api\/prompts\/([^/]+)\/content$/, (m, q) => contentResp(decodeURIComponent(m[1]), q.get("v") ? +q.get("v")! : undefined)],
   [/^\/api\/prompts\/([^/]+)\/diff$/, (m) => {
     const first = (CONTENT[decodeURIComponent(m[1])] || "You are an assistant.").split("\n")[0];
@@ -487,6 +524,9 @@ function postResponse(path: string, body: any): any {
     { id: 2, score: 0.88, passed: true, output_preview: "SSO is on Team and Enterprise.", reference_preview: "SSO is available on Team and Enterprise", latency_ms: 810, error: null },
     { id: 3, score: 0.61, passed: false, output_preview: "You can export from the dashboard.", reference_preview: "Yes, via Settings → Export (CSV/JSON)", latency_ms: 690, error: null },
   ] };
+  if (path.endsWith("/api/suites")) {
+    return { ok: true, name: body?.name || "new.suite", cases: Array.isArray(body?.cases) ? body.cases.length : 0 };
+  }
   if (path.includes("/lint")) {
     const content = body?.content || "";
     const v = [...content.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((x: any) => x[1]);

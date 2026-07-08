@@ -60,6 +60,16 @@ const BASE_ITEMS: NavItem[] = [
     ),
   },
   {
+    to: "/suites/new",
+    label: "New suite",
+    icon: (
+      <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round">
+        <rect x="2.5" y="2.5" width="11" height="11" rx="2.5" />
+        <path d="M8 5.5v5M5.5 8h5" />
+      </g>
+    ),
+  },
+  {
     to: "/prompts",
     label: "Prompts",
     icon: (
@@ -70,6 +80,16 @@ const BASE_ITEMS: NavItem[] = [
         fill="none"
         strokeLinejoin="round"
       />
+    ),
+  },
+  {
+    to: "/duplicates",
+    label: "Duplicates",
+    icon: (
+      <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round">
+        <rect x="2.5" y="2.5" width="7" height="7" rx="1.5" />
+        <rect x="6.5" y="6.5" width="7" height="7" rx="1.5" />
+      </g>
     ),
   },
   {

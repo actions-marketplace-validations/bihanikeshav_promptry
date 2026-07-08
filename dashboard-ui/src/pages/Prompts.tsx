@@ -53,11 +53,15 @@ export default function Prompts() {
           <div className="card" style={{ padding: "32px 24px", maxWidth: 520, margin: "0 auto", textAlign: "center" }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>No prompts registered yet</div>
             <div style={{ fontSize: 12.5, color: "var(--secondary)", margin: "6px 0 14px", lineHeight: 1.5 }}>
-              Version a prompt from your code with <code className="mono" style={{ color: "var(--text-dim)" }}>track()</code>,
-              or scaffold one from the CLI. It shows up here with its full version history.
+              Register a prompt from your code with <code className="mono" style={{ color: "var(--text-dim)" }}>seed_prompt()</code>,
+              <code className="mono" style={{ color: "var(--text-dim)" }}>render_prompt()</code>, or <code className="mono" style={{ color: "var(--text-dim)" }}>track()</code>.
+              It shows up here with its full version history.
             </div>
             <div style={{ maxWidth: 360, margin: "0 auto", textAlign: "left" }}>
-              <CopyField value="promptry new prompt" />
+              <CopyField value={'seed_prompt("intent.router", "You are a routing assistant…")'} />
+              <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "8px 0 0" }}>
+                Edit versions in the dashboard or run <code className="mono" style={{ color: "var(--text-dim)" }}>promptry prompt save</code>.
+              </div>
             </div>
           </div>
         ) : (
@@ -69,7 +73,7 @@ export default function Prompts() {
 
       {dupes && dupes.pairs.length > 0 && (
         <div className="card" style={{ padding: "12px 16px", marginBottom: 18, borderColor: "var(--warning)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div onClick={() => navigate("/duplicates")} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
             <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--warning)" }} />
             <span style={{ fontSize: 12.5, fontWeight: 600 }}>
               {dupes.pairs.length} near-duplicate{dupes.pairs.length > 1 ? "s" : ""}

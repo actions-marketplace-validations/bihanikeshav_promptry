@@ -73,6 +73,40 @@ def prompts_near_duplicates(threshold: float = Query(default=0.85, ge=0.0, le=1.
     return near_duplicates(get_storage(), threshold=threshold)
 
 
+@router.get("/api/prompts/diff2")
+def prompts_diff2(a: str = Query(...), b: str = Query(...)):
+    """Cross-prompt diff + prompt-prefix cache analysis between the latest
+    content of two (possibly unrelated) prompt names. Backs near-duplicate
+    consolidation: given a pair flagged by /api/prompts/near-duplicates,
+    show exactly what differs and whether reordering static text to the
+    front would improve prefix-cache hit rate."""
+    from promptry.dashboard.server import get_storage
+    from promptry.prompt_diff import cache_analysis, diff_prompts
+
+    storage = get_storage()
+    rec_a = storage.get_prompt(a)
+    rec_b = storage.get_prompt(b)
+    if rec_a is None:
+        raise HTTPException(status_code=404, detail=f"Prompt '{a}' not found")
+    if rec_b is None:
+        raise HTTPException(status_code=404, detail=f"Prompt '{b}' not found")
+
+    diff = diff_prompts(rec_a.content, rec_b.content)
+    analysis = cache_analysis(rec_a.content, rec_b.content)
+
+    return {
+        "a": {"name": a, "latest_version": rec_a.version, "content": rec_a.content},
+        "b": {"name": b, "latest_version": rec_b.version, "content": rec_b.content},
+        "diff": diff,
+        "shared_prefix_chars": analysis["shared_prefix_chars"],
+        "shared_prefix_ratio": analysis["shared_prefix_ratio"],
+        "cache_suggestion": {
+            "suggested": analysis["suggested"],
+            "rationale": analysis["rationale"],
+        },
+    }
+
+
 @router.get("/api/prompts/{name}")
 def prompt_versions(name: str):
     from promptry.dashboard.server import get_storage

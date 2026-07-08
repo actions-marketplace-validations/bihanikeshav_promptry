@@ -12,6 +12,8 @@ import Cost from "./pages/Cost";
 import Invocation from "./pages/Invocation";
 import Feedback from "./pages/Feedback";
 import Playground from "./pages/Playground";
+import Duplicates from "./pages/Duplicates";
+import SuiteCreate from "./pages/SuiteCreate";
 import Settings from "./pages/Settings";
 
 export default function App() {
@@ -25,6 +27,8 @@ export default function App() {
         <Route path="/suite/:name/diff" element={<RunDiff />} />
         <Route path="/prompts" element={<Prompts />} />
         <Route path="/prompts/:name" element={<PromptDetail />} />
+        <Route path="/duplicates" element={<Duplicates />} />
+        <Route path="/suites/new" element={<SuiteCreate />} />
         <Route path="/models" element={<Models />} />
         <Route path="/cost" element={<Cost />} />
         <Route path="/invocations/:id" element={<Invocation />} />

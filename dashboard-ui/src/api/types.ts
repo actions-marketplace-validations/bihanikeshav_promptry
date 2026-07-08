@@ -188,6 +188,10 @@ export interface GoldenRunResult {
 export interface NearDuplicatePair {
   a: string;
   b: string;
+  // The fixed backend contract for GET /api/prompts/near-duplicates names this
+  // field `score`; the older mock/Prompts.tsx path used `similarity`. Both are
+  // carried so either shape type-checks; the /duplicates page reads score ?? similarity.
+  score?: number;
   similarity: number;
 }
 
@@ -195,6 +199,84 @@ export interface NearDuplicates {
   mode: "semantic" | "lexical" | "none";
   threshold: number;
   pairs: NearDuplicatePair[];
+}
+
+/* ---- Near-duplicate diff2 (side-by-side + cache suggestion) ---- */
+export interface Diff2Segment {
+  type: "equal" | "insert" | "delete";
+  text: string;
+}
+
+export interface Diff2Side {
+  name: string;
+  latest_version: number;
+  content: string;
+}
+
+export interface CacheSuggestion {
+  suggested: boolean;
+  rationale: string;
+}
+
+export interface Diff2Response {
+  a: Diff2Side;
+  b: Diff2Side;
+  diff: Diff2Segment[];
+  shared_prefix_chars: number;
+  shared_prefix_ratio: number;
+  cache_suggestion: CacheSuggestion;
+}
+
+/* ---- Suite creator: candidates + create request ---- */
+export type SuiteCandidateSource = "golden" | "feedback";
+
+export interface SuiteCandidate {
+  question: string;
+  context: string | null;
+  response: string | null;
+  source: string;
+  request_id: string | null;
+  prompt_name: string | null;
+}
+
+export interface SuiteCandidatesResponse {
+  candidates: SuiteCandidate[];
+  capture_note: string | null;
+}
+
+// Assertion kinds a suite case supports (RAG-aware). `regex`/`exact` map to the
+// backend's own names (the Playground UI calls regex `matches` client-side).
+export type SuiteAssertionType =
+  | "contains"
+  | "not_contains"
+  | "regex"
+  | "exact"
+  | "semantic"
+  | "grounded";
+
+export interface SuiteAssertionInput {
+  type: SuiteAssertionType;
+  value: string;
+}
+
+export interface SuiteCaseInput {
+  input: string;
+  context?: string;
+  expect: SuiteAssertionInput[];
+}
+
+export interface CreateSuiteRequest {
+  name: string;
+  model: string;
+  prompt: string;
+  cases: SuiteCaseInput[];
+}
+
+export interface CreateSuiteResponse {
+  ok: boolean;
+  name?: string;
+  cases?: number;
+  error?: string;
 }
 
 export interface PiiFinding {
