@@ -3,6 +3,21 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Wordmark } from "./ui";
 import { backendHost } from "../api/client";
 
+/** The installed promptry version, read from /api/health (single source of
+ *  truth: the pip-installed package). Empty string until it resolves. */
+function useVersion(): string {
+  const [version, setVersion] = useState<string>("");
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => { if (alive) setVersion(d.version || ""); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return version;
+}
+
 /** Footer status: pings /api/health and shows the real host + connection. */
 function ConnectionStatus() {
   const [state, setState] = useState<"checking" | "connected" | "offline">("checking");
@@ -158,6 +173,7 @@ export function SideNav({
   counters: SideNavCounters;
 }) {
   const location = useLocation();
+  const version = useVersion();
   const items: NavItem[] = BASE_ITEMS.map((it) =>
     it.to === "/" && counters.regressions
       ? { ...it, badge: { n: counters.regressions, tone: "error" as const } }
@@ -189,9 +205,11 @@ export function SideNav({
         }}
       >
         <Wordmark />
-        <span className="chip mono" style={{ fontSize: 9.5, padding: "2px 6px" }}>
-          v1.0.0
-        </span>
+        {version && (
+          <span className="chip mono" style={{ fontSize: 9.5, padding: "2px 6px" }}>
+            v{version}
+          </span>
+        )}
       </div>
 
       <button
