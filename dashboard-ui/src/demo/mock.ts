@@ -301,6 +301,7 @@ const CONFIG = {
   dashboard: { default_days: 14 },
   pricing: {},
   key_status: { openai: true, anthropic: true, xai: false, google: false, azure: false },
+  key_env: { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", xai: "XAI_API_KEY", google: "GEMINI_API_KEY", azure: "AZURE_OPENAI_API_KEY" },
   path: "~/helpdesk-ai/.promptry/config.toml",
 };
 

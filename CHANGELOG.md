@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 (2026-07-08)
+
+First feature release since the `0.10.x` line. Versioned `1.0.1` (not `0.11.0`):
+`1.0.0` was accidentally published then yanked, and because pip sorts `1.0.0`
+above any `0.x`, only a version greater than `1.0.0` pulls users who installed
+that build forward on `pip install -U`. `1.0.1` supersedes the yanked `1.0.0`
+and the `0.10.x` line.
 
 ### Evals
 
