@@ -270,6 +270,7 @@ export interface CreateSuiteRequest {
   model: string;
   prompt: string;
   cases: SuiteCaseInput[];
+  overwrite?: boolean;
 }
 
 export interface CreateSuiteResponse {
@@ -277,6 +278,34 @@ export interface CreateSuiteResponse {
   name?: string;
   cases?: number;
   error?: string;
+}
+
+export interface SuiteDefinitionCase {
+  input: string;
+  context: string | null;
+  expect: { type: SuiteAssertionType; value: unknown }[];
+}
+
+export interface SuiteDefinition {
+  name: string;
+  model?: string;
+  prompt?: string;
+  pipeline?: string;
+  description?: string;
+  cases: SuiteDefinitionCase[];
+}
+
+export interface SuiteDefinitionResponse {
+  editable: boolean;
+  source: string;
+  path: string;
+  definition: SuiteDefinition | null;
+}
+
+export interface RecordedContextResponse {
+  name: string;
+  context: string | null;
+  found: boolean;
 }
 
 export interface PiiFinding {

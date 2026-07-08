@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { KPI, PageHeader, Sparkline, StatusPill, CopyField, CommandButton } from "../components/ui";
+import { KPI, PageHeader, Sparkline, StatusPill, CopyField } from "../components/ui";
 import { pct, relTime, usd, scoreColor } from "../utils";
 import { getCostData, listBudgets, listFeedback, getFeedbackStats, getOnboardingStatus } from "../api/client";
 import type { LayoutContext } from "../components/Layout";
@@ -227,7 +227,7 @@ export default function Overview() {
           <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontSize: 13, fontWeight: 600 }}>Suite health</div>
             <div style={{ display: "flex", gap: 8 }}>
-              <CommandButton value="promptry new suite" label="New suite" />
+              <button className="btn btn-primary" onClick={() => navigate("/suites/new")}>New suite</button>
               <button className="btn" onClick={() => navigate("/evals")}>All evals ›</button>
             </div>
           </div>

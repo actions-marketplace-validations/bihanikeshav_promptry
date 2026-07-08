@@ -415,6 +415,23 @@ const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => a
     const someMissing = cands.some((c) => !c.context || !c.response);
     return { candidates: cands, capture_note: someMissing ? "Some candidates have no captured context/response — enable capture to include full RAG cases." : null };
   }],
+  [/^\/api\/suites\/([^/]+)\/definition$/, (m) => {
+    const name = decodeURIComponent(m[1]);
+    return {
+      editable: true, source: "yaml", path: "evals.yaml",
+      definition: {
+        name, model: "gpt-4o-mini", prompt: "You are the support assistant. Context:\n{{context}}\n\nQ: {{question}}",
+        cases: [
+          { input: "What is the rate limit on the free plan?", context: "billing.md#limits: 100 rpm, 10k/day.", expect: [{ type: "contains", value: "100" }] },
+          { input: "Can I self-host?", context: "docs/deploy.md: Docker and Helm supported.", expect: [{ type: "semantic", value: "Yes, via Docker or Helm." }] },
+        ],
+      },
+    };
+  }],
+  [/^\/api\/prompts\/([^/]+)\/recorded-context$/, (m) => {
+    const name = decodeURIComponent(m[1]);
+    return { name, context: "billing.md#limits: 100 rpm, 10k/day.\n---\ndocs/plans.md: Free, Team, Enterprise.", found: true };
+  }],
   [/^\/api\/prompts\/([^/]+)\/content$/, (m, q) => contentResp(decodeURIComponent(m[1]), q.get("v") ? +q.get("v")! : undefined)],
   [/^\/api\/prompts\/([^/]+)\/diff$/, (m) => {
     const first = (CONTENT[decodeURIComponent(m[1])] || "You are an assistant.").split("\n")[0];

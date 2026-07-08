@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { PageHeader, Select } from "../components/ui";
 import { TemplateEditor } from "../components/TemplateEditor";
-import { getConfig, getSuiteCandidates, createSuite } from "../api/client";
+import { getConfig, getSuiteCandidates, createSuite, getSuiteDefinition, getRecordedContext } from "../api/client";
 import type {
   SuiteAssertionType,
   SuiteCandidate,
@@ -310,6 +310,10 @@ export default function SuiteCreate() {
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<CreateSuiteResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  const editName = params.get("edit");
+  const [editing, setEditing] = useState(false);
+  const [contextSource, setContextSource] = useState("");
 
   useEffect(() => {
     getConfig()
@@ -322,6 +326,52 @@ export default function SuiteCreate() {
       })
       .catch(() => {});
   }, []);
+
+  // Edit mode: load an existing YAML suite's definition into the form.
+  useEffect(() => {
+    if (!editName) return;
+    getSuiteDefinition(editName)
+      .then((r) => {
+        if (!r.editable || !r.definition) {
+          setError(
+            `"${editName}" is defined in ${r.source === "python" ? "Python (evals.py)" : "an unknown source"} and can't be edited here. Suites created in the dashboard live in evals.yaml.`,
+          );
+          return;
+        }
+        const d = r.definition;
+        setEditing(true);
+        setName(d.name);
+        if (d.model) setModel(d.model);
+        if (d.prompt) setPrompt(d.prompt);
+        setContextSource(d.name);
+        setCases(
+          (d.cases || []).map((c) => ({
+            id: nextId(),
+            input: c.input || "",
+            context: c.context || "",
+            expected: "",
+            asserts: (c.expect || []).map((e) => ({
+              id: nextId(),
+              type: e.type,
+              value: typeof e.value === "string" ? e.value : JSON.stringify(e.value ?? ""),
+            })),
+          })),
+        );
+      })
+      .catch((e) => setError(String(e)));
+  }, [editName]);
+
+  const pullContext = async (caseId: number) => {
+    const src = contextSource.trim();
+    if (!src) return;
+    try {
+      const r = await getRecordedContext(src);
+      if (r.found && r.context) patchCase(caseId, { context: r.context });
+      else setError(`No recorded context found for "${src}". Your app must call track_context("${src}", …).`);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const addCase = () => setCases((cs) => [...cs, emptyCase()]);
   const patchCase = (id: number, p: Partial<CaseDraft>) =>
@@ -371,6 +421,7 @@ export default function SuiteCreate() {
         model,
         prompt,
         cases: buildCases(),
+        overwrite: editing,
       });
       if (res.ok === false) {
         setError(res.error || "Suite creation failed.");
@@ -387,8 +438,8 @@ export default function SuiteCreate() {
   return (
     <div>
       <PageHeader
-        eyebrow="~/promptry · new suite"
-        title="Create eval suite"
+        eyebrow={editing ? "~/promptry · edit suite" : "~/promptry · new suite"}
+        title={editing ? `Edit suite · ${name}` : "Create eval suite"}
         description="Assemble RAG test cases — question, retrieved context, expected response — from scratch or from real golden examples and feedback, then attach assertions and save."
         tags={[`${validCaseCount} case${validCaseCount === 1 ? "" : "s"}`]}
         actions={
@@ -509,6 +560,17 @@ export default function SuiteCreate() {
                   />
                 </Field>
                 <Field label="Retrieved context">
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+                    <button
+                      className="btn btn-ghost"
+                      onClick={() => pullContext(c.id)}
+                      disabled={!contextSource.trim()}
+                      title={contextSource.trim() ? `Fill from the latest track_context("${contextSource.trim()}", …)` : "Set a context-source prompt in suite settings first"}
+                      style={{ fontSize: 10.5, padding: "2px 8px", color: "var(--accent)" }}
+                    >
+                      ⭳ from logs
+                    </button>
+                  </div>
                   <textarea
                     className="inp"
                     value={c.context}
@@ -562,6 +624,18 @@ export default function SuiteCreate() {
             </Field>
             <Field label="Prompt template">
               <TemplateEditor value={prompt} onChange={setPrompt} minHeight={140} placeholder="You are a support assistant. Context:\n{{context}}\n\nQ: {{question}}" />
+            </Field>
+            <Field label="Context source (for ⭳ from logs)">
+              <input
+                className="inp"
+                value={contextSource}
+                onChange={(e) => setContextSource(e.target.value)}
+                placeholder="prompt name, e.g. rag.answer"
+                style={{ width: "100%", fontFamily: "var(--font-mono)", fontSize: 12 }}
+              />
+              <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 4 }}>
+                Pulls the latest context your app recorded via track_context for this prompt.
+              </div>
             </Field>
           </div>
 

@@ -30,6 +30,8 @@ import type {
   SuiteCandidatesResponse,
   CreateSuiteRequest,
   CreateSuiteResponse,
+  SuiteDefinitionResponse,
+  RecordedContextResponse,
   GoldenExample,
   GoldenRunResult,
   OnboardingStatus,
@@ -176,6 +178,14 @@ export async function createSuite(body: CreateSuiteRequest): Promise<CreateSuite
   });
   if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
   return res.json();
+}
+
+export function getSuiteDefinition(name: string): Promise<SuiteDefinitionResponse> {
+  return fetchJson(`/api/suites/${encodeURIComponent(name)}/definition`);
+}
+
+export function getRecordedContext(name: string): Promise<RecordedContextResponse> {
+  return fetchJson(`/api/prompts/${encodeURIComponent(name)}/recorded-context`);
 }
 
 // ---- Eval-from-trace: per-prompt golden set ----

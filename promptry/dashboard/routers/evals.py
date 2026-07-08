@@ -427,3 +427,31 @@ def create_suite(body: _CreateSuiteIn):
         raise HTTPException(status_code=status, detail=str(exc))
 
     return {"name": name, "cases": len(suite["cases"]), "path": str(target)}
+
+
+@router.get("/api/suites/{name}/definition")
+def suite_definition(name: str, output: Optional[str] = Query(default=None)):
+    """Read a suite back into the creator's edit shape. Only YAML-declared
+    suites are editable in the UI; a suite defined in Python (evals.py) is
+    returned as ``editable: false`` so the UI can show it read-only."""
+    from promptry.suite_builder import read_yaml_suite
+
+    target = Path(output) if output else (Path.cwd() / "evals.yaml")
+    definition = read_yaml_suite(target, name)
+    if definition is not None:
+        return {"editable": True, "source": "yaml", "path": str(target),
+                "definition": definition}
+    return {"editable": False, "source": "python", "path": str(target),
+            "definition": None}
+
+
+@router.get("/api/prompts/{name}/recorded-context")
+def recorded_context(name: str):
+    """The most recent retrieved context captured for ``name`` via
+    track_context — lets the suite creator auto-fill a RAG case's context
+    from real logged traffic instead of pasting it by hand."""
+    from promptry.dashboard.server import get_storage
+    from promptry.suite_builder import latest_recorded_context
+
+    context = latest_recorded_context(get_storage(), name)
+    return {"name": name, "context": context, "found": context is not None}

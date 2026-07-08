@@ -197,3 +197,39 @@ class TestCandidates:
     def test_unknown_source_raises(self, storage):
         with pytest.raises(ValueError, match="unknown source"):
             suite_candidates(storage, source="nope")
+
+
+class TestReadBackAndContext:
+    """read_yaml_suite is the inverse of build_suite_dict; context auto-fill."""
+
+    def test_write_then_read_roundtrip(self, tmp_path):
+        from promptry.suite_builder import build_suite_dict, write_yaml_suite, read_yaml_suite
+        suite = build_suite_dict(
+            name="rag-edit", model="gpt-4o-mini", prompt="{input}",
+            cases=[{"input": "q1", "context": "the sky is blue",
+                    "expect": [{"type": "contains", "value": "blue"}]}],
+        )
+        p = tmp_path / "evals.yaml"
+        write_yaml_suite(p, suite)
+        back = read_yaml_suite(p, "rag-edit")
+        assert back["name"] == "rag-edit"
+        assert back["model"] == "gpt-4o-mini"
+        case = back["cases"][0]
+        assert case["input"] == "q1"
+        # context (encoded as grounded on write) is surfaced back as context
+        assert case["context"] == "the sky is blue"
+        assert {"type": "contains", "value": "blue"} in case["expect"]
+
+    def test_read_missing_returns_none(self, tmp_path):
+        from promptry.suite_builder import read_yaml_suite
+        assert read_yaml_suite(tmp_path / "nope.yaml", "x") is None
+
+    def test_latest_recorded_context(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_DB", str(tmp_path / "c.db"))
+        import promptry
+        from promptry.storage import get_storage
+        from promptry.suite_builder import latest_recorded_context
+        promptry.track_context(["chunk A", "chunk B"], "rag.answer")
+        ctx = latest_recorded_context(get_storage(), "rag.answer")
+        assert ctx is not None and "chunk A" in ctx
+        assert latest_recorded_context(get_storage(), "no.such.prompt") is None

@@ -92,6 +92,64 @@ def write_yaml_suite(path, suite: dict, overwrite: bool = False,
     return [s["name"] for s in suites if isinstance(s, dict) and s.get("name")]
 
 
+def read_yaml_suite(path, name: str) -> Optional[dict]:
+    """Read a suite back out of ``evals.yaml`` into the editor/POST shape.
+
+    The inverse of :func:`build_suite_dict`: returns
+    ``{name, model?, prompt?, pipeline?, description?, cases:[{input, context?,
+    expect:[{type, value}]}]}`` or ``None`` if the file or the named suite is
+    absent. A case's ``grounded`` assertion whose value carries a ``source`` is
+    surfaced back as the case's ``context`` field (mirroring how the retrieved
+    context was encoded on write), so an edit round-trips cleanly.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return None
+    if not (isinstance(data, dict) and isinstance(data.get("suites"), list)):
+        return None
+    suite = next((s for s in data["suites"]
+                  if isinstance(s, dict) and s.get("name") == name), None)
+    if suite is None:
+        return None
+
+    cases: list[dict] = []
+    for case in suite.get("cases") or []:
+        context = None
+        expect: list[dict] = []
+        for entry in case.get("expect") or []:
+            if not isinstance(entry, dict) or not entry:
+                continue
+            atype, value = next(iter(entry.items()))
+            if atype == "grounded" and isinstance(value, dict) and "source" in value:
+                context = value.get("source")
+                continue
+            expect.append({"type": atype, "value": value})
+        cases.append({"input": case.get("input"), "context": context, "expect": expect})
+
+    out: dict = {"name": suite.get("name"), "cases": cases}
+    for key in ("model", "prompt", "pipeline", "description"):
+        if suite.get(key):
+            out[key] = suite[key]
+    return out
+
+
+def latest_recorded_context(storage, prompt_name: str) -> Optional[str]:
+    """The most recent retrieved context captured for ``prompt_name`` via
+    ``track_context`` (stored as the ``"<prompt_name>:context"`` prompt).
+    Returns the joined chunk text, or ``None`` if nothing was captured."""
+    if not prompt_name:
+        return None
+    try:
+        rec = storage.get_prompt(f"{prompt_name}:context")
+    except Exception:
+        return None
+    return getattr(rec, "content", None) if rec is not None else None
+
+
 def build_suite_dict(
     name: str,
     cases: list[dict],

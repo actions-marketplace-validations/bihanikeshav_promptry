@@ -238,7 +238,17 @@ export default function Evals() {
                     {relTime(s.timestamp)}
                   </td>
                   <td className="r">
-                    <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 14 }}>›</span>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
+                      <button
+                        className="btn btn-ghost"
+                        onClick={(e) => { e.stopPropagation(); navigate(`/suites/new?edit=${encodeURIComponent(s.name)}`); }}
+                        title="Edit this suite"
+                        style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)" }}
+                      >
+                        Edit
+                      </button>
+                      <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 14 }}>›</span>
+                    </div>
                   </td>
                 </tr>
               );
