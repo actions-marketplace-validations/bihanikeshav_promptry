@@ -357,7 +357,7 @@ const GOLDEN: Record<string, any[]> = {
 
 // ---- route table ----
 const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => any][] = [
-  [/^\/api\/health$/, () => ({ status: "ok", version: "0.10.1", db_path: "helpdesk-ai.db" })],
+  [/^\/api\/health$/, () => ({ status: "ok", version: "1.0.2", db_path: "helpdesk-ai.db" })],
   [/^\/api\/onboarding-status$/, () => ({ suites: SUITES.length, prompts: promptSummaries.length, invocations: 1, empty: false })],
   [/^\/api\/suites$/, () => SUITES],
   [/^\/api\/suite\/([^/]+)\/runs$/, (m) => suiteRuns(decodeURIComponent(m[1]))],

@@ -449,7 +449,11 @@ export default function SuiteCreate() {
   return (
     <div>
       <PageHeader
-        eyebrow={editing ? "~/promptry · edit suite" : "~/promptry · new suite"}
+        eyebrow={
+          <>
+            ~/promptry · <Link to="/evals" style={{ color: "var(--text-dim)" }}>Evals</Link> · {editing ? "edit suite" : "new suite"}
+          </>
+        }
         title={editing ? `Edit suite · ${name}` : "Create eval suite"}
         description="Assemble RAG test cases — question, retrieved context, expected response — from scratch or from real golden examples and feedback, then attach assertions and save."
         tags={[`${validCaseCount} case${validCaseCount === 1 ? "" : "s"}`]}

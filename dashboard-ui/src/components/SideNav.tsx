@@ -286,7 +286,11 @@ export function SideNav({
 
       {items.map((item) => {
         const active =
-          location.pathname === item.to || (item.to !== "/" && location.pathname.startsWith(item.to));
+          location.pathname === item.to ||
+          (item.to !== "/" && location.pathname.startsWith(item.to)) ||
+          // Suite creator/editor and suite-detail pages live under the Evals tab.
+          (item.to === "/evals" &&
+            (location.pathname.startsWith("/suites") || location.pathname.startsWith("/suite/")));
         return (
           <NavLink
             key={item.to}
