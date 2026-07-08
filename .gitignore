@@ -40,3 +40,6 @@ scratch/
 mockdb/rag_lab/chroma/
 mockdb/rag_lab/data/
 mockdb/rag_lab/responses_cache.json
+
+# Claude Code local workspace (settings, worktrees, scratch)
+.claude/
