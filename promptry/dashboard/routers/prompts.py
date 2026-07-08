@@ -11,6 +11,12 @@ from promptry.registry import PromptRegistry
 
 router = APIRouter()
 
+_CMS_DISABLED_MSG = (
+    "The prompt CMS is off. Editing or promoting prompts from the dashboard only "
+    "takes effect if your app fetches its prompts from promptry (render_prompt / "
+    "get_prompt). Turn it on with [dashboard] cms = true in promptry.toml."
+)
+
 
 # ---- Prompts ----
 
@@ -107,6 +113,145 @@ def prompts_diff2(a: str = Query(...), b: str = Query(...)):
     }
 
 
+def _avg_input_tokens(storage, name: str) -> Optional[int]:
+    """Average rendered input tokens for a prompt over the last 30 days, or
+    None if it has no telemetry (then the template length is used instead)."""
+    try:
+        stats = storage.get_invocation_stats(name, days=30)
+        if stats.get("count"):
+            avg = stats.get("metrics", {}).get("tokens_in", {}).get("avg")
+            return round(avg) if avg else None
+    except Exception:
+        pass
+    return None
+
+
+# Static path — MUST precede /api/prompts/{name} or it's shadowed as a {name}.
+@router.get("/api/prompts/cache-analysis")
+def prompts_cache_analysis():
+    """Per-prompt prefix-cache readiness across all prompts, ranked by the
+    biggest reordering opportunity. Prefix caching reuses the request up to the
+    first interpolated input, so the lever is ordering: static instructions
+    first, {{inputs}} last. Caching also only activates above ~1024 tokens."""
+    from promptry.dashboard.server import get_storage
+    from promptry.prompt_diff import prefix_cache_analysis
+
+    storage = get_storage()
+    names: list[str] = []
+    if storage.supports("list_prompt_summaries"):
+        try:
+            names = [s["name"] for s in storage.list_prompt_summaries(offset=0, limit=1000)]
+        except Exception:
+            names = []
+    if not names:
+        seen: dict[str, int] = {}
+        for p in storage.list_prompts(offset=0, limit=2000):
+            if p.name not in seen or p.version > seen[p.name]:
+                seen[p.name] = p.version
+        names = sorted(seen)
+
+    out = []
+    for name in names:
+        rec = storage.get_prompt(name)
+        if rec is None:
+            continue
+        a = prefix_cache_analysis(rec.content, avg_input_tokens=_avg_input_tokens(storage, name))
+        out.append({
+            "name": name,
+            "version": rec.version,
+            "recommendation": a["recommendation"],
+            "cacheable_prefix_tokens": a["cacheable_prefix_tokens"],
+            "static_total_tokens": a["static_total_tokens"],
+            "reorder_gain_tokens": a["reorder_gain_tokens"],
+            "total_tokens": a["total_tokens"],
+            "threshold_tokens": a["threshold_tokens"],
+            "meets_threshold": a["meets_threshold"],
+            "first_variable": a["first_variable"],
+        })
+    # Actionable reorders first (largest gain), then optimal/no-input, then too-small.
+    rank = {"move_inputs_to_end": 0, "no_variables": 1, "already_optimal": 2, "too_small": 3}
+    out.sort(key=lambda r: (rank.get(r["recommendation"], 9), -r["reorder_gain_tokens"]))
+    return {"prompts": out}
+
+
+@router.get("/api/prompts/{name}/cache-analysis")
+def prompt_cache_analysis(name: str):
+    """Full prefix-cache analysis for one prompt: the static/variable segment
+    breakdown, the cacheable-prefix size now vs. if inputs moved to the end,
+    and the activation-threshold verdict."""
+    from promptry.dashboard.server import get_storage
+    from promptry.prompt_diff import prefix_cache_analysis
+
+    storage = get_storage()
+    rec = storage.get_prompt(name)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"Prompt '{name}' not found")
+    a = prefix_cache_analysis(rec.content, avg_input_tokens=_avg_input_tokens(storage, name))
+    a["name"] = name
+    a["version"] = rec.version
+    a["content"] = rec.content
+    return a
+
+
+# Static path — MUST precede /api/prompts/{name} or it's shadowed as a {name}.
+@router.get("/api/prompts/shorten-analysis")
+def prompts_shorten_analysis():
+    """Per-prompt "shorten" opportunity across all prompts, ranked by estimated
+    tokens saved. Flags redundant/filler wording in each prompt's static text;
+    analysis-only — the author edits the prompt to apply."""
+    from promptry.dashboard.server import get_storage
+    from promptry.prompt_diff import shorten_analysis
+
+    storage = get_storage()
+    names: list[str] = []
+    if storage.supports("list_prompt_summaries"):
+        try:
+            names = [s["name"] for s in storage.list_prompt_summaries(offset=0, limit=1000)]
+        except Exception:
+            names = []
+    if not names:
+        seen: dict[str, int] = {}
+        for p in storage.list_prompts(offset=0, limit=2000):
+            if p.name not in seen or p.version > seen[p.name]:
+                seen[p.name] = p.version
+        names = sorted(seen)
+
+    out = []
+    for name in names:
+        rec = storage.get_prompt(name)
+        if rec is None:
+            continue
+        a = shorten_analysis(rec.content)
+        out.append({
+            "name": name,
+            "version": rec.version,
+            "est_tokens_saved": a["est_tokens_saved"],
+            "finding_count": len(a["findings"]),
+            "total_tokens": a["total_tokens"],
+        })
+    out.sort(key=lambda r: -r["est_tokens_saved"])
+    return {"prompts": out}
+
+
+# Per-name path — MUST precede /api/prompts/{name} and /content.
+@router.get("/api/prompts/{name}/shorten-analysis")
+def prompt_shorten_analysis(name: str):
+    """Full shorten analysis for one prompt: every redundant/filler finding with
+    its estimated token saving, plus the prompt content for display."""
+    from promptry.dashboard.server import get_storage
+    from promptry.prompt_diff import shorten_analysis
+
+    storage = get_storage()
+    rec = storage.get_prompt(name)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"Prompt '{name}' not found")
+    a = shorten_analysis(rec.content)
+    a["name"] = name
+    a["version"] = rec.version
+    a["content"] = rec.content
+    return a
+
+
 @router.get("/api/prompts/{name}")
 def prompt_versions(name: str):
     from promptry.dashboard.server import get_storage
@@ -171,6 +316,10 @@ def update_prompt_content(name: str, body: _PromptEdit):
     """
     from promptry.dashboard.server import get_storage
     from promptry.prompts import normalize_template
+    from promptry.projectconfig import cms_enabled
+
+    if not cms_enabled():
+        raise HTTPException(status_code=403, detail=_CMS_DISABLED_MSG)
 
     content = (body.content or "").strip()
     if not content:
@@ -229,6 +378,10 @@ def promote_prompt(name: str, body: _PromoteReq):
     """Point an environment tag (dev/staging/prod) at a specific version so
     render_prompt(env=...) serves it — a gate between editing and going live."""
     from promptry.dashboard.server import get_storage
+    from promptry.projectconfig import cms_enabled
+
+    if not cms_enabled():
+        raise HTTPException(status_code=403, detail=_CMS_DISABLED_MSG)
     storage = get_storage()
     if not storage.supports("set_prompt_env"):
         raise HTTPException(status_code=501, detail="promotion not supported by this backend")

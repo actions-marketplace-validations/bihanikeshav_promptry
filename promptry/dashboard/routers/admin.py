@@ -68,6 +68,7 @@ def get_project_config():
         "pricing": data.get("pricing", {}),
         "key_status": projectconfig.key_status(),
         "key_env": projectconfig.key_env_names(),
+        "cms_enabled": projectconfig.cms_enabled(),
         "path": str(projectconfig.config_path()),
     }
 

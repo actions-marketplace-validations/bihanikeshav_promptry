@@ -158,6 +158,19 @@ def load_project_config() -> dict:
     return copy.deepcopy(_project_cache)
 
 
+def cms_enabled() -> bool:
+    """Whether the live prompt CMS is turned on (``[dashboard] cms = true``).
+
+    Off by default: editing or promoting prompts from the dashboard only has an
+    effect if the app actually fetches its prompts from promptry (render_prompt /
+    get_prompt), so every prompt-write surface stays gated until the user opts in.
+    """
+    try:
+        return bool(load_project_config().get("dashboard", {}).get("cms", False))
+    except Exception:
+        return False
+
+
 def load_raw_config(path: Path | None = None) -> dict:
     """Load the raw, *unmerged* contents of a single config file — no merge
     with the other sources, no defaults filled in.
