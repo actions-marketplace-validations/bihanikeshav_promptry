@@ -2,7 +2,7 @@
   "name": "promptry",
   "displayName": "promptry",
   "description": "Regression testing for LLM prompts — run evals, view results, detect drift",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "publisher": "bihanikeshav",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Testing", "Machine Learning"],

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.1 (2026-07-08)
+
+Version-correction release. An artifact was accidentally published to PyPI as
+`1.0.0`; that release has been yanked. `0.10.1` is the intended continuation of
+the `0.10.x` line and supersedes it. No functional changes from `0.10.0` — the
+API is still pre-1.0 and may shift before a stable 1.0.
+
 ## 0.10.0 (2026-07-08)
 
 First broad public release. The library, CLI, dashboard, GitHub Action, and MCP
