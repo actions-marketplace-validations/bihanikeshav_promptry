@@ -138,16 +138,9 @@ class TestVoteStats:
 
 class TestVoteFunction:
 
-    def test_vote_saves_and_returns_id(self, registry):
-        # track a prompt first so version is found
-        registry.save("my-prompt", "You are a helpful assistant.")
-        vid = vote.__wrapped__(registry, "my-prompt", "great answer", 1) if hasattr(vote, '__wrapped__') else None
-        # Use the storage directly to test
-        storage = registry.storage
-        vid = storage.save_vote("my-prompt", "great answer", 1, prompt_version=1)
-        assert vid > 0
-        votes = storage.get_votes(prompt_name="my-prompt")
-        assert len(votes) >= 1
+    # (Removed test_vote_saves_and_returns_id: it never actually called vote()
+    #  -- __wrapped__ resolved to None and it re-tested storage.save_vote, which
+    #  is already covered by TestSaveAndGetVotes.)
 
     def test_vote_invalid_score(self, registry):
         with pytest.raises(ValueError, match="score must be"):

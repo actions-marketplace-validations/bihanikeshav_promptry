@@ -44,13 +44,14 @@ class TestBuildMessage:
 
 class TestNotifyRegression:
 
-    def test_no_config_does_nothing(self, failing_result, monkeypatch):
-        """No webhook or email configured, should silently return."""
+    @patch("promptry.notifications._send_webhook")
+    def test_no_config_sends_nothing(self, mock_webhook, failing_result, monkeypatch):
+        """No webhook or email configured -> no delivery is attempted."""
         monkeypatch.setenv("PROMPTRY_WEBHOOK_URL", "")
         from promptry.config import reset_config
         reset_config()
-        # should not raise
         notify_regression(failing_result)
+        mock_webhook.assert_not_called()
         reset_config()
 
     @patch("promptry.notifications._send_webhook")
@@ -75,7 +76,8 @@ class TestNotifyRegression:
 
 class TestSendWebhook:
 
-    def test_rejects_bad_url_scheme(self):
-        """URLs that aren't http/https should be skipped."""
-        # should not raise, just log and return
+    @patch("promptry.notifications.urllib.request.urlopen")
+    def test_rejects_bad_url_scheme(self, mock_urlopen):
+        """URLs that aren't http/https are skipped without any network call."""
         _send_webhook("file:///etc/passwd", "test", "body")
+        mock_urlopen.assert_not_called()

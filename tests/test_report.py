@@ -195,21 +195,11 @@ def drift_data_stable():
 
 class TestRenderJson:
 
-    def test_round_trips_run_data(self, run_results):
+    def test_round_trips_data(self, run_results):
+        # render_json is a thin json.dumps wrapper; one representative fixture
+        # exercises the round-trip. (Was 4 near-identical fixtures.)
         content = render_json(run_results)
         assert json.loads(content) == run_results
-
-    def test_round_trips_failing_run_data(self, run_results_failing):
-        content = render_json(run_results_failing)
-        assert json.loads(content) == run_results_failing
-
-    def test_round_trips_compare_data(self, compare_data):
-        content = render_json(compare_data)
-        assert json.loads(content) == compare_data
-
-    def test_round_trips_drift_data(self, drift_data):
-        content = render_json(drift_data)
-        assert json.loads(content) == drift_data
 
     def test_output_is_valid_json_only(self, run_results):
         """No stray decoration -- the whole string must parse as JSON."""

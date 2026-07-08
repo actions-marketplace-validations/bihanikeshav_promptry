@@ -147,12 +147,14 @@ smtp_password = "pass"
         assert found.name == "promptry.toml"
 
     def test_find_config_file_returns_none_when_missing(self, tmp_path, monkeypatch):
+        # Isolate both the CWD and HOME so there is genuinely no config to find,
+        # then assert None explicitly (the old version's assert lived inside an
+        # `if found is not None`, so the missing case asserted nothing).
         monkeypatch.chdir(tmp_path)
-        # No config files in tmp_path
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows home
         found = _find_config_file()
-        # Could be None or could find ~/.promptry/config.toml -- check type
-        if found is not None:
-            assert found.is_file()
+        assert found is None
 
     def test_capture_max_chars_from_toml(self):
         cfg = Config()

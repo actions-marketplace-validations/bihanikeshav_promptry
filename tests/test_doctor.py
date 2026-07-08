@@ -20,23 +20,16 @@ class TestDoctor:
         result = runner.invoke(app, ["doctor"])
         assert result.exit_code == 0
 
-    def test_doctor_checks_python(self):
+    def test_doctor_reports_all_checks(self):
+        # One invocation covers every section + the summary line. (Was six
+        # separate `doctor` invocations each grepping one substring.)
         result = runner.invoke(app, ["doctor"])
-        assert "Python version" in result.output
-
-    def test_doctor_checks_storage(self):
-        result = runner.invoke(app, ["doctor"])
-        assert "Storage writable" in result.output
-
-    def test_doctor_checks_sentence_transformers(self):
-        result = runner.invoke(app, ["doctor"])
-        assert "sentence-transformers" in result.output
-
-    def test_doctor_checks_dashboard(self):
-        result = runner.invoke(app, ["doctor"])
-        assert "Dashboard" in result.output
-
-    def test_doctor_prints_summary(self):
-        result = runner.invoke(app, ["doctor"])
-        assert "ok," in result.output
-        assert "warnings" in result.output
+        for marker in (
+            "Python version",
+            "Storage writable",
+            "sentence-transformers",
+            "Dashboard",
+            "ok,",
+            "warnings",
+        ):
+            assert marker in result.output, f"missing doctor check: {marker!r}"
