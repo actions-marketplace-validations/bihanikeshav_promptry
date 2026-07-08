@@ -37,14 +37,12 @@ const moduleOf = (n: string) => (n.includes(".") ? n.split(".")[0] : "other");
 
 // ---- prompts: 12 across 7 modules, all {{var}} syntax (shows live highlighting) ----
 const CONTENT: Record<string, string> = {
-  "rag.answer": `You are the support assistant for {{product}}.
-Answer the question using ONLY the context below. If it isn't supported, say "I don't know" — never guess.
+  "rag.answer": `Question: {{question}}
 
-Context:
+Retrieved context:
 {{context}}
 
-Question: {{question}}
-Return JSON: {"answer": "...", "sources": ["..."], "confidence": 0.0-1.0}`,
+You are a retrieval-augmented answer engine for a developer-docs product. Answer using ONLY the retrieved context above — never use outside knowledge or guess. If the context does not contain the answer, say you don't know and point the user to where they might look. Cite every claim with its source as [filename#section]. Keep answers to 2-4 sentences unless asked for detail. Return strict JSON: {"answer": "...", "sources": ["..."], "confidence": 0.0-1.0}. Emit nothing outside the JSON. Cite every claim with its source as [filename#section]. It is important that you keep answers concise.`,
   "rag.rerank": `Rank the {{k}} candidate passages by how well they answer: "{{query}}".
 Return a JSON array of passage ids, most relevant first. Drop anything off-topic.`,
   "rag.query_expansion": `Rewrite the user query into {{n}} diverse search queries covering synonyms and sub-questions.
@@ -65,10 +63,12 @@ Reply with JSON {"intent": "...", "confidence": 0.0-1.0}.`,
 Draft a reply to the customer using the resolution notes. Cite the relevant policy.
 Customer: {{message}}
 Resolution notes: {{notes}}`,
-  "summary.tldr": `Summarize the document into {{n}} crisp bullet points for an executive. Lead with the decision or risk.
+  "summary.tldr": `You are a meticulous summarizer. Read the source material below and stay strictly faithful to it — do not add facts, opinions, or outside knowledge.
+Produce {{n}} crisp bullet points for a busy executive; lead with the decision or the risk.
 
 {{document}}`,
-  "summary.section": `Write a {{length}}-word summary of the "{{section}}" section below for a {{audience}} reader.
+  "summary.section": `You are a meticulous summarizer. Read the source material below and stay strictly faithful to it — do not add facts, opinions, or outside knowledge.
+Produce a {{length}}-word summary of the "{{section}}" section for a {{audience}} reader.
 
 {{content}}`,
   "safety.guardrail": `Decide whether to answer the request for {{product}}.
@@ -321,6 +321,7 @@ const CONFIG = {
   pricing: {},
   key_status: { openai: true, anthropic: true, xai: false, google: false, azure: false },
   key_env: { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", xai: "XAI_API_KEY", google: "GEMINI_API_KEY", azure: "AZURE_OPENAI_API_KEY" },
+  cms_enabled: false,
   path: "~/helpdesk-ai/.promptry/config.toml",
 };
 
@@ -374,6 +375,210 @@ const GOLDEN: Record<string, any[]> = {
   ],
 };
 
+// ---- prefix-cache analysis: a faithful JS port of promptry.prompt_diff
+//      .prefix_cache_analysis so the demo's cache surfaces compute honestly
+//      from CONTENT (same variable syntaxes, constants, and recommendations). ----
+const _CHARS_PER_TOKEN = 4;
+const _MIN_CACHE_TOKENS = 1024;
+const _MEANINGFUL_REORDER_TOKENS = 25;
+// {{name}} | ${name} | $name — mirrors promptry.prompt_diff._VAR.
+const _VAR = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+
+// Python's round() is round-half-to-even; replicate it so token estimates match.
+function roundHalfEven(x: number): number {
+  const floor = Math.floor(x);
+  const diff = x - floor;
+  if (diff < 0.5) return floor;
+  if (diff > 0.5) return floor + 1;
+  return floor % 2 === 0 ? floor : floor + 1;
+}
+function estTokens(text: string): number {
+  return Math.max(0, roundHalfEven((text || "").length / _CHARS_PER_TOKEN));
+}
+
+interface CacheSeg { type: "static" | "var"; text: string; name?: string }
+function templateSegments(content: string): CacheSeg[] {
+  content = content || "";
+  const segs: CacheSeg[] = [];
+  let pos = 0;
+  _VAR.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = _VAR.exec(content)) !== null) {
+    if (m.index > pos) segs.push({ type: "static", text: content.slice(pos, m.index) });
+    const name = m[1] || m[2] || m[3];
+    segs.push({ type: "var", text: m[0], name });
+    pos = m.index + m[0].length;
+  }
+  if (pos < content.length) segs.push({ type: "static", text: content.slice(pos) });
+  return segs;
+}
+
+function prefixCacheAnalysis(content: string, avgInputTokens?: number | null,
+                            minCacheTokens: number = _MIN_CACHE_TOKENS) {
+  content = content || "";
+  const segs = templateSegments(content);
+
+  const variables: string[] = [];
+  for (const s of segs) if (s.type === "var" && s.name && !variables.includes(s.name)) variables.push(s.name);
+
+  // Offset of the first variable = end of the guaranteed-cacheable prefix.
+  let firstVar: string | null = null;
+  let firstVarOffset: number | null = null;
+  let off = 0;
+  for (const s of segs) {
+    if (s.type === "var") { firstVar = s.name ?? null; firstVarOffset = off; break; }
+    off += s.text.length;
+  }
+
+  const totalChars = content.length;
+  const prefixChars = firstVarOffset !== null ? firstVarOffset : totalChars;
+  const staticChars = segs.filter((s) => s.type === "static").reduce((a, s) => a + s.text.length, 0);
+
+  const cacheableNow = estTokens(content.slice(0, prefixChars));
+  const cacheablePotential = estTokens(segs.filter((s) => s.type === "static").map((s) => s.text).join(""));
+  const reorderGain = Math.max(0, cacheablePotential - cacheableNow);
+  const thresholdTokens = avgInputTokens != null ? avgInputTokens : estTokens(content);
+  const meetsThreshold = thresholdTokens >= minCacheTokens;
+
+  let rec: string;
+  let rationale: string;
+  if (variables.length === 0) {
+    rec = "no_variables";
+    rationale = "This template has no input variables — it's fully static, so the " +
+      "whole prompt is a cacheable prefix (a template with no inputs is unusual, though).";
+  } else if (!meetsThreshold) {
+    rec = "too_small";
+    const src = avgInputTokens != null ? "its measured requests are" : "it is";
+    rationale = `At ~${thresholdTokens} tokens ${src} below the ~${minCacheTokens}-token ` +
+      "floor where OpenAI/Anthropic prefix caching activates, so caching won't " +
+      "apply regardless of ordering. (If real inputs are much larger than this " +
+      "estimate, re-check with telemetry.)";
+  } else if (reorderGain < _MEANINGFUL_REORDER_TOKENS) {
+    rec = "already_optimal";
+    rationale = "Inputs already sit at the end — the static instruction block " +
+      `(~${cacheableNow} tokens) forms one cacheable prefix. Nothing to do.`;
+  } else {
+    rec = "move_inputs_to_end";
+    rationale = `Your first input {{${firstVar}}} appears after only ~${cacheableNow} ` +
+      `cacheable tokens, but ~${cacheablePotential} tokens of this template are ` +
+      "static. Moving all inputs to the end would extend the cacheable prefix by " +
+      `~${reorderGain} tokens, so every repeat call re-bills that much less.`;
+  }
+
+  return {
+    total_chars: totalChars,
+    total_tokens: estTokens(content),
+    variables,
+    first_variable: firstVar,
+    cacheable_prefix_chars: prefixChars,
+    cacheable_prefix_tokens: cacheableNow,
+    static_total_chars: staticChars,
+    static_total_tokens: cacheablePotential,
+    reorder_gain_tokens: reorderGain,
+    min_cache_tokens: minCacheTokens,
+    threshold_tokens: thresholdTokens,
+    meets_threshold: meetsThreshold,
+    segments: segs,
+    recommendation: rec as
+      "move_inputs_to_end" | "already_optimal" | "too_small" | "no_variables",
+    rationale,
+  };
+}
+
+const _CACHE_REC_RANK: Record<string, number> = {
+  move_inputs_to_end: 0, no_variables: 1, already_optimal: 2, too_small: 3,
+};
+
+// ---- shorten analysis: a rule-based port of promptry.prompt_diff
+//      .shorten_analysis. The demo runs the deterministic tier (duplicate,
+//      filler, redundant_format, whitespace) honestly from CONTENT; the
+//      embedding-backed semantic tier is stood in with ONE hardcoded finding on
+//      a prompt with a semantically-redundant line, so the demo shows the tier. ----
+const _FILLER_RE = /please |kindly |I want you to |I need you to |I would like you to |Your task is to |You are asked to |It is important that |It is important to |It is crucial that |Please note that |Note that |as much as possible|to the best of your ability|in order to |make sure to |be sure to /gi;
+const _FORMAT_KEYWORDS = ["json", "yaml", "markdown", "xml"];
+
+function normSentence(s: string): string {
+  return s.replace(/\s+/g, " ").trim().toLowerCase().replace(/^[.!?,:;"'\s]+|[.!?,:;"'\s]+$/g, "");
+}
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter++;
+  const union = a.size + b.size - inter;
+  return union ? inter / union : 0;
+}
+
+interface ShortenFinding { kind: string; message: string; text: string; counterpart?: string; tokens: number; similarity?: number }
+
+// One hardcoded semantic_duplicate per prompt (text must occur in the static
+// text). rag.answer restates "answer using only the retrieved context" in two
+// different wordings — the embedding tier would catch it; here we assert it.
+const _SEMANTIC_DUP: Record<string, { text: string; counterpart: string; similarity: number }> = {
+  "rag.answer": { text: "Answer using ONLY the retrieved context above", counterpart: "never use outside knowledge or guess", similarity: 0.9 },
+};
+
+function shortenAnalysis(content: string, name?: string) {
+  content = content || "";
+  const segs = templateSegments(content);
+  const staticText = segs.filter((s) => s.type === "static").map((s) => s.text).join("");
+  const totalTokens = estTokens(staticText);
+  const findings: ShortenFinding[] = [];
+
+  // A. duplicate + near-duplicate sentences
+  const sentences: { raw: string; norm: string; toks: Set<string> }[] = [];
+  for (const raw of staticText.split(/[.!?\n]+/)) {
+    const norm = normSentence(raw);
+    if (!norm) continue;
+    sentences.push({ raw: raw.trim(), norm, toks: new Set(norm.split(" ")) });
+  }
+  const seen = new Map<string, number>();
+  sentences.forEach((s, idx) => {
+    if (seen.has(s.norm)) {
+      findings.push({ kind: "duplicate", message: "Repeated instruction — already stated above.", text: s.raw, counterpart: sentences[seen.get(s.norm)!].raw, tokens: estTokens(s.raw) });
+      return;
+    }
+    let nearIdx = -1;
+    for (const pIdx of seen.values()) if (jaccard(s.toks, sentences[pIdx].toks) >= 0.8) { nearIdx = pIdx; break; }
+    if (nearIdx >= 0) findings.push({ kind: "duplicate", message: "Near-duplicate of an earlier sentence — likely redundant.", text: s.raw, counterpart: sentences[nearIdx].raw, tokens: estTokens(s.raw) });
+    seen.set(s.norm, idx);
+  });
+
+  // filler phrases
+  _FILLER_RE.lastIndex = 0;
+  let fm: RegExpExecArray | null;
+  while ((fm = _FILLER_RE.exec(staticText)) !== null) {
+    findings.push({ kind: "filler", message: "Filler phrase models ignore.", text: fm[0], tokens: estTokens(fm[0]) });
+  }
+
+  // over-repeated format keywords
+  for (const kw of _FORMAT_KEYWORDS) {
+    const count = (staticText.match(new RegExp("\\b" + kw + "\\b", "gi")) || []).length;
+    if (count > 2) findings.push({ kind: "redundant_format", message: `'${kw.toUpperCase()}' mentioned ${count} times.`, text: kw, tokens: (count - 1) * estTokens(kw) });
+  }
+
+  // excess blank lines
+  const wsRe = /\n{3,}/g;
+  let wm: RegExpExecArray | null;
+  while ((wm = wsRe.exec(staticText)) !== null) {
+    findings.push({ kind: "whitespace", message: "Excessive blank lines — collapse to a single break.", text: wm[0], tokens: estTokens(wm[0].slice(2)) });
+  }
+
+  // B. semantic tier (mock stand-in: one hardcoded finding)
+  const sd = name ? _SEMANTIC_DUP[name] : undefined;
+  if (sd && staticText.includes(sd.text)) {
+    findings.push({ kind: "semantic_duplicate", message: "Semantically redundant with an earlier sentence.", text: sd.text, counterpart: sd.counterpart, tokens: estTokens(sd.text), similarity: sd.similarity });
+  }
+
+  const byText = new Map<string, number>();
+  for (const f of findings) byText.set(f.text, f.tokens);
+  let saved = 0;
+  for (const v of byText.values()) saved += v;
+  saved = Math.min(totalTokens, saved);
+
+  findings.sort((a, b) => b.tokens - a.tokens);
+  return { total_tokens: totalTokens, est_tokens_saved: saved, semantic_available: true, findings };
+}
+
 // ---- route table ----
 const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => any][] = [
   [/^\/api\/health$/, async () => ({ status: "ok", version: await liveVersion(), db_path: "helpdesk-ai.db" })],
@@ -395,31 +600,88 @@ const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => a
     return { mode: "semantic", results: hits.slice(0, 10).map((n, i) => ({ name: n, score: r2(0.82 - i * 0.05, 3), preview: (CONTENT[n] || "").replace(/\n/g, " ").slice(0, 140) })) };
   }],
   [/^\/api\/prompts\/near-duplicates$/, () => ({ mode: "semantic", threshold: 0.85, pairs: [
-    { a: "summary.tldr", b: "summary.section", similarity: 0.88 },
-    { a: "intent.router", b: "support.classify", similarity: 0.86 },
+    { a: "summary.tldr", b: "summary.section", similarity: 0.9 },
   ] })],
   [/^\/api\/prompts\/diff2$/, (_m, q) => {
     const a = q.get("a") || "summary.tldr";
     const b = q.get("b") || "summary.section";
-    const shared = "You are a concise summarizer. Read the passage below and ";
-    const ca = CONTENT[a] || (shared + "produce a one-sentence TL;DR.");
-    const cb = CONTENT[b] || (shared + "produce a short section summary with a heading.");
-    const ratio = 0.62;
+    const ca = CONTENT[a] || "";
+    const cb = CONTENT[b] || "";
+
+    // Real char-level diff: common prefix + common suffix + differing middle.
+    let prefixLen = 0;
+    const minLen = Math.min(ca.length, cb.length);
+    while (prefixLen < minLen && ca[prefixLen] === cb[prefixLen]) prefixLen++;
+    const remA = ca.slice(prefixLen);
+    const remB = cb.slice(prefixLen);
+    let suffixLen = 0;
+    const minRem = Math.min(remA.length, remB.length);
+    while (suffixLen < minRem && remA[remA.length - 1 - suffixLen] === remB[remB.length - 1 - suffixLen]) suffixLen++;
+    const aMiddle = remA.slice(0, remA.length - suffixLen);
+    const bMiddle = remB.slice(0, remB.length - suffixLen);
+    const suffix = remA.slice(remA.length - suffixLen);
+
+    const diff = [
+      { type: "equal", text: ca.slice(0, prefixLen) },
+      { type: "delete", text: aMiddle },
+      { type: "insert", text: bMiddle },
+      { type: "equal", text: suffix },
+    ].filter((s) => s.text) as { type: "equal" | "insert" | "delete"; text: string }[];
+
+    const ratio = r2(prefixLen / Math.max(ca.length, cb.length, 1), 4);
+    const suggested = prefixLen >= 20 && ratio >= 0.15 && ratio < 1;
     return {
-      a: { name: a, latest_version: 3, content: ca },
-      b: { name: b, latest_version: 2, content: cb },
-      diff: [
-        { type: "equal", text: shared },
-        { type: "delete", text: "produce a one-sentence TL;DR." },
-        { type: "insert", text: "produce a short section summary with a heading." },
-      ],
-      shared_prefix_chars: shared.length,
+      a: { name: a, latest_version: ver(a), content: ca },
+      b: { name: b, latest_version: ver(b), content: cb },
+      diff,
+      shared_prefix_chars: prefixLen,
       shared_prefix_ratio: ratio,
       cache_suggestion: {
-        suggested: ratio >= 0.5,
-        rationale: `The first ${shared.length} characters are identical. Caching the shared prefix would cut input cost on every call to both prompts.`,
+        suggested,
+        rationale: suggested
+          ? `These prompts share ${prefixLen} identical leading characters (${Math.round(ratio * 100)}% of the longer prompt); caching that prefix would cut input cost on every call to both.`
+          : `Only ${prefixLen} leading characters are shared — too little to make a shared prefix cache worthwhile.`,
       },
     };
+  }],
+  // MUST precede the generic /api/prompts/:name route below (cache-analysis
+  // has no slash, so it would otherwise be captured as a prompt name).
+  [/^\/api\/prompts\/cache-analysis$/, () => ({
+    prompts: NAMES.map((name) => {
+      const a = prefixCacheAnalysis(CONTENT[name], PROFILE[name]?.tin);
+      return {
+        name, version: ver(name), recommendation: a.recommendation,
+        cacheable_prefix_tokens: a.cacheable_prefix_tokens,
+        static_total_tokens: a.static_total_tokens,
+        reorder_gain_tokens: a.reorder_gain_tokens,
+        total_tokens: a.total_tokens,
+        threshold_tokens: a.threshold_tokens,
+        meets_threshold: a.meets_threshold,
+        first_variable: a.first_variable,
+      };
+    }).sort((x, y) =>
+      (_CACHE_REC_RANK[x.recommendation] - _CACHE_REC_RANK[y.recommendation]) ||
+      (y.reorder_gain_tokens - x.reorder_gain_tokens)),
+  })],
+  // Per-prompt cache detail. Before /content$ and the generic /:name routes.
+  [/^\/api\/prompts\/([^/]+)\/cache-analysis$/, (m) => {
+    const name = decodeURIComponent(m[1]);
+    const a = prefixCacheAnalysis(CONTENT[name], PROFILE[name]?.tin);
+    return { name, version: ver(name), content: CONTENT[name] || "", ...a };
+  }],
+  // Shorten analysis: ranked list. MUST precede the generic /:name route (no
+  // slash, so it would otherwise be captured as a prompt name).
+  [/^\/api\/prompts\/shorten-analysis$/, () => ({
+    prompts: NAMES.map((name) => {
+      const a = shortenAnalysis(CONTENT[name], name);
+      return { name, version: ver(name), est_tokens_saved: a.est_tokens_saved, finding_count: a.findings.length, total_tokens: a.total_tokens };
+    }).sort((x, y) => y.est_tokens_saved - x.est_tokens_saved),
+  })],
+  // Per-prompt shorten detail. Before /content$ and the generic /:name routes.
+  [/^\/api\/prompts\/([^/]+)\/shorten-analysis$/, (m) => {
+    const name = decodeURIComponent(m[1]);
+    const a = shortenAnalysis(CONTENT[name], name);
+    return { name, version: ver(name), content: CONTENT[name] || "", ...a };
   }],
   [/^\/api\/suite-candidates$/, (_m, q) => {
     const source = q.get("source") || "golden";
