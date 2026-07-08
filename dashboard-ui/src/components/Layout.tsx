@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import { SideNav } from "./SideNav";
+import { ActivityFooter } from "./ActivityFooter";
 import { CommandK } from "./CommandK";
 import { getSuites, getPrompts } from "../api/client";
 import type { SuiteSummary, PromptSummary } from "../api/types";
@@ -35,6 +36,7 @@ export default function Layout() {
 
   const regressions = suites.filter((s) => !s.passed).length;
   const drifting = suites.filter((s) => s.drift_status === "drifting").length;
+  const isOverview = useLocation().pathname === "/";
 
   const ctx: LayoutContext = {
     suites,
@@ -43,23 +45,28 @@ export default function Layout() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "row" }}>
+    <div style={{ height: "100vh", display: "flex", flexDirection: "row", overflow: "hidden" }}>
       <SideNav
         onCmdK={() => setCmdOpen(true)}
         counters={{ suites: suites.length, regressions, drifting }}
       />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
         <main
           style={{
             flex: 1,
+            minHeight: 0,
             maxWidth: 1400,
             width: "100%",
             margin: "0 auto",
-            padding: "4px 32px 40px",
+            padding: isOverview ? "4px 32px 8px" : "4px 32px 40px",
+            // Overview fits the viewport (drops content instead of scrolling);
+            // every other page scrolls inside main, so the document never does.
+            overflowY: isOverview ? "hidden" : "auto",
           }}
         >
           <Outlet context={ctx} />
         </main>
+        {isOverview && <ActivityFooter suites={suites} />}
       </div>
       <CommandK
         open={cmdOpen}

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { KPI, PageHeader, Sparkline, StatusPill, CopyField } from "../components/ui";
-import { ActivityFooter } from "../components/ActivityFooter";
 import { pct, relTime, usd, scoreColor } from "../utils";
 import { getCostData, listBudgets, listFeedback, getFeedbackStats, getOnboardingStatus } from "../api/client";
 import type { LayoutContext } from "../components/Layout";
@@ -210,8 +209,7 @@ export default function Overview() {
   const breachedCount = budgets.filter((b) => b.breached).length;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 12px)", minHeight: 0 }}>
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
       <PageHeader
         eyebrow="~/promptry · overview"
         title="Overview"
@@ -251,9 +249,9 @@ export default function Overview() {
             </Empty>
           ) : (
             <table className="pr">
-              <tbody>
+              <tbody className="ov-suite">
                 {health.map((s) => (
-                  <tr key={s.name} onClick={() => navigate(`/suite/${encodeURIComponent(s.name)}`)}>
+                  <tr className="ov-row" key={s.name} onClick={() => navigate(`/suite/${encodeURIComponent(s.name)}`)}>
                     <td>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <span style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</span>
@@ -326,8 +324,8 @@ export default function Overview() {
         </div>
       </div>
 
-      {/* spend by module + live activity */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 10, flex: 1, minHeight: 0 }}>
+      {/* spend by module + live activity — dropped first on short viewports */}
+      <div className="ov-secondary" style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 10, flex: 1, minHeight: 0 }}>
         <SectionCard title="Spend by module · 30d" action={<button className="btn" onClick={() => navigate("/cost")}>Cost detail ›</button>}>
           {byModule.length === 0 ? (
             <Empty text="No cost recorded yet — track each live call and spend breaks down here by module.">
@@ -387,8 +385,6 @@ export default function Overview() {
       </div>
       </>
       )}
-      </div>
-      <ActivityFooter suites={suites} />
     </div>
   );
 }

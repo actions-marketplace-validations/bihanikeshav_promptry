@@ -49,8 +49,18 @@ html, body {
   text-rendering: optimizeLegibility;
   font-feature-settings: "ss01", "cv11";
 }
-body { min-height: 100vh; }
+/* Fixed viewport shell: the app owns its own scroll regions, the document
+   itself never scrolls. */
+html, body, #root { height: 100vh; overflow: hidden; }
 a { color: inherit; text-decoration: none; }
+
+/* Overview must never show a scrollbar at any viewport height. As the window
+   gets shorter we drop the least-important content instead of scrolling:
+   first the secondary bento row, then trailing suite-health rows (5 -> 4 -> 3). */
+@media (max-height: 860px) { .ov-secondary { display: none !important; } }
+@media (max-height: 780px) { .ov-suite .ov-row:nth-child(n+5) { display: none; } }
+@media (max-height: 700px) { .ov-suite .ov-row:nth-child(n+4) { display: none; } }
+@media (max-height: 620px) { .ov-suite .ov-row:nth-child(n+3) { display: none; } }
 button { font-family: inherit; color: inherit; }
 ::selection { background: var(--accent-soft); color: var(--text); }
 
