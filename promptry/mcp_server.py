@@ -8,6 +8,7 @@ Start with:  promptry mcp
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -21,9 +22,6 @@ mcp = FastMCP("promptry")
 def _get_registry() -> PromptRegistry:
     return PromptRegistry(get_storage())
 
-
-import os
-from pathlib import Path
 
 _YAML_SUITE_CANDIDATES = ("evals.yaml", "evals.yml", "promptry.yaml", "promptry.yml")
 

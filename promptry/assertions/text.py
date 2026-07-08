@@ -10,7 +10,7 @@ from promptry.evaluator import AssertionResult, append_result
 # Embedding model access + cache live in promptry.embeddings. These names
 # stay importable here as re-exports for back-compat (several modules and
 # possibly external callers import them from promptry.assertions).
-from promptry.embeddings import get_embedder as _get_model, set_model, encode as _encode, cosine_similarity as _cosine_similarity
+from promptry.embeddings import encode as _encode, cosine_similarity as _cosine_similarity
 # Imported as a module (not `from ... import similarity`) so that tests can
 # monkeypatch promptry.embeddings.similarity and have assert_embedding_distance
 # pick up the replacement at call time.

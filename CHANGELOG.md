@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2 (2026-07-08)
+
+Fixes the lint CI that failed on `1.0.1`: resolves ruff findings across the
+codebase (drop dead imports in `embeddings`, `assertions.text`, and the MCP
+server; hoist the MCP server's `pathlib` import) and ignores `F401` in package
+`__init__.py` files, whose imports are intentional public-API re-exports. No
+runtime changes from `1.0.1`.
+
 ## 1.0.1 (2026-07-08)
 
 First feature release since the `0.10.x` line. Versioned `1.0.1` (not `0.11.0`):

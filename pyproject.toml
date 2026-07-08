@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promptry"
-version = "1.0.1"
+version = "1.0.2"
 description = "Regression protection for LLM pipelines"
 readme = "README.md"
 license = "MIT"
@@ -78,3 +78,9 @@ markers = [
     "slow: tests that need the embedding model downloaded",
     "integration: tests that require a running Ollama + ChromaDB (see integration_tests/)",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Package __init__ files re-export their submodules' public API; those imports
+# are intentional, not dead (e.g. promptry/assertions/__init__.py after the
+# package split).
+"__init__.py" = ["F401"]

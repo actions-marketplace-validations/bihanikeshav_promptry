@@ -19,7 +19,6 @@ from __future__ import annotations
 import hashlib
 import threading
 from collections import OrderedDict
-from typing import Callable
 
 import numpy as np
 
