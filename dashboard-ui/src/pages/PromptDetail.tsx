@@ -15,6 +15,7 @@ import {
   deleteExample,
   lintPromptText,
   promotePrompt,
+  getConfig,
 } from "../api/client";
 import type { PromptVersion, DiffResponse, PromptStats, PromptRun, LintFinding, OnlineDrift, GoldenExample, GoldenRunResult } from "../api/types";
 import { InvocationsPanel } from "../components/InvocationsPanel";
@@ -40,6 +41,12 @@ export default function PromptDetail() {
   const [variables, setVariables] = useState<string[]>([]);
   const [savedVars, setSavedVars] = useState<string[]>([]);
   const [lint, setLint] = useState<LintFinding[]>([]);
+  // Prompt-write surfaces (save, promote) are gated on the CMS being enabled.
+  const [cms, setCms] = useState(false);
+
+  useEffect(() => {
+    getConfig().then((c) => setCms(!!c.cms_enabled)).catch(() => {});
+  }, []);
 
   function reloadVersions(selectLatest = false) {
     return getPromptVersions(promptName)
@@ -262,11 +269,15 @@ export default function PromptDetail() {
               )}
               {selected != null && selected !== prodVersion && (
                 <button
-                  onClick={handlePromote}
-                  title="Point the prod env tag at this version (render_prompt(env='prod') will serve it)"
+                  onClick={cms ? handlePromote : undefined}
+                  disabled={!cms}
+                  title={cms
+                    ? "Point the prod env tag at this version (render_prompt(env='prod') will serve it)"
+                    : "Prompt CMS is off — set [dashboard] cms = true to promote versions"}
                   style={{
                     padding: "5px 11px", borderRadius: 6, fontSize: 11.5, fontWeight: 600,
-                    cursor: "pointer", color: "var(--bg)", background: "var(--accent)", border: "none",
+                    cursor: cms ? "pointer" : "not-allowed", color: "var(--bg)",
+                    background: cms ? "var(--accent)" : "var(--muted)", border: "none", opacity: cms ? 1 : 0.6,
                   }}
                 >
                   Promote v{selected} → prod
@@ -416,21 +427,27 @@ export default function PromptDetail() {
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
                 <button
                   onClick={handleSave}
-                  disabled={saving || !draft.trim() || draft === content}
+                  disabled={!cms || saving || !draft.trim() || draft === content}
+                  title={cms ? undefined : "Prompt CMS is off — set [dashboard] cms = true to save edits"}
                   style={{
                     padding: "8px 16px",
                     borderRadius: 7,
                     fontSize: 12.5,
                     fontWeight: 600,
-                    cursor: saving || draft === content ? "not-allowed" : "pointer",
+                    cursor: !cms || saving || draft === content ? "not-allowed" : "pointer",
                     color: "var(--bg)",
-                    background: draft === content || !draft.trim() ? "var(--muted)" : "var(--accent)",
+                    background: !cms || draft === content || !draft.trim() ? "var(--muted)" : "var(--accent)",
                     border: "none",
                     opacity: saving ? 0.7 : 1,
                   }}
                 >
                   {saving ? "Saving…" : "Save as new version"}
                 </button>
+                {!cms && (
+                  <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                    Prompt CMS is off — set <span className="mono" style={{ color: "var(--secondary)" }}>[dashboard] cms = true</span> to edit prompts from the dashboard.
+                  </span>
+                )}
                 {draft !== content && (
                   <button
                     onClick={() => setDraft(content)}

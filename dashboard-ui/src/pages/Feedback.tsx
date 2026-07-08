@@ -83,7 +83,7 @@ export default function Feedback() {
       <PageHeader
         eyebrow="~/promptry · feedback"
         title="Feedback"
-        description="Every end-user rating and comment in one place. Wire it up by POSTing to /api/feedback with the request_id you passed to track_invocation."
+        description="Every end-user rating and comment in one place — POST to /api/feedback with the request_id from track_invocation."
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>

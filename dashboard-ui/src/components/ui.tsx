@@ -622,7 +622,7 @@ export function PageHeader({
             ))}
         </h1>
         {description && (
-          <div style={{ marginTop: 6, color: "var(--secondary)", fontSize: 13, maxWidth: 720 }}>
+          <div style={{ marginTop: 6, color: "var(--secondary)", fontSize: 12.5, maxWidth: 1040 }}>
             {description}
           </div>
         )}
