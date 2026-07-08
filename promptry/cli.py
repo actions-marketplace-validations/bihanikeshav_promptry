@@ -1489,6 +1489,257 @@ def votes_cmd(
                 console.print(result["analysis"])
 
 
+def _cache_avg_input_tokens(storage, name: str) -> Optional[int]:
+    """Avg input tokens per call for a prompt over the last 30 days, or None.
+
+    The ~1024-token prefix-cache activation floor applies to the rendered
+    request, so real telemetry (when present) beats estimating from the
+    template length. Missing/zero average → None so prefix_cache_analysis
+    falls back to its length estimate."""
+    try:
+        avg = storage.get_invocation_stats(name, days=30)["metrics"]["tokens_in"]["avg"]
+    except Exception:
+        return None
+    return int(round(avg)) if avg else None
+
+
+_CACHE_REC_STYLE = {
+    "move_inputs_to_end": "yellow",
+    "too_small": "dim",
+    "already_optimal": "green",
+    "no_variables": "green",
+}
+# Same ranking the dashboard uses: biggest actionable opportunity first.
+_CACHE_REC_RANK = {"move_inputs_to_end": 0, "no_variables": 1, "already_optimal": 2, "too_small": 3}
+
+
+_SHORTEN_KIND_STYLE = {
+    "duplicate": "yellow",
+    "filler": "cyan",
+    "redundant_format": "magenta",
+    "whitespace": "dim",
+    "semantic_duplicate": "red",
+}
+
+
+def _shorten_detail(storage, name: str, json_out: bool) -> None:
+    """`cache <name> --shorten`: list this prompt's redundant/filler findings."""
+    from promptry.prompt_diff import shorten_analysis
+
+    record = storage.get_prompt(name)
+    if record is None:
+        if json_out:
+            print(json.dumps({"error": f"Prompt '{name}' not found."}))
+        else:
+            console.print(f"[red]Error:[/red] Prompt '{name}' not found.")
+        raise typer.Exit(1)
+
+    analysis = shorten_analysis(record.content)
+
+    if json_out:
+        print(json.dumps({"name": record.name, "version": record.version, **analysis}))
+        return
+
+    console.print(f"[bold]{record.name}[/bold] v{record.version}")
+    console.print()
+    if not analysis["findings"]:
+        console.print("[green]No redundant or filler wording found.[/green]")
+        return
+    for f in analysis["findings"]:
+        style = _SHORTEN_KIND_STYLE.get(f["kind"], "")
+        kind = f"[{style}]{f['kind']}[/{style}]" if style else f["kind"]
+        text = f["text"].replace("\n", "\\n")
+        console.print(f"  {kind}  \"{text}\"  [dim](~{f['tokens']} tok)[/dim]")
+        console.print(f"    {f['message']}")
+    console.print()
+    console.print(
+        f"[bold]Estimated savings:[/bold] ~{analysis['est_tokens_saved']} of "
+        f"{analysis['total_tokens']} tokens"
+    )
+    console.print("[dim]Edit the prompt to apply.[/dim]")
+
+
+def _shorten_list(storage, json_out: bool) -> None:
+    """`cache --shorten`: all prompts ranked by estimated tokens saved."""
+    from promptry.prompt_diff import shorten_analysis
+
+    summaries = storage.list_prompt_summaries()
+    if not summaries:
+        if json_out:
+            print(json.dumps({"prompts": []}))
+        else:
+            console.print("[yellow]No prompts recorded.[/yellow]")
+        return
+
+    rows = []
+    for s in summaries:
+        record = storage.get_prompt(s["name"])
+        if record is None:
+            continue
+        a = shorten_analysis(record.content)
+        rows.append({
+            "name": s["name"],
+            "version": record.version,
+            "est_tokens_saved": a["est_tokens_saved"],
+            "finding_count": len(a["findings"]),
+            "total_tokens": a["total_tokens"],
+        })
+    rows.sort(key=lambda r: -r["est_tokens_saved"])
+
+    if json_out:
+        print(json.dumps({"prompts": rows}))
+        return
+
+    table = Table(show_header=True, header_style="bold", title="Prompt shorten analysis")
+    table.add_column("Prompt")
+    table.add_column("Est. tokens saved", justify="right")
+    table.add_column("Findings", justify="right")
+    table.add_column("Total tokens", justify="right")
+    for r in rows:
+        table.add_row(
+            r["name"],
+            f"{r['est_tokens_saved']:,}",
+            str(r["finding_count"]),
+            f"{r['total_tokens']:,}",
+        )
+    console.print(table)
+
+
+@app.command("cache")
+def cache_cmd(
+    name: Optional[str] = typer.Argument(None, help="Prompt name for a detailed single-prompt view."),
+    json_out: bool = typer.Option(False, "--json", help="Emit the raw analysis as JSON (for CI)."),
+    shorten: bool = typer.Option(
+        False, "--shorten",
+        help="Flag redundant/filler wording and estimate token savings (analysis only).",
+    ),
+):
+    """Prompt-prefix cache analysis: how much of each template is a cacheable
+    static prefix, and whether moving inputs to the end would help.
+
+    With no name: a table of all prompts ranked by reorder opportunity.
+    With a name: the prompt reprinted with its cacheable prefix highlighted,
+    plus the recommendation, rationale, and token numbers.
+
+    With --shorten: instead flag redundant/filler wording in each prompt's
+    static text and estimate the input tokens each removal would save (you edit
+    the prompt to apply — nothing is rewritten).
+    """
+    from promptry.storage import get_storage
+    from promptry.prompt_diff import prefix_cache_analysis
+
+    storage = get_storage()
+
+    if shorten:
+        if name is not None:
+            _shorten_detail(storage, name, json_out)
+        else:
+            _shorten_list(storage, json_out)
+        return
+
+    if name is not None:
+        record = storage.get_prompt(name)
+        if record is None:
+            if json_out:
+                print(json.dumps({"error": f"Prompt '{name}' not found."}))
+            else:
+                console.print(f"[red]Error:[/red] Prompt '{name}' not found.")
+            raise typer.Exit(1)
+
+        analysis = prefix_cache_analysis(
+            record.content, avg_input_tokens=_cache_avg_input_tokens(storage, name)
+        )
+
+        if json_out:
+            print(json.dumps({"name": record.name, "version": record.version, **analysis}))
+            return
+
+        console.print(f"[bold]{record.name}[/bold] v{record.version}")
+        console.print()
+        # Reprint the template: cacheable static prefix (everything before the
+        # first variable) in green, everything after dim, variables highlighted.
+        seen_var = False
+        for seg in analysis["segments"]:
+            if seg["type"] == "var":
+                seen_var = True
+                console.print(f"[bold magenta]{seg['text']}[/bold magenta]", end="")
+            elif not seen_var:
+                console.print(f"[green]{seg['text']}[/green]", end="")
+            else:
+                console.print(f"[dim]{seg['text']}[/dim]", end="")
+        console.print()
+        console.print()
+
+        style = _CACHE_REC_STYLE.get(analysis["recommendation"], "")
+        rec = analysis["recommendation"]
+        rec_str = f"[{style}]{rec}[/{style}]" if style else rec
+        console.print(f"[bold]Recommendation:[/bold] {rec_str}")
+        console.print(analysis["rationale"])
+        console.print()
+        console.print(
+            f"[bold]Cacheable now:[/bold] ~{analysis['cacheable_prefix_tokens']} tokens"
+            f"  ([bold]potential:[/bold] ~{analysis['static_total_tokens']} tokens,"
+            f" [bold]reorder gain:[/bold] ~{analysis['reorder_gain_tokens']} tokens)"
+        )
+        floor_str = (
+            "[green]yes[/green]" if analysis["meets_threshold"]
+            else f"[yellow]no[/yellow] (~{analysis['threshold_tokens']} tokens)"
+        )
+        console.print(
+            f"[bold]Clears the ~{analysis['min_cache_tokens']}-token cache floor:[/bold] {floor_str}"
+        )
+        return
+
+    # ---- list all prompts, ranked by reorder opportunity ----
+    summaries = storage.list_prompt_summaries()
+    if not summaries:
+        if json_out:
+            print(json.dumps({"prompts": []}))
+        else:
+            console.print("[yellow]No prompts recorded.[/yellow]")
+        return
+
+    rows = []
+    for s in summaries:
+        pname = s["name"]
+        record = storage.get_prompt(pname)
+        if record is None:
+            continue
+        analysis = prefix_cache_analysis(
+            record.content, avg_input_tokens=_cache_avg_input_tokens(storage, pname)
+        )
+        rows.append({"name": pname, "version": record.version, **analysis})
+
+    rows.sort(key=lambda r: (_CACHE_REC_RANK.get(r["recommendation"], 99), -r["reorder_gain_tokens"]))
+
+    if json_out:
+        print(json.dumps({"prompts": rows}))
+        return
+
+    table = Table(show_header=True, header_style="bold", title="Prompt-prefix cache analysis")
+    table.add_column("Prompt")
+    table.add_column("Recommendation")
+    table.add_column("Cacheable now", justify="right")
+    table.add_column("Potential", justify="right")
+    table.add_column("Reorder gain", justify="right")
+    table.add_column("Clears floor", justify="right")
+
+    for r in rows:
+        style = _CACHE_REC_STYLE.get(r["recommendation"], "")
+        rec_str = f"[{style}]{r['recommendation']}[/{style}]" if style else r["recommendation"]
+        clears = "[green]yes[/green]" if r["meets_threshold"] else "[dim]no[/dim]"
+        table.add_row(
+            r["name"],
+            rec_str,
+            f"{r['cacheable_prefix_tokens']:,}",
+            f"{r['static_total_tokens']:,}",
+            f"{r['reorder_gain_tokens']:,}",
+            clears,
+        )
+
+    console.print(table)
+
+
 @app.command("cost-report")
 def cost_report_cmd(
     name: Optional[str] = typer.Option(None, "--name", "-n", help="Filter by prompt name."),
