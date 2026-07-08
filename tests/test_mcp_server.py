@@ -239,3 +239,37 @@ class TestImportErrors:
         from promptry.mcp_server import run_safety_audit
         result = run_safety_audit(module="nonexistent.module.path")
         assert "Error" in result
+
+
+class TestEvalCreation:
+    """Agents can create a YAML suite over MCP and it's discoverable/runnable."""
+
+    def test_create_and_list_yaml_suite(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from promptry.mcp_server import create_eval_suite, list_suites
+        res = create_eval_suite(
+            name="capitals",
+            cases=[{"input": "capital of France?",
+                    "context": "France's capital is Paris.",
+                    "expect": [{"type": "contains", "value": "Paris"}]}],
+            model="gpt-4o-mini", prompt="{input}",
+        )
+        assert "Created suite 'capitals'" in res
+        assert (tmp_path / "evals.yaml").is_file()
+        # list_suites auto-discovers evals.yaml with no module arg
+        assert "capitals" in list_suites()
+
+    def test_create_requires_model_or_pipeline(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from promptry.mcp_server import create_eval_suite
+        res = create_eval_suite(name="x", cases=[{"input": "q", "expect": []}])
+        assert "Error" in res and "pipeline" in res
+
+    def test_create_duplicate_needs_overwrite(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from promptry.mcp_server import create_eval_suite
+        args = dict(name="dup", cases=[{"input": "q", "expect": []}], model="m", prompt="{input}")
+        assert "Created" in create_eval_suite(**args)
+        again = create_eval_suite(**args)
+        assert "already exists" in again and "overwrite" in again
+        assert "Created" in create_eval_suite(**args, overwrite=True)

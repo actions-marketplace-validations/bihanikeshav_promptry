@@ -22,6 +22,12 @@ def _get_registry() -> PromptRegistry:
     return PromptRegistry(get_storage())
 
 
+import os
+from pathlib import Path
+
+_YAML_SUITE_CANDIDATES = ("evals.yaml", "evals.yml", "promptry.yaml", "promptry.yml")
+
+
 def _import_module(module_path: str) -> str | None:
     """Import a module by dotted path. Returns error string or None on success.
 
@@ -36,6 +42,40 @@ def _import_module(module_path: str) -> str | None:
         return None
     except ModuleNotFoundError as e:
         return f"Could not import '{module_path}': {e}"
+
+
+def _yaml_suite_path(module: str) -> Optional[Path]:
+    """Which YAML file (if any) a module value should load suites from: an
+    explicit .yaml/.yml path, or an auto-discovered evals.yaml when module is
+    the default 'evals' and no evals.py exists. None means dotted-Python import."""
+    if module.endswith((".yaml", ".yml")):
+        return Path(module)
+    if module == "evals" and not (Path.cwd() / "evals.py").is_file():
+        for cand in _YAML_SUITE_CANDIDATES:
+            p = Path.cwd() / cand
+            if p.is_file():
+                return p
+    return None
+
+
+def _discover(module: str) -> str | None:
+    """Register eval suites from a declarative YAML file OR a Python module.
+
+    Prefers YAML: an explicit ``*.yaml`` module, or an auto-discovered
+    ``evals.yaml``/``promptry.yaml`` (the no-Python path). Falls back to a
+    dotted Python import. Returns an error string, or None on success.
+    """
+    from promptry.evaluator import clear_suites
+    clear_suites()
+    path = _yaml_suite_path(module)
+    if path is not None:
+        from promptry.yaml_suites import load_yaml_suites, YamlSuiteError
+        try:
+            load_yaml_suites(path)
+            return None
+        except YamlSuiteError as e:
+            return str(e)
+    return _import_module(module)
 
 
 # ---- Prompt Management ----
@@ -107,9 +147,9 @@ def prompt_tag(name: str, version: int, tag: str) -> str:
 
 
 @mcp.tool()
-def list_suites(module: str) -> str:
-    """List registered eval suites from a Python module."""
-    err = _import_module(module)
+def list_suites(module: str = "evals") -> str:
+    """List registered eval suites from a YAML file or Python module."""
+    err = _discover(module)
     if err:
         return f"Error: {err}"
     from promptry.evaluator import list_suites as _list_suites
@@ -126,7 +166,7 @@ def list_suites(module: str) -> str:
 @mcp.tool()
 def run_eval(
     suite_name: str,
-    module: str,
+    module: str = "evals",
     compare: Optional[str] = None,
     prompt_name: Optional[str] = None,
     prompt_version: Optional[int] = None,
@@ -136,7 +176,7 @@ def run_eval(
 
     Set compare to a tag (e.g. 'prod') to compare against a baseline.
     """
-    err = _import_module(module)
+    err = _discover(module)
     if err:
         return f"Error: {err}"
 
@@ -178,18 +218,100 @@ def run_eval(
     return "\n".join(lines)
 
 
+@mcp.tool()
+def create_eval_suite(
+    name: str,
+    cases: list[dict],
+    model: Optional[str] = None,
+    prompt: Optional[str] = None,
+    pipeline: Optional[str] = None,
+    description: str = "",
+    overwrite: bool = False,
+    path: str = "evals.yaml",
+) -> str:
+    """Create (or overwrite) a declarative eval suite in evals.yaml.
+
+    The suite is immediately runnable via run_eval and shows up on the
+    dashboard under Evals. Give either model+prompt (single-call suites) or
+    pipeline (the name of a callable your app registers).
+
+    cases: a list of {input, context?, expect?} objects, where each expect
+    entry is {"type": <assertion>, "value": <value>}. Assertion types:
+    contains, not_contains, regex, exact, semantic, grounded, llm. A case's
+    context (RAG retrieved text) auto-becomes a grounded assertion. Example:
+      {"input": "What is the capital of France?",
+       "context": "France's capital is Paris.",
+       "expect": [{"type": "contains", "value": "Paris"}]}
+    """
+    from promptry.suite_builder import build_suite_dict, write_yaml_suite
+
+    name = (name or "").strip()
+    if not name:
+        return "Error: suite 'name' is required."
+    if not cases:
+        return "Error: provide at least one case."
+    if not pipeline and not (model and prompt):
+        return "Error: provide either 'pipeline', or both 'model' and 'prompt'."
+    try:
+        suite = build_suite_dict(
+            name=name, cases=cases, model=model, prompt=prompt,
+            pipeline=pipeline, description=description,
+        )
+        names = write_yaml_suite(Path(path), suite, overwrite=overwrite)
+    except ValueError as e:
+        hint = " (pass overwrite=true to replace it)" if "already exists" in str(e) else ""
+        return f"Error: {e}{hint}"
+    except (KeyError, TypeError) as e:
+        return f"Error: malformed cases — {e}"
+    return (
+        f"Created suite '{name}' with {len(suite['cases'])} case(s) in {path}. "
+        f"Run it with run_eval('{name}'); it now appears on the dashboard under Evals "
+        f"(and is editable there). Suites in file: {', '.join(names)}."
+    )
+
+
+@mcp.tool()
+def list_suite_candidates(
+    source: str = "feedback",
+    name: Optional[str] = None,
+    min_rating: float = 1.0,
+    limit: int = 20,
+) -> str:
+    """Surface candidate eval cases from real logged traffic to seed a suite.
+
+    source='golden' pulls saved golden examples; source='feedback' pulls
+    positively-rated invocations (rating >= min_rating). Each candidate carries
+    a question, the retrieved context (when capture was on), and the response.
+    Feed the good ones into create_eval_suite.
+    """
+    from promptry.suite_builder import suite_candidates as _cands
+
+    cands = _cands(get_storage(), source=source, name=name, min_rating=min_rating, limit=limit)
+    if not cands:
+        return f"No {source} candidates found."
+    lines = []
+    for i, c in enumerate(cands, 1):
+        q = (c.get("question") or "").strip() or "(no question text)"
+        lines.append(f"{i}. [{c.get('prompt_name') or '-'}] {q[:120]}")
+        if c.get("response"):
+            lines.append(f"    -> {str(c['response'])[:120]}")
+        if c.get("context"):
+            lines.append(f"    context: {str(c['context'])[:80]}...")
+    return "\n".join(lines)
+
+
 # ---- Drift ----
 
 
 @mcp.tool()
 def check_drift(
     suite_name: str,
-    module: str,
+    module: str = "evals",
     window: Optional[int] = None,
     threshold: Optional[float] = None,
 ) -> str:
     """Check for score drift in a suite's recent runs."""
-    err = _import_module(module)
+    err = _discover(module)
     if err:
         return f"Error: {err}"
 
