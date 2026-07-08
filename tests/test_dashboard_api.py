@@ -282,6 +282,87 @@ class TestPromptDiff:
         assert "unchanged" in types or "added" in types or "deleted" in types
 
 
+class TestCmsGate:
+    """Prompt-write endpoints are gated on the CMS flag (default off)."""
+
+    def test_edit_blocked_when_cms_disabled(self, client, storage, monkeypatch):
+        _seed_prompt(storage, "greeter", ["Say hi to {{name}}."])
+        import promptry.projectconfig as pc
+        monkeypatch.setattr(pc, "cms_enabled", lambda: False)
+        resp = client.post("/api/prompts/greeter/content", json={"content": "Say hello to {{name}}."})
+        assert resp.status_code == 403
+        # Nothing was written: still one version.
+        assert client.get("/api/prompts/greeter").json()["versions"][0]["version"] == 1
+
+    def test_edit_allowed_when_cms_enabled(self, client, storage, monkeypatch):
+        _seed_prompt(storage, "greeter", ["Say hi to {{name}}."])
+        import promptry.projectconfig as pc
+        monkeypatch.setattr(pc, "cms_enabled", lambda: True)
+        resp = client.post("/api/prompts/greeter/content",
+                           json={"content": "Say a warm hello to {{name}} today."})
+        assert resp.status_code == 200
+        assert resp.json()["version"] >= 2
+
+
+class TestCacheAnalysis:
+    # ~1500-token static block clears the ~1024 activation floor by template estimate.
+    _BIG = "You are a careful, precise support assistant. " * 130
+
+    def test_single_prompt_move_inputs_to_end(self, client, storage):
+        _seed_prompt(storage, "qa", ["Question: {{q}}\n\n" + self._BIG])
+        resp = client.get("/api/prompts/qa/cache-analysis")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["first_variable"] == "q"
+        assert data["recommendation"] == "move_inputs_to_end"
+        # Segments must reconstruct the stored content exactly.
+        assert "".join(s["text"] for s in data["segments"]) == "Question: {{q}}\n\n" + self._BIG
+
+    def test_ranked_puts_reorderable_before_optimal(self, client, storage):
+        _seed_prompt(storage, "reorderable", ["{{x}} " + self._BIG])   # input first
+        _seed_prompt(storage, "optimal", [self._BIG + " {{x}}"])       # input last
+        resp = client.get("/api/prompts/cache-analysis")
+        assert resp.status_code == 200
+        names = [p["name"] for p in resp.json()["prompts"]]
+        assert {"reorderable", "optimal"} <= set(names)
+        assert names.index("reorderable") < names.index("optimal")
+
+
+class TestShortenAnalysis:
+    _WORDY = (
+        "Please answer the question. It is important that you cite your sources. "
+        "Cite your sources. Return JSON. Output JSON. Only JSON here."
+    )
+
+    def test_single_prompt_findings(self, client, storage):
+        _seed_prompt(storage, "wordy", [self._WORDY])
+        resp = client.get("/api/prompts/wordy/shorten-analysis")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "wordy"
+        assert data["content"] == self._WORDY
+        assert data["est_tokens_saved"] <= data["total_tokens"]
+        kinds = {f["kind"] for f in data["findings"]}
+        assert "filler" in kinds
+        assert "redundant_format" in kinds
+
+    def test_single_prompt_not_found(self, client):
+        resp = client.get("/api/prompts/nope/shorten-analysis")
+        assert resp.status_code == 404
+
+    def test_ranked_list(self, client, storage):
+        _seed_prompt(storage, "wordy", [self._WORDY])
+        _seed_prompt(storage, "lean", ["Summarize the notes: {{notes}}."])
+        resp = client.get("/api/prompts/shorten-analysis")
+        assert resp.status_code == 200
+        rows = resp.json()["prompts"]
+        names = [r["name"] for r in rows]
+        assert {"wordy", "lean"} <= set(names)
+        # wordy has the most savings -> ranked first.
+        assert rows[0]["name"] == "wordy"
+        assert rows[0]["finding_count"] > 0
+
+
 # ---- Models ----
 
 class TestModelVersions:
