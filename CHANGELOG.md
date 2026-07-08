@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.0.3 (2026-07-08)
+
+Packaging and honesty pass — no functional changes to the core.
+
+### Lighter install
+
+- **Core is now small.** `pip install promptry` no longer pulls
+  `sentence-transformers`, `chromadb`, `litellm`, `openai`, or `anthropic`.
+  Core keeps the CLI, prompt registry, deterministic assertions, drift, cost
+  tracking from the bundled price snapshot, the local **dashboard**, and the
+  MCP server.
+- **New extras.** `promptry[semantic]` (sentence-transformers + chromadb, for
+  `assert_semantic` / embedding distance / RAG context / clustering),
+  `promptry[llm]` (litellm + openai + anthropic, for real completions /
+  `assert_llm` / live price refresh), and `promptry[full]` for everything (the
+  pre-`1.0.3` behavior). The empty placeholder extras were removed.
+- **Actionable errors.** Calling a feature whose extra isn't installed now
+  raises an `ImportError` naming the exact `pip install 'promptry[...]'` to run,
+  instead of a bare `ModuleNotFoundError`.
+
+### Honesty
+
+- `__version__` is now sourced from the installed package metadata, so it can
+  never drift from what pip actually installed (was a hand-maintained literal).
+- Docs site and demo dashboard read the live version from the GitHub releases
+  API; static markup is only a fallback. GitHub Action examples pin the
+  floating `@v1` major tag.
+- Trove classifier is now `4 - Beta` (was `3 - Alpha`); the README carries a
+  per-component stable/beta/experimental maturity table instead of claiming
+  everything is shipped.
+
 ## 1.0.2 (2026-07-08)
 
 Fixes the lint CI that failed on `1.0.1`: resolves ruff findings across the
