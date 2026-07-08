@@ -10,6 +10,7 @@ Full documentation for promptry. For a quick overview, see the [README](../READM
   - [Declarative suites in YAML](#declarative-suites-in-yaml)
 - [Live prompt CMS](#live-prompt-cms)
   - [Environment promotion](#environment-promotion)
+- [Cache optimization](#cache-optimization)
 - [Assertions](#assertions)
   - [Semantic similarity](#semantic-similarity)
   - [LLM-as-judge](#llm-as-judge)
@@ -213,6 +214,94 @@ POST /api/prompts/rag.qa/promote
 If an env tag isn't set yet, `render_prompt(env=...)` falls back to the latest version. The flow: edit on `dev` → check it in the playground → promote to `prod` when ready → roll back by promoting an older version (a revert always sticks, even to byte-identical older content).
 
 > Migrating a legacy prompt that gained hundreds of baked versions (template + interpolated data)? Move the template to `render_prompt` and the per-call data to `track_invocation` (see [Cost tracking](#track-token-usage-and-cost)), then collapse the old churn from the dashboard (`POST /api/prompts/{name}/prune`). See [PROMPT_CMS_MIGRATION.md](PROMPT_CMS_MIGRATION.md).
+
+## Cache optimization
+
+Prompt-prefix caching (OpenAI automatic, Anthropic via `cache_control` — see
+[Prompt caching across providers](#prompt-caching-across-providers)) reuses
+the request up to the first place it changes between calls. Once you
+interpolate an input into the middle of a prompt, everything after that
+point is a cache miss on every call. It only activates above ~1024 tokens in
+the first place. The lever is almost always ordering: static instructions
+first, `{{inputs}}` last.
+
+`promptry cache` (CLI) and the dashboard's **Cache optimization** page
+(`/cache`) analyze this from your prompt registry and invocations ledger —
+no LLM calls, nothing sent anywhere. Three modes:
+
+**Reorder inputs.** For each prompt, promptry finds the cacheable static
+prefix — everything before the first interpolated `{{input}}` — and reports
+how many tokens are cacheable now vs. how many would be cacheable if all
+inputs moved to the end (the *reorder gain*). Prompts under the ~1024-token
+floor are flagged `too_small`, honestly, rather than pretending caching
+would help; the check uses real average input-token telemetry from the
+invocations ledger when a prompt has enough call history, falling back to
+the template's own length otherwise. This mode is advisory only — it tells
+you what to reorder, it doesn't rewrite the prompt for you.
+
+**Consolidate.** Prompts drift: two templates that started as one fork apart
+over time. `promptry prompt duplicates` finds near-identical pairs, and
+`promptry prompt diff2 <a> <b>` (also the dashboard's Consolidate tab) shows
+a side-by-side diff of what changed plus the shared-prefix length — if the
+pair shares a long static prefix, aligning them lets that block be cached
+once instead of twice. An **Apply** action can update one prompt to adopt
+the other's wording, saved as a new version. Apply is a prompt-write action,
+so it's gated behind the CMS flag below — off by default.
+
+**Shorten.** Finds redundant and filler wording in a prompt's *static* text
+— repeated instructions, filler phrases models tend to ignore anyway,
+format keywords stated more than once — and estimates the input tokens
+you'd save by tightening it. With the `[semantic]` extra installed, it also
+flags semantically-redundant sentences (two sentences saying the same thing
+in different words) using embedding similarity; without it, findings are
+rule-based only. Shorten is flag-only: it highlights and measures, you edit
+the prompt. No model calls, no auto-rewrite.
+
+### CLI
+
+```bash
+promptry cache                      # all prompts, ranked by reorder opportunity
+promptry cache rag-qa               # one prompt: cacheable prefix highlighted + numbers
+promptry cache --shorten            # all prompts, ranked by estimated shorten savings
+promptry cache rag-qa --shorten     # one prompt: shorten findings
+promptry cache --json               # machine-readable, any of the above (for CI)
+```
+
+```
+                Prompt-prefix cache analysis
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Prompt    ┃ Recommendation    ┃ Cacheable now┃ Potential ┃ Reorder gain┃ Clears floor┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ rag-qa    │ move_inputs_to_end│ 340          │ 1,180     │ 840         │ yes         │
+│ classify  │ already_optimal   │ 610          │ 610       │ 0           │ yes         │
+│ greeting  │ too_small         │ 40           │ 62        │ 22          │ no          │
+└───────────┴───────────────────┴──────────────┴───────────┴─────────────┴─────────────┘
+```
+
+`promptry cache rag-qa` reprints the template with the cacheable static
+prefix highlighted, then the recommendation, rationale, and token numbers —
+cacheable now, potential if reordered, and the reorder gain — plus whether
+it clears the ~1024-token activation floor.
+
+### The CMS flag
+
+Prompt-write actions in the dashboard — editing a prompt's content,
+promoting a version to an environment, applying a consolidation — are
+gated behind `[dashboard] cms = true` in `promptry.toml`, off by default:
+
+```toml
+[dashboard]
+cms = true
+```
+
+The reason: editing a prompt from the dashboard only takes effect if your
+app actually fetches its prompts from promptry (`render_prompt` /
+`get_prompt`, see [Live prompt CMS](#live-prompt-cms)). Until your app is
+wired up that way, an edit made from the dashboard would silently do
+nothing in production — worse than not offering it. With the flag off, the
+write buttons (Save, Promote, Apply) are greyed out with a hint pointing
+here, and the underlying API returns `403`. Turn it on once `render_prompt`
+is actually in your call path.
 
 ## Assertions
 
@@ -1132,7 +1221,15 @@ promptry prompt list
 promptry prompt show rag-qa
 promptry prompt diff rag-qa 1 2
 promptry prompt diff2 rag-qa rag-qa-v2   # cross-prompt diff + prefix-cache analysis
+promptry prompt duplicates               # near-duplicate prompt pairs (consolidation candidates)
 promptry prompt tag rag-qa 3 canary
+
+# cache optimization
+promptry cache                      # reorder-opportunity ranking, all prompts
+promptry cache rag-qa               # reorder detail for one prompt
+promptry cache --shorten            # shorten-savings ranking, all prompts
+promptry cache rag-qa --shorten     # shorten findings for one prompt
+promptry cache --json               # any of the above, machine-readable
 
 # evals
 promptry new suite [--name <suite>] [--yaml|--python]   # scaffold a suite
@@ -1316,7 +1413,7 @@ This starts a local web server on `http://localhost:8420` and opens your browser
 | **Suite Detail** | Score history chart, assertion breakdown, root cause hints, regression bisect |
 | **Run Detail** | Per-assertion results with expandable details and grounding claim breakdowns |
 | **Prompts / Prompt Detail** | Registry grouped by module; version history, git-diff, live `$`-template editing, env promotion, per-call stats |
-| **Cache optimization** | Near-duplicate prompt pairs with a cross-prompt diff and a shared-prefix analysis — recommends restructuring static text to the front to raise prompt-prefix cache hit rates |
+| **Cache optimization** | Three modes for cutting prompt-prefix cache misses and input tokens: **Reorder inputs** (per-prompt reorder-gain ranking), **Consolidate** (near-duplicate diff, with a CMS-gated Apply), **Shorten** (redundant/filler wording, flagged and measured). See [Cache optimization](#cache-optimization) |
 | **Models** | Statistical model comparison with cost efficiency analysis and SWITCH/KEEP verdict |
 | **Cost** | Module → prompt → call drill-down, daily spend, budgets, and a coverage check for un-priced models |
 | **Invocation** | A single call's trace (request/response), feedback, and the template-vs-payload cost split |
@@ -1364,6 +1461,7 @@ You can also override with env vars: `PROMPTRY_DB`, `PROMPTRY_STORAGE_MODE`, `PR
 # promptry.toml
 [dashboard]
 default_days = 14
+cms = false                 # true: enable dashboard prompt-write actions (edit/promote/apply)
 
 [judge]
 model = "gpt-4o-mini"       # LLM-judge model for llm_judge assertions

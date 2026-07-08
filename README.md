@@ -85,7 +85,7 @@ promptry run my-suite --module evals.yaml  # run it
 | **Prompt versioning** | Content-hashed, automatic dedup, grouped by module. No manual bumps, no YAML, no git dance. |
 | **Live prompt CMS** | `render_prompt()` serves dashboard-edited `{{name}}` templates with no redeploy. Edit a prompt in the browser, your app picks it up on the next call. Substitution is value-driven, so JSON braces and literal `$` are never mistaken for variables. |
 | **Semantic prompt search** | Search the registry by meaning (`promptry prompt search`) and flag near-duplicate prompts (`promptry prompt duplicates`, likely forks to consolidate). Embeddings with a lexical fallback. |
-| **Prefix-cache analysis** | `promptry prompt diff2 <a> <b>` (and the dashboard's Cache optimization page) diffs two prompts and measures their shared prefix, recommending static-text-first restructuring to raise prompt-prefix cache hit rates. |
+| **Cache optimization** | `promptry cache` (CLI) and the dashboard's Cache optimization page, all local: **reorder inputs** ranks prompts by prefix-cache reorder gain, **consolidate** diffs near-duplicate prompts and can apply one's wording to the other, **shorten** flags redundant/filler wording and estimates the tokens saved. |
 | **Environment promotion** | dev → staging → prod tags gate every edit before it reaches users. Promote a version, roll one back. |
 | **YAML or Python suites** | Declarative `evals.yaml` is the no-code default; `@suite` decorators are the power path for custom pipelines and judges, with full IDE/debugger support. Both are first-class and run through the same CLI. Scaffold either with `promptry new suite`, or build one in the dashboard. |
 | **Deterministic assertions** | Semantic, schema, JSON, regex, grounding, tool-use, exact match, Levenshtein, ROUGE-L, embedding distance. Zero API calls at CI time. |
@@ -139,7 +139,7 @@ A single call, broken into fixed template overhead vs the variable payload you f
 The playground: render a prompt and compare it across models before promoting to a suite.
 ![Playground](docs/screenshots/dashboard-playground.png)
 
-The Evals page also builds suites: **New suite** assembles a YAML suite from manual cases, golden examples, or positive-feedback logs, and **Edit** reopens any YAML-declared suite in the same builder (Python-defined suites are read-only). A Cache optimization page flags near-duplicate prompts, diffs them, and measures the shared prefix that prompt-prefix caching could exploit.
+The Evals page also builds suites: **New suite** assembles a YAML suite from manual cases, golden examples, or positive-feedback logs, and **Edit** reopens any YAML-declared suite in the same builder (Python-defined suites are read-only). A Cache optimization page (also `promptry cache` on the CLI) ranks prompts by prefix-cache reorder opportunity, diffs near-duplicate prompts for consolidation, and flags redundant/filler wording to shorten — all read from your local prompt registry and invocations ledger, no LLM calls. See the [guide](docs/guide.md#cache-optimization).
 
 ## Why promptry
 
@@ -244,6 +244,8 @@ usable but still moving. Honest status per component:
 | Cost tracking + bundled price snapshot | **Stable** | reroute-aware pricing |
 | CLI + GitHub Action | **Stable** | wire into CI today |
 | Dashboard (local web UI) | **Beta** | broad feature set, UI still evolving |
+| Cache optimization (reorder / shorten) | **Stable** | analysis only, advisory |
+| Cache optimization (consolidate Apply) | **Beta** | writes a prompt version, gated behind `[dashboard] cms` |
 | MCP server | **Beta** | create + run evals from an LLM agent |
 | JS client (`promptry-js`) | **Beta** | HTTP telemetry only, no local SQLite |
 | VS Code extension | **Experimental** | thin wrapper over the CLI |
