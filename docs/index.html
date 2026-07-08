@@ -34,7 +34,7 @@
     <a class="brand" href="index.html">
       <span class="brand-mark"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1a1a1e"/><text x="0" y="27" class="logo-p">p</text><text x="15" y="27" class="logo-r">r</text></svg></span>
       <span class="brand-name"><b>prompt<span class="ry">ry</span></b></span>
-      <span class="ver">v0.10.1</span>
+      <span class="ver">v1.0.3</span>
     </a>
     <div class="nav-links" id="nav-links">
       <a href="#features">Features</a>
@@ -64,7 +64,7 @@
 <section class="hero">
   <div class="shell hero-grid">
     <div>
-      <span class="dateline">~/promptry<span class="sep">·</span>released July 2026<span class="sep">·</span><a href="https://github.com/bihanikeshav/promptry/releases/tag/v0.10.1">v0.10.1</a></span>
+      <span class="dateline">~/promptry<span class="sep">·</span>released July 2026<span class="sep">·</span><a id="release-link" href="https://github.com/bihanikeshav/promptry/releases/latest">v1.0.3</a></span>
       <h1 class="h1">Catch prompt regressions <em>before</em> your users do.</h1>
       <p class="hero-sub">
         Python eval suites that version every prompt, track the cost of every call, and catch drift with statistical tests. Edit prompts live, capture traces, set budgets. One SQLite file on your laptop, no account required.
@@ -488,7 +488,7 @@
       </div>
       <div class="term-body">
         <div><span class="t-prompt">$</span> pip install promptry</div>
-        <div><span class="t-dim">Successfully installed promptry-1.0.0</span></div>
+        <div><span class="t-dim" id="install-line">Successfully installed promptry-1.0.3</span></div>
         <div>&nbsp;</div>
         <div><span class="t-prompt">$</span> promptry init</div>
         <div><span class="t-dim">created promptry.toml · evals.py · SQLite ready</span></div>
@@ -544,12 +544,30 @@
     </div>
     <div class="foot-bottom">
       <span>MIT License · © 2026 Keshav</span>
-      <span>v0.10.1</span>
+      <span class="ver">v1.0.3</span>
     </div>
   </div>
 </footer>
 
 <script>
+  // Live version: source the real published version from the GitHub releases
+  // API so the docs never drift from what pip actually installs. The literals
+  // in the markup are only a fallback for when the request is blocked/offline.
+  (function () {
+    fetch('https://api.github.com/repos/bihanikeshav/promptry/releases/latest')
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (j) {
+        var tag = String(j.tag_name || '').replace(/^v/, '');
+        if (!tag) return;
+        document.querySelectorAll('.ver').forEach(function (el) { el.textContent = 'v' + tag; });
+        var link = document.getElementById('release-link');
+        if (link) { link.textContent = 'v' + tag; if (j.html_url) link.href = j.html_url; }
+        var install = document.getElementById('install-line');
+        if (install) install.textContent = 'Successfully installed promptry-' + tag;
+      })
+      .catch(function () { /* offline / rate-limited: keep the static fallback */ });
+  })();
+
   // Theme toggle (persisted). Icons cross-fade via CSS [data-theme] selector.
   (function () {
     const root = document.documentElement;

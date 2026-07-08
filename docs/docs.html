@@ -11,6 +11,17 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Fraunces:ital,opsz,wght@0,9..144,400;1,9..144,400;1,9..144,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 <script>
+  // Live version: source the published version from the GitHub releases API so
+  // the docs never drift from what pip installs. Literals are only a fallback.
+  (function () {
+    fetch('https://api.github.com/repos/bihanikeshav/promptry/releases/latest')
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (j) {
+        var tag = String(j.tag_name || '').replace(/^v/, '');
+        if (tag) document.querySelectorAll('.ver').forEach(function (el) { el.textContent = 'v' + tag; });
+      })
+      .catch(function () {});
+  })();
   (function () {
     var html = document.documentElement;
     function reveal() { html.classList.add('fonts-ready'); }
@@ -29,7 +40,7 @@
     <a class="brand" href="index.html">
       <span class="brand-mark"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1a1a1e"/><text x="0" y="27" class="logo-p">p</text><text x="15" y="27" class="logo-r">r</text></svg></span>
       <span class="brand-name"><b>prompt<span class="ry">ry</span></b></span>
-      <span class="ver">v0.10.1</span>
+      <span class="ver">v1.0.3</span>
     </a>
     <div class="nav-links" id="nav-links">
       <a href="index.html#features">Features</a>
@@ -677,7 +688,7 @@ promptry watch --debounce 300</code></pre>
       pull-requests: write
     steps:
       - <span style="color: var(--accent-3)">uses</span>: actions/checkout@v4
-      - <span style="color: var(--accent-3)">uses</span>: bihanikeshav/promptry@v0.6.0
+      - <span style="color: var(--accent-3)">uses</span>: bihanikeshav/promptry@v1
         <span style="color: var(--accent-3)">with</span>:
           suite: rag-regression
           module: evals
@@ -917,7 +928,7 @@ promptry run doc-classify --module examples.assertion_pipeline</code></pre>
     </div>
     <div class="foot-bottom">
       <span>MIT License · © 2026 Keshav</span>
-      <span>v0.10.1</span>
+      <span class="ver">v1.0.3</span>
     </div>
   </div>
 </footer>
