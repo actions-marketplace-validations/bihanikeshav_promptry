@@ -10,6 +10,25 @@
  * numbers); the trace list materializes a recent sample.
  */
 
+// The real fetch, captured before installDemoFetch() overrides window.fetch,
+// so the demo can make genuine cross-origin calls (e.g. the GitHub API for the
+// live version) instead of hardcoding.
+const realFetch: typeof fetch =
+  typeof window !== "undefined" ? window.fetch.bind(window) : fetch;
+
+// Latest published version, read live from the GitHub releases API so the demo
+// never carries a stale hardcoded version. Cached for the page's lifetime.
+let _versionPromise: Promise<string> | null = null;
+function liveVersion(): Promise<string> {
+  if (!_versionPromise) {
+    _versionPromise = realFetch("https://api.github.com/repos/bihanikeshav/promptry/releases/latest")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((j) => String(j.tag_name || "").replace(/^v/, ""))
+      .catch(() => ""); // offline / rate-limited: show no version rather than a wrong one
+  }
+  return _versionPromise;
+}
+
 const now = Date.now();
 const iso = (daysAgo: number, h = 0) => new Date(now - daysAgo * 864e5 - h * 36e5).toISOString();
 const r2 = (n: number, d = 4) => Number(n.toFixed(d));
@@ -357,7 +376,7 @@ const GOLDEN: Record<string, any[]> = {
 
 // ---- route table ----
 const routes: [RegExp, (m: RegExpMatchArray, q: URLSearchParams, body: any) => any][] = [
-  [/^\/api\/health$/, () => ({ status: "ok", version: "1.0.2", db_path: "helpdesk-ai.db" })],
+  [/^\/api\/health$/, async () => ({ status: "ok", version: await liveVersion(), db_path: "helpdesk-ai.db" })],
   [/^\/api\/onboarding-status$/, () => ({ suites: SUITES.length, prompts: promptSummaries.length, invocations: 1, empty: false })],
   [/^\/api\/suites$/, () => SUITES],
   [/^\/api\/suite\/([^/]+)\/runs$/, (m) => suiteRuns(decodeURIComponent(m[1]))],
@@ -573,7 +592,7 @@ export function installDemoFetch() {
       let body: any = undefined;
       try { body = init?.body ? JSON.parse(init.body as string) : undefined; } catch { /* ignore */ }
       const path = url.slice(url.indexOf("/api/"));
-      const data = match(path, method, body);
+      const data = await match(path, method, body);
       await new Promise((res) => setTimeout(res, 90));
       return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
     }
