@@ -153,6 +153,21 @@ When no `evals.py` is present, `promptry run` / `suites` auto-discover
 `evals.yaml` (or `promptry.yaml`) in the current directory, so `--module` can be
 omitted entirely. `promptry init` scaffolds a commented `evals.yaml` to start from.
 
+You don't have to hand-write the YAML. Three other things produce it, all
+through the same write path:
+
+- `promptry new suite` — an interactive wizard, or fully flag-driven
+  (`--name`, `--yaml`, `--model`/`--prompt` or `--pipeline`, repeatable `--case`).
+- The dashboard's suite creator (**New suite** on the Evals page, route
+  `/suites/new`) — assemble cases from manual entry, golden examples, or
+  positive-feedback logs. See [Dashboard](#dashboard).
+- The MCP `create_eval_suite` tool — an agent writes the suite for you. See
+  [MCP server](#mcp-server-llm-agent-integration).
+
+However a YAML suite was created, the Evals page's **Edit** button reopens it in
+the builder. Suites defined in Python (`@suite` in `evals.py`) show as
+read-only there — edit those in your editor.
+
 ## Live prompt CMS
 
 `track()` records what your code *used*. The prompt CMS lets the dashboard *change* what your code uses — edit a prompt in the browser and your app picks it up on the next call, with no redeploy. It's entirely opt-in: wrap only the prompts you want editable with `render_prompt`, and leave everything else on `track()`.
@@ -1116,9 +1131,11 @@ promptry prompt save prompt.txt --name rag-qa --tag prod
 promptry prompt list
 promptry prompt show rag-qa
 promptry prompt diff rag-qa 1 2
+promptry prompt diff2 rag-qa rag-qa-v2   # cross-prompt diff + prefix-cache analysis
 promptry prompt tag rag-qa 3 canary
 
 # evals
+promptry new suite [--name <suite>] [--yaml|--python]   # scaffold a suite
 promptry run <suite> --module <mod> [--compare prod]
 promptry suites --module <mod>
 promptry drift <suite> --module <mod>
@@ -1156,7 +1173,7 @@ Exit code 0 on success, 1 on regression. Works in CI:
 
 ## MCP server (LLM agent integration)
 
-promptry includes a built-in [MCP](https://modelcontextprotocol.io/) server so any LLM agent can manage prompts, run evals, compare models, check drift, and run safety audits through tool calls.
+promptry includes a built-in [MCP](https://modelcontextprotocol.io/) server so any LLM agent can manage prompts, create and run evals, compare models, check drift, and run safety audits through tool calls.
 
 ```bash
 promptry mcp
@@ -1252,8 +1269,10 @@ Restart Claude Desktop after editing.
 | `prompt_diff` | Diff between two prompt versions |
 | `prompt_save` | Save a new prompt version |
 | `prompt_tag` | Tag a prompt version (e.g. prod, canary) |
-| `list_suites` | List registered eval suites from a module |
+| `list_suites` | List registered eval suites from a YAML file or Python module |
 | `run_eval` | Run an eval suite with optional baseline comparison |
+| `create_eval_suite` | Write a runnable declarative suite into `evals.yaml` |
+| `list_suite_candidates` | Source candidate eval cases from golden examples or positive-feedback logs |
 | `check_drift` | Check for score drift in recent runs |
 | `compare_models` | Compare candidate model against baseline using historical eval data |
 | `cost_report` | Show token usage and cost aggregated by prompt name |
@@ -1262,6 +1281,21 @@ Restart Claude Desktop after editing.
 | `monitor_status` | Check if the background monitor is running |
 
 All tools return plain text so agents can reason about the results directly.
+
+`list_suites`, `run_eval`, and `check_drift` default `module` to `evals`:
+that loads `evals.py` if present, otherwise an auto-discovered `evals.yaml` /
+`promptry.yaml` — same discovery as the CLI. An explicit `*.yaml` path or a
+dotted Python module also works.
+
+**Agents create evals, not just run them.** The through-line: an agent calls
+`list_suite_candidates(source="feedback")` (or `source="golden"`) to pull real
+cases from positively-rated production invocations or saved golden examples,
+feeds the good ones into `create_eval_suite` — each case is
+`{input, context?, expect: [{type, value}]}`, with assertion types `contains`,
+`not_contains`, `regex`, `exact`, `semantic`, `grounded`, `llm`, and a case's
+retrieved `context` automatically becoming a `grounded` assertion — then runs
+the result with `run_eval`. The suite is written to `evals.yaml`, so it
+immediately appears on the dashboard's Evals page and stays editable there.
 
 ## Dashboard
 
@@ -1278,9 +1312,11 @@ This starts a local web server on `http://localhost:8420` and opens your browser
 | Page | What it shows |
 |------|---------------|
 | **Overview** | Eval health and spend at a glance — suites needing attention, spend by module |
+| **Evals** | Suite list with drift status and sparklines, plus the suite creator: **New suite** builds a YAML suite from manual cases, golden examples, or positive-feedback logs; **Edit** reopens any YAML-declared suite (Python-defined suites are read-only). RAG cases carry question / retrieved context / expected response, and a "from logs" button auto-fills context from recorded `track_context` data |
 | **Suite Detail** | Score history chart, assertion breakdown, root cause hints, regression bisect |
 | **Run Detail** | Per-assertion results with expandable details and grounding claim breakdowns |
 | **Prompts / Prompt Detail** | Registry grouped by module; version history, git-diff, live `$`-template editing, env promotion, per-call stats |
+| **Cache optimization** | Near-duplicate prompt pairs with a cross-prompt diff and a shared-prefix analysis — recommends restructuring static text to the front to raise prompt-prefix cache hit rates |
 | **Models** | Statistical model comparison with cost efficiency analysis and SWITCH/KEEP verdict |
 | **Cost** | Module → prompt → call drill-down, daily spend, budgets, and a coverage check for un-priced models |
 | **Invocation** | A single call's trace (request/response), feedback, and the template-vs-payload cost split |
@@ -1347,13 +1383,16 @@ in = 1.0
 cached = 0.5
 cache_write = 1.0
 out = 2.0
+
+[keys]                      # env-var NAME aliases — never the secret itself
+openai = "MY_OPENAI_KEY"    # read the OpenAI key from $MY_OPENAI_KEY
 ```
 
 **Where it's loaded from (increasing precedence):** `~/.promptry/config.toml` (user-level fallback) → `.promptry/config.toml` (legacy project file) → `promptry.toml` (canonical, wins on conflicts). The legacy `.promptry/config.toml` is still merged for back-compat, but prefer moving these sections into `promptry.toml`. The loaded config is cached and re-reads only when a source file changes on disk.
 
 > **Deprecation note:** earlier versions kept these team sections in a *separate* `.promptry/config.toml`, disjoint from `promptry.toml`. That file still works, but is deprecated in favour of the unified `promptry.toml`. The dashboard's Settings page currently still writes to `.promptry/config.toml`; since `promptry.toml` wins on read, don't keep the same key in both files.
 
-**API keys never go in this file.** They live in your environment (read by litellm); the Settings page only reports *which* providers have a key present (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `AZURE_OPENAI_API_KEY`), never the values. Edit it from the dashboard's **Settings** page (`GET`/`POST /api/config`) or by hand — pricing overrides are merged into the live rate table on save.
+**API keys never go in this file.** They live in your environment (read by litellm); the Settings page only reports *which* providers have a key present (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `AZURE_OPENAI_API_KEY`), never the values. If a key lives under a non-standard variable name, alias it in `[keys]` (as above) — promptry bridges the aliased value to the canonical variable at call time so provider calls still work. On the Settings page, click an undetected provider to enter its variable name; only the *name* is written to config. Edit config from the dashboard's **Settings** page (`GET`/`POST /api/config`) or by hand — pricing overrides are merged into the live rate table on save.
 
 ## Custom storage backend
 

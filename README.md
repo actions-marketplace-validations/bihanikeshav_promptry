@@ -6,7 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Local-first prompt observability that lives in your repo.** Version your prompts, write eval suites in Python, track the cost of every call, edit prompts live, and catch regressions in CI. One `pip install`, one SQLite file, zero services — your prompts never leave your laptop.
+**Local-first prompt observability that lives in your repo.** Version your prompts, write eval suites in YAML or Python, track the cost of every call, edit prompts live, and catch regressions in CI. One `pip install`, one SQLite file, zero services — your prompts never leave your laptop.
 
 **[Try the live demo →](https://promptry.meownikov.xyz/demo/)** · [Integration guide](docs/INTEGRATION.md) · [Docs](https://promptry.meownikov.xyz/docs.html)
 
@@ -70,8 +70,9 @@ promptry run my-suite --module evals.yaml  # run it
 | **Prompt versioning** | Content-hashed, automatic dedup, grouped by module. No manual bumps, no YAML, no git dance. |
 | **Live prompt CMS** | `render_prompt()` serves dashboard-edited `{{name}}` templates with no redeploy. Edit a prompt in the browser, your app picks it up on the next call. Substitution is value-driven, so JSON braces and literal `$` are never mistaken for variables. |
 | **Semantic prompt search** | Search the registry by meaning (`promptry prompt search`) and flag near-duplicate prompts (`promptry prompt duplicates`, likely forks to consolidate). Embeddings with a lexical fallback. |
+| **Prefix-cache analysis** | `promptry prompt diff2 <a> <b>` (and the dashboard's Cache optimization page) diffs two prompts and measures their shared prefix, recommending static-text-first restructuring to raise prompt-prefix cache hit rates. |
 | **Environment promotion** | dev → staging → prod tags gate every edit before it reaches users. Promote a version, roll one back. |
-| **Python-native or YAML suites** | `@suite` decorators for full IDE/debugger support, or declarative `evals.yaml` for a no-code path — both run through the same CLI, and `promptry new suite` scaffolds either. |
+| **YAML or Python suites** | Declarative `evals.yaml` is the no-code default; `@suite` decorators are the power path for custom pipelines and judges, with full IDE/debugger support. Both are first-class and run through the same CLI. Scaffold either with `promptry new suite`, or build one in the dashboard. |
 | **Deterministic assertions** | Semantic, schema, JSON, regex, grounding, tool-use, exact match, Levenshtein, ROUGE-L, embedding distance. Zero API calls at CI time. |
 | **LLM-as-judge** | Opt-in, not default. Auto-configures from `[judge] model` in `promptry.toml`, or set your own callable via `set_judge()`. |
 | **Drift detection** | Mann-Whitney U on a rolling window with real p-values — on eval scores *and* on live production telemetry (cost, latency, output length, rating). |
@@ -87,9 +88,9 @@ promptry run my-suite --module evals.yaml  # run it
 | **Budgets** | Daily and monthly spend caps with breach alerts. |
 | **PII / secret scanning** | Captured request/response text is scanned for API keys, private keys, JWTs, emails, SSNs, and card numbers; the dashboard warns with masked findings. |
 | **Safety suite** | 25 jailbreak / injection / PII / encoding templates across 6 categories. Extensible via `templates.toml`. |
-| **MCP server** | First-class: your LLM agent drives the whole test runner. Native, not a plugin. |
-| **Dashboard** | Local web UI for eval history, prompt registry + live editing, cost drill-down, model comparison, invocation traces, and a multi-model playground. No account, no cloud. |
-| **Project config** | Committable `promptry.toml` (models, judge, dashboard prefs, pricing overrides). API keys via env. |
+| **MCP server** | First-class: your LLM agent drives the whole test runner — and can *create* eval suites from real logged traffic (`list_suite_candidates` → `create_eval_suite` → `run_eval`), with everything landing on the dashboard. Native, not a plugin. |
+| **Dashboard** | Local web UI for eval history, an in-UI suite creator/editor, prompt registry + live editing, cost drill-down, model comparison, invocation traces, and a multi-model playground. No account, no cloud. |
+| **Project config** | Committable `promptry.toml` (models, judge, dashboard prefs, pricing overrides, `[keys]` env-var aliases). API keys via env — never in config or the DB. |
 | **JS/TS client** | Ship prompt events from frontend/Node apps to the same SQLite store, over the same [wire schema](docs/wire-schema/events.schema.json) the Python client uses. |
 | **CI-friendly output** | `--format json\|junit` on `run`, `compare`, and `drift`, plus `--output` to write the report to a file. |
 | **Prompt linting** | `promptry lint` flags placeholder/format footguns in a saved prompt or file; exits 1 on error-level findings. |
@@ -123,17 +124,19 @@ A single call, broken into fixed template overhead vs the variable payload you f
 The playground: render a prompt and compare it across models before promoting to a suite.
 ![Playground](docs/screenshots/dashboard-playground.png)
 
+The Evals page also builds suites: **New suite** assembles a YAML suite from manual cases, golden examples, or positive-feedback logs, and **Edit** reopens any YAML-declared suite in the same builder (Python-defined suites are read-only). A Cache optimization page flags near-duplicate prompts, diffs them, and measures the shared prefix that prompt-prefix caching could exploit.
+
 ## Why promptry
 
 Three things you won't get elsewhere — together, in one tool:
 
-1. **Code, not YAML.** Suites are pytest-style decorators. Loops, fixtures, debugger breakpoints, IDE autocomplete. Promptfoo makes you generate YAML from Python scripts once your suite grows past a few dozen tests. Just skip the round trip.
+1. **YAML when it's simple, code when it's not.** Declarative `evals.yaml` covers the no-code cases; pytest-style `@suite` decorators cover the rest — loops, fixtures, debugger breakpoints, IDE autocomplete. Promptfoo makes you generate YAML from Python scripts once your suite grows past a few dozen tests. Here Python is native, not a code-generation round trip.
 2. **Local by design.** One SQLite file. No account, no API key for the framework, no cloud to trust. LangSmith and DeepEval's flagship features push your prompts and outputs to their servers — disqualifying for regulated industries, IP-sensitive work, or anyone who reads their procurement policy.
 3. **No per-run judge tax.** Most assertions are deterministic: semantic similarity, schema, JSON, regex, grounding, tool-use. CI runs cost $0. RAGAS's headline metrics (faithfulness, answer relevancy, context precision) all need judge-model calls — every run costs tokens, adds latency, and drifts when the judge model updates. We treat LLM-as-judge as an opt-in, not a default.
 
 | | Promptfoo | RAGAS | LangSmith | DeepEval | **promptry** |
 |---|---|---|---|---|---|
-| **Config** | YAML | Python metrics | SaaS UI | Python | **Python decorators** |
+| **Config** | YAML | Python metrics | SaaS UI | Python | **YAML or Python decorators** |
 | **Data location** | Local | Local | **Their cloud** | Local + push | **Local SQLite** |
 | **Account required** | No | No | **Yes** | No (for OSS) | **No, ever** |
 | **CI cost per run** | Mixed | **Per-judge-call** | Trace volume | **Per-judge-call** | **$0 (deterministic)** |
@@ -203,7 +206,7 @@ Subsequent pushes edit the same comment instead of spamming new ones.
 claude mcp add promptry -- promptry mcp    # Claude Code
 ```
 
-Works with Claude Desktop, Cursor, Windsurf, VS Code. See [full setup](docs/guide.md#mcp-server-llm-agent-integration).
+Works with Claude Desktop, Cursor, Windsurf, VS Code. Agents don't just run evals — they create them: `list_suite_candidates` surfaces cases from golden examples or positively-rated production logs, `create_eval_suite` writes them into a runnable `evals.yaml`, and `run_eval` executes it. Everything the agent creates appears (and stays editable) on the dashboard. See [full setup](docs/guide.md#mcp-server-llm-agent-integration).
 
 ## Documentation
 

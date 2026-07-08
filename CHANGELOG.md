@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased
+
+### Evals
+
+- **Suite builder** (`promptry.suite_builder`) — assemble and persist
+  declarative `evals.yaml` suites programmatically: `build_suite_dict` +
+  `write_yaml_suite` (the single write path shared by the dashboard, the MCP
+  server, and `promptry new suite`), `read_yaml_suite` for edit round-trips,
+  and `suite_candidates` to source ready-to-edit cases from golden examples or
+  positively-rated invocations. A case's retrieved `context` is emitted as a
+  `grounded` assertion so it is actually exercised at run time.
+
+### Dashboard
+
+- **In-UI suite creator** (`/suites/new`, opened by the Evals page's
+  **New suite** button — suite creation lives on the Evals page, not a
+  separate nav item) — build an eval suite from three sources: manual cases,
+  golden examples, or positive-feedback logs. RAG cases carry question /
+  retrieved context / expected response, with a from-logs button that
+  auto-fills context from recorded `track_context` data
+  (`GET /api/prompts/{name}/recorded-context`).
+- **Suite editing** — per-suite **Edit** button on the Evals page
+  (`/suites/new?edit=<name>`). Any YAML-declared suite is editable regardless
+  of whether it was created in the dashboard, via MCP, or by
+  `promptry new suite`; Python-defined suites are shown read-only. New
+  endpoints: `POST /api/suites`, `GET /api/suite-candidates`,
+  `GET /api/suites/{name}/definition`.
+- **Cache optimization page** (`/cache`, formerly "Duplicates") —
+  near-duplicate prompt pairs with a cross-prompt diff plus a prompt-prefix
+  cache analysis: shared-prefix ratio and a recommendation to restructure
+  static text to the front to improve prefix-cache hit rate. Backed by
+  `GET /api/prompts/diff2?a=&b=` and `promptry.prompt_diff`; CLI equivalent
+  `promptry prompt diff2 <a> <b>`.
+
+### MCP
+
+- **Agents can create evals, not just run them** — new `create_eval_suite`
+  tool writes a runnable `evals.yaml` suite (cases as
+  `{input, context?, expect: [{type, value}]}` with assertion types contains /
+  not_contains / regex / exact / semantic / grounded / llm; a case's context
+  auto-becomes a grounded assertion) that immediately appears, and is
+  editable, on the dashboard. New `list_suite_candidates` tool sources cases
+  from golden examples or positive-feedback logs.
+- `list_suites`, `run_eval`, and `check_drift` now default `module="evals"`
+  and discover YAML suites (auto `evals.yaml` / `promptry.yaml`), not just
+  Python modules.
+
+### Config
+
+- **`[keys]` provider-key env-var aliases** in `promptry.toml` — point a
+  provider at a non-standard env-var name
+  (`[keys]` `openai = "MY_OPENAI_KEY"`); the aliased value is bridged to the
+  canonical variable at call time. Only the variable NAME is stored — never
+  the secret. The dashboard's Settings page auto-detects keys and lets you
+  click an undetected provider to enter its variable name.
+
 ## 0.10.1 (2026-07-08)
 
 Version-correction release. An artifact was accidentally published to PyPI as

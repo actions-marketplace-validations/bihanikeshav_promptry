@@ -148,7 +148,13 @@ def prompt_tag(name: str, version: int, tag: str) -> str:
 
 @mcp.tool()
 def list_suites(module: str = "evals") -> str:
-    """List registered eval suites from a YAML file or Python module."""
+    """List registered eval suites.
+
+    module defaults to 'evals': loads evals.py if present, otherwise
+    auto-discovers a declarative evals.yaml / promptry.yaml in the current
+    directory. Pass an explicit *.yaml/*.yml path or a dotted Python module
+    to override.
+    """
     err = _discover(module)
     if err:
         return f"Error: {err}"
@@ -172,9 +178,13 @@ def run_eval(
     prompt_version: Optional[int] = None,
     model_version: Optional[str] = None,
 ) -> str:
-    """Run an eval suite and return results.
+    """Run an eval suite and return per-test, per-assertion results.
 
-    Set compare to a tag (e.g. 'prod') to compare against a baseline.
+    module resolves like list_suites: 'evals' (default) loads evals.py or an
+    auto-discovered evals.yaml; an explicit *.yaml path or dotted Python
+    module also works. Set compare to a tag (e.g. 'prod') to compare against
+    that baseline. prompt_name / prompt_version / model_version are recorded
+    on the run so later comparison, drift, and model-compare can use them.
     """
     err = _discover(module)
     if err:
@@ -232,8 +242,9 @@ def create_eval_suite(
     """Create (or overwrite) a declarative eval suite in evals.yaml.
 
     The suite is immediately runnable via run_eval and shows up on the
-    dashboard under Evals. Give either model+prompt (single-call suites) or
-    pipeline (the name of a callable your app registers).
+    dashboard under Evals, where it stays editable. Give either model+prompt
+    (a direct model call per case, with {input} substituted into the prompt)
+    or pipeline (a "module:function" callable in the user's code).
 
     cases: a list of {input, context?, expect?} objects, where each expect
     entry is {"type": <assertion>, "value": <value>}. Assertion types:
@@ -242,6 +253,10 @@ def create_eval_suite(
       {"input": "What is the capital of France?",
        "context": "France's capital is Paris.",
        "expect": [{"type": "contains", "value": "Paris"}]}
+
+    path is the YAML file to write (default: evals.yaml in the working
+    directory). If a suite of the same name already exists there, the call
+    fails unless overwrite=true, which replaces it in place.
     """
     from promptry.suite_builder import build_suite_dict, write_yaml_suite
 
@@ -280,9 +295,11 @@ def list_suite_candidates(
     """Surface candidate eval cases from real logged traffic to seed a suite.
 
     source='golden' pulls saved golden examples; source='feedback' pulls
-    positively-rated invocations (rating >= min_rating). Each candidate carries
-    a question, the retrieved context (when capture was on), and the response.
-    Feed the good ones into create_eval_suite.
+    positively-rated invocations (rating >= min_rating). Optionally scope to
+    one prompt with name; limit caps the number returned. Each candidate
+    carries a question, the retrieved context (when capture was on), and the
+    response — question/response/context may be missing where the invocation
+    was recorded without capture. Feed the good ones into create_eval_suite.
     """
     from promptry.suite_builder import suite_candidates as _cands
 
@@ -310,7 +327,13 @@ def check_drift(
     window: Optional[int] = None,
     threshold: Optional[float] = None,
 ) -> str:
-    """Check for score drift in a suite's recent runs."""
+    """Check for score drift in a suite's recent runs.
+
+    module resolves like list_suites ('evals' default, YAML auto-discovery).
+    window is how many recent runs to analyze; threshold is the slope beyond
+    which the suite counts as drifting. Both default from promptry.toml
+    [monitor] settings.
+    """
     err = _discover(module)
     if err:
         return f"Error: {err}"

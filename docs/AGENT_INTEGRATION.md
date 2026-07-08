@@ -164,6 +164,37 @@ calls go through litellm, which reads the standard per-provider env var —
 environment; promptry infers the provider from the model id. Keys stay in env
 — never in `promptry.toml`, never in the DB.
 
+If a key lives under a non-standard variable name, alias it in `[keys]` — the
+env-var NAME only, never the secret:
+
+```toml
+[keys]
+openai = "MY_OPENAI_KEY"   # promptry bridges this to OPENAI_API_KEY at call time
+```
+
+The dashboard's Settings page auto-detects keys and lets the user click an
+undetected provider to enter its variable name.
+
+## Step 5 — turn logged traffic into an eval suite (optional)
+
+Once invocations, feedback, and context are flowing, the same data seeds
+regression tests. Over MCP (`claude mcp add promptry -- promptry mcp`):
+
+1. `list_suite_candidates(source="feedback")` — cases from positively-rated
+   invocations (`source="golden"` for saved golden examples). Question/response
+   need `track_invocation(capture=True)`; context needs `track_context`.
+2. `create_eval_suite(name, cases, model=..., prompt=...)` — writes a runnable
+   suite into `evals.yaml`. Each case is `{input, context?, expect:
+   [{type, value}]}` (assertion types: contains, not_contains, regex, exact,
+   semantic, grounded, llm); a case's `context` auto-becomes a grounded
+   assertion. Use `pipeline` instead of `model`/`prompt` to call the app's own
+   pipeline.
+3. `run_eval(name)` — runs it. The suite appears on the dashboard's Evals page
+   and stays editable there.
+
+The same flow exists in the dashboard (Evals → **New suite**) and the CLI
+(`promptry new suite`) — all three write the same `evals.yaml`.
+
 ## JS/TS apps
 
 Use `promptry-js` (`npm install promptry-js`). It is the write path only —
