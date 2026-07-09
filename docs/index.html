@@ -611,19 +611,56 @@
     }
   })();
 
-  // Terminal tabs
-  document.querySelectorAll('.term-tab').forEach(function (btn) {
-    btn.addEventListener('click', function () {
+  // Terminal tabs — click to switch, and auto-cycle every 4s until the user
+  // interacts (mirrors the walkthrough cadence below). Pauses on hover so the
+  // code panes stay readable, and honours prefers-reduced-motion.
+  (function () {
+    const tabs = Array.from(document.querySelectorAll('.term-tab'));
+    if (!tabs.length) return;
+    const container = tabs[0].closest('.term');
+    let cycling = true;
+    let timer = null;
+
+    function show(btn) {
       const tab = btn.dataset.tab;
-      const container = btn.closest('.term');
-      container.querySelectorAll('.term-tab').forEach(function (b) {
-        b.classList.toggle('on', b === btn);
-      });
+      tabs.forEach(function (b) { b.classList.toggle('on', b === btn); });
       container.querySelectorAll('.term-pane').forEach(function (p) {
         p.classList.toggle('on', p.dataset.pane === tab);
       });
+    }
+
+    function scheduleNext() {
+      if (!cycling) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () {
+        const idx = tabs.findIndex(function (b) { return b.classList.contains('on'); });
+        show(tabs[(idx + 1) % tabs.length]);
+        scheduleNext();
+      }, 4000);
+    }
+
+    tabs.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        // User took control — stop auto-cycling for the rest of the session.
+        cycling = false;
+        if (timer) { clearTimeout(timer); timer = null; }
+        show(btn);
+      });
     });
-  });
+
+    // Pause while hovered; resume on leave unless the user already clicked.
+    container.addEventListener('mouseenter', function () {
+      if (timer) { clearTimeout(timer); timer = null; }
+    });
+    container.addEventListener('mouseleave', function () {
+      if (cycling && !timer) scheduleNext();
+    });
+
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (reduce && reduce.matches) cycling = false;
+
+    scheduleNext();
+  })();
 
   // Walkthrough steps: each click swaps both the main mock view AND
   // the sidebar highlight. Auto-cycles every 4s until the user interacts.
