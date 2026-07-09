@@ -1290,6 +1290,9 @@ button { font-family: inherit; cursor: pointer; }
   transition: border-color .15s, background .15s, color .15s;
 }
 .btn:hover { border-color: var(--accent); }
+/* Icon-only registry links (PyPI / npm). Square, logo keeps its brand colour. */
+.btn-icon { padding: 9px; gap: 0; }
+.btn-icon svg { display: block; }
 .btn.primary {
   background: var(--ink);
   color: var(--bg);
