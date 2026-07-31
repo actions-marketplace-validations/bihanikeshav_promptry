@@ -1872,16 +1872,25 @@ def _print_prices_table():
         f"[dim](source: {meta.get('source')}, version: {meta.get('version')}, "
         f"updated: {updated})[/dim]\n"
     )
+    console.print(
+        "[dim]Rate catalog from [link=https://github.com/BerriAI/litellm]LiteLLM[/link] "
+        "model_cost (MIT). promptry does not maintain its own price list.[/dim]\n"
+    )
     table = Table(show_header=True, header_style="bold")
     table.add_column("Model")
     table.add_column("Input", justify="right")
     table.add_column("Cached", justify="right")
     table.add_column("Output", justify="right")
-    for name in sorted(pricing.RATES):
+    # Full table can be thousands of rows — show a sample unless small
+    names = sorted(pricing.RATES)
+    show = names if len(names) <= 80 else names[:60]
+    for name in show:
         r = pricing.RATES[name]
         table.add_row(name, f"${r['in']:.2f}", f"${r['cached']:.2f}", f"${r['out']:.2f}")
     console.print(table)
-    console.print("[dim]Per 1M tokens, USD.[/dim]")
+    if len(names) > 80:
+        console.print(f"[dim]… {len(names) - 60} more models (catalog size: {len(names)})[/dim]")
+    console.print("[dim]Per 1M tokens, USD. Pricing data © LiteLLM contributors / upstream providers.[/dim]")
     if pricing.REROUTES:
         console.print("\n[bold]Active reroutes[/bold] [dim](retired slug → billed model on/after date)[/dim]")
         for slug, (eff, target) in sorted(pricing.REROUTES.items()):

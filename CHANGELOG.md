@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.8 (2026-07-31)
+
+- **Prod tags by default:** `seed_prompt` tags v1 (or latest if untagged) as
+  `prod`. Prompt detail treats latest as serving when no prod tag exists, so
+  "Promote → prod" is not shown on every version for live seeds.
+- **LiteLLM attribution** on CLI prices, Cost page, and `/api/cost/prices-meta`.
+
 ## 1.0.7 (2026-07-31)
 
 - **Pricing catalog = LiteLLM only.** Removed the hand-maintained ~24-model
@@ -9,6 +16,7 @@
   - or live `promptry prices --litellm` when litellm is installed.
 - Provider-prefixed slugs also register bare aliases (`azure_ai/grok-4` → `grok-4`).
 - **Reroutes** remain a small optional xAI map in code — **not** from LiteLLM.
+- Credit: [LiteLLM](https://github.com/BerriAI/litellm) (MIT).
 
 ## 1.0.6 (2026-07-31)
 

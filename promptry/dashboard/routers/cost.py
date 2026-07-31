@@ -193,6 +193,13 @@ def cost_prices_meta():
         "auto_refresh": pricing.auto_refresh_enabled(default=True),
         "refresh_interval_hours": pricing.auto_refresh_interval_hours(),
         "persisted_path": str(pricing.prices_file_path()),
+        # Attribution — catalog is LiteLLM's model_cost (MIT), not ours.
+        "attribution": {
+            "name": "LiteLLM",
+            "url": "https://github.com/BerriAI/litellm",
+            "license": "MIT",
+            "note": "Model rates come from LiteLLM model_cost. promptry snapshots and serves them; it does not curate a parallel price list.",
+        },
     }
 
 

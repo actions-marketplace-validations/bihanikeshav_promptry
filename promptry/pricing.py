@@ -1,7 +1,9 @@
 """Prompt pricing with cache awareness across providers.
 
-**Catalog source of truth: LiteLLM** (``model_cost``), not a hand-maintained
-list. We do **not** curate per-model $/1M rows in this repo.
+**Catalog source of truth: [LiteLLM](https://github.com/BerriAI/litellm)
+``model_cost``** (MIT License, BerriAI / contributors) — not a hand-maintained
+list. promptry snapshots and serves those rates; credit LiteLLM when you
+redistribute pricing data. We do **not** curate per-model $/1M rows in this repo.
 
 How rates get into memory:
 

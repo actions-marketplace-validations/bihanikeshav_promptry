@@ -87,16 +87,47 @@ DEFAULT_TTL = 60.0  # seconds a dashboard edit takes to go live
 
 def seed_prompt(name: str, default_content: str) -> None:
     """Register *default_content* as the first version of *name* if the
-    prompt has no version yet. Idempotent; never overwrites a later edit."""
+    prompt has no version yet. Idempotent; never overwrites a later edit.
+
+    The first seed is tagged ``prod`` so the version your app actually runs
+    (latest / default) shows as production in the dashboard, not as an
+    unpromoted draft.
+    """
     try:
         from promptry.storage import get_storage
         from promptry.registry import track
 
-        if get_storage().get_prompt(name) is None:
+        storage = get_storage()
+        if storage.get_prompt(name) is None:
             track(normalize_template(default_content), name, metadata={"source": "seed_default"})
             logger.info("seeded prompt %s", name)
+            # Point prod at v1 — the in-code default is what production runs
+            # until someone promotes a later edit.
+            if storage.supports("set_prompt_env"):
+                try:
+                    storage.set_prompt_env(name, 1, "prod")
+                except Exception:
+                    logger.debug("seed prod tag failed for %s", name, exc_info=True)
+        else:
+            # Existing prompt with no prod tag: treat latest as prod so the
+            # UI matches "whatever is running" for apps that serve latest.
+            _ensure_prod_tag(storage, name)
     except Exception:
         logger.debug("seed_prompt failed for %s", name, exc_info=True)
+
+
+def _ensure_prod_tag(storage, name: str) -> None:
+    """If *name* has versions but no ``prod`` tag, tag the latest as prod."""
+    if not storage.supports("set_prompt_env") or not storage.supports("get_prompt_by_tag"):
+        return
+    try:
+        if storage.get_prompt_by_tag(name, "prod") is not None:
+            return
+        latest = storage.get_prompt(name)
+        if latest is not None and getattr(latest, "version", None) is not None:
+            storage.set_prompt_env(name, int(latest.version), "prod")
+    except Exception:
+        logger.debug("ensure prod tag failed for %s", name, exc_info=True)
 
 
 def get_prompt_template(name: str, default_content: str, ttl: float = DEFAULT_TTL,

@@ -130,7 +130,12 @@ export default function PromptDetail() {
   }, [view, draft]);
 
   const isLatest = versions.length > 0 && selected === versions[0].version;
-  const prodVersion = versions.find((v) => v.tags?.includes("prod"))?.version ?? null;
+  // Explicit prod tag wins; if nothing was ever promoted, the app typically
+  // serves latest (seed / render without env) — treat that as production so
+  // we don't show "Promote → prod" on every version by default.
+  const taggedProd = versions.find((v) => v.tags?.includes("prod"))?.version ?? null;
+  const prodVersion = taggedProd ?? (versions.length > 0 ? versions[0].version : null);
+  const prodIsImplicit = taggedProd == null && prodVersion != null;
 
   async function handlePromote() {
     if (selected == null) return;
@@ -218,9 +223,9 @@ export default function PromptDetail() {
                       LATEST
                     </span>
                   )}
-                  {v.tags?.includes("prod") && (
+                  {(v.tags?.includes("prod") || (prodIsImplicit && v.version === prodVersion)) && (
                     <span style={{ fontSize: 9, color: "var(--accent)", marginLeft: 6, letterSpacing: "0.04em" }}>
-                      PROD
+                      PROD{prodIsImplicit && v.version === prodVersion ? " · latest" : ""}
                     </span>
                   )}
                 </span>
@@ -284,8 +289,14 @@ export default function PromptDetail() {
                 </button>
               )}
               {selected != null && selected === prodVersion && (
-                <span className="chip mono" style={{ fontSize: 10, color: "var(--accent)", borderColor: "var(--accent-line)", background: "var(--accent-soft)" }}>
-                  serving in prod
+                <span
+                  className="chip mono"
+                  style={{ fontSize: 10, color: "var(--accent)", borderColor: "var(--accent-line)", background: "var(--accent-soft)" }}
+                  title={prodIsImplicit
+                    ? "No explicit prod tag — latest is treated as production (what unscoped render_prompt serves)"
+                    : "This version holds the prod env tag"}
+                >
+                  {prodIsImplicit ? "serving (latest)" : "serving in prod"}
                 </span>
               )}
             </div>

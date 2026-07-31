@@ -99,7 +99,7 @@ promptry run my-suite --module evals.yaml  # run it
 | **Model comparison** | Statistical comparison against the historical baseline, not snapshot-to-snapshot. |
 | **Invocations ledger** | Every call recorded: tokens, cost, latency, model. Opt-in sampled request/response trace capture; per-call ratings/feedback via `POST /api/feedback`. |
 | **Cost tracking** | Per-model pricing with module → prompt → call drill-down, per-call template-vs-payload split, and a coverage check that flags un-priced models. Cache-aware, across OpenAI, Anthropic, Gemini, Grok. |
-| **Price feed** | **LiteLLM is the catalog** (thousands of models) — we do not hand-maintain rates. CI publishes `prices.json`; the package ships a snapshot; the dashboard auto-pulls every 24h. CLI: `promptry prices --refresh` / `--litellm`. |
+| **Price feed** | **[LiteLLM](https://github.com/BerriAI/litellm) `model_cost`** is the catalog (MIT) — we snapshot and serve it, we do not curate our own list. CI publishes `prices.json`; package ships a snapshot; dashboard auto-pulls every 24h. |
 | **Budgets** | Daily and monthly spend caps with breach alerts. |
 | **PII / secret scanning** | Captured request/response text is scanned for API keys, private keys, JWTs, emails, SSNs, and card numbers; the dashboard warns with masked findings. |
 | **Safety suite** | 25 jailbreak / injection / PII / encoding templates across 6 categories. Extensible via `templates.toml`. |

@@ -1458,8 +1458,9 @@ Public when locked: the SPA shell, static assets, `/api/health`, `/api/auth/stat
 
 ### Price feed (LiteLLM catalog)
 
-**We do not maintain our own model price list.** The catalog is **LiteLLM’s**
-`model_cost` map (thousands of provider/model slugs), snapshotted and published.
+**We do not maintain our own model price list.** The catalog is **[LiteLLM](https://github.com/BerriAI/litellm)’s**
+`model_cost` map (MIT License — credit [BerriAI/litellm](https://github.com/BerriAI/litellm)),
+thousands of provider/model slugs, snapshotted and published.
 
 | Source | When |
 |--------|------|

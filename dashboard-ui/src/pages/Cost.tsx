@@ -59,7 +59,7 @@ export default function Cost() {
       {level !== "overview" && <Breadcrumbs items={crumbs} />}
 
       <PageHeader eyebrow="~/promptry · cost" title="Cost & Tokens"
-        description="Follow the money: module spend → prompt → the priciest individual calls." actions={daysSelect} />
+        description="Follow the money: module spend → prompt → the priciest individual calls. Model rates from LiteLLM model_cost (MIT)." actions={daysSelect} />
 
       {level === "overview" && (
         <OverviewLevel s={s} data={data} coverage={coverage} modules={modules} moduleMax={moduleMax} onModule={goModule} />
