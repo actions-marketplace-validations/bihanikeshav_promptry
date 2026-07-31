@@ -278,17 +278,19 @@ promptry dashboard --port 8420 --no-open
 
 Unset `PROMPTRY_AUTH_TOKEN` = open API (fine only while localhost-only).
 
-## 9. Price feed (optional)
+## 9. Price feed (LiteLLM catalog)
 
-Cost math uses a bundled rate table. For fresher numbers:
+**No hand-maintained model list.** Rates come from **LiteLLM** `model_cost`,
+snapshotted into `prices.json` (CI + package data).
 
 ```bash
-promptry prices --refresh          # pull published prices.json → ~/.promptry/prices.json
-# or let the dashboard do it: on start + every 24h (PROMPTRY_PRICES_AUTO_REFRESH=0 to disable)
+promptry prices --refresh          # pull published feed → ~/.promptry/prices.json
+promptry prices --litellm          # rebuild from a local litellm install
+# dashboard: auto-pull on start + every 24h (PROMPTRY_PRICES_AUTO_REFRESH=0 to disable)
 ```
 
-The published file lives in the promptry repo and is refreshed by CI; your
-server does **not** call OpenAI/Anthropic pricing APIs itself.
+Your server does **not** scrape vendor pricing pages; it uses the published
+LiteLLM snapshot (or live litellm if installed).
 
 ## Agent checklist
 

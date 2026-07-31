@@ -1,74 +1,33 @@
 """Prompt pricing with cache awareness across providers.
 
-Rates are best-effort snapshots. Users should override via config or recompute
-from provider invoices for finance purposes.
+**Catalog source of truth: LiteLLM** (``model_cost``), not a hand-maintained
+list. We do **not** curate per-model $/1M rows in this repo.
+
+How rates get into memory:
+
+1. Packaged snapshot ``promptry/data/prices.json`` (generated from LiteLLM in CI)
+2. Optional user refresh ``~/.promptry/prices.json`` (dashboard 24h pull or
+   ``promptry prices --refresh`` / ``--litellm``)
+3. Live ``refresh_rates_from_litellm()`` when litellm is installed
+
+Rates are best-effort. Override via ``[pricing.*]`` in promptry.toml or
+recompute from provider invoices for finance.
 """
 from __future__ import annotations
 
 import threading
 
-# Per 1M tokens USD. Provider-model -> (input, cached_read, cache_write, output)
-# Structured to capture each provider's caching economics:
-#   - OpenAI: cached reads 50% off, no cache write premium
-#   - Anthropic: cached reads 90% off (0.1x), cache writes 1.25x (5min) or 2x (1hr)
-#   - Google Gemini: cached reads (Context Caching), rate by model
-#   - xAI Grok: similar to OpenAI, cached_tokens reported
-RATES = {
-    # OpenAI
-    "gpt-4o":           {"in": 2.50, "cached": 1.25, "cache_write": 2.50, "out": 10.00},
-    "gpt-4o-mini":      {"in": 0.15, "cached": 0.075, "cache_write": 0.15, "out": 0.60},
-    "gpt-4.1":          {"in": 2.00, "cached": 0.50, "cache_write": 2.00, "out": 8.00},
-    "gpt-4.1-mini":     {"in": 0.40, "cached": 0.10, "cache_write": 0.40, "out": 1.60},
-    # gpt-4.1-nano. MUST be an explicit entry: the fuzzy prefix match would
-    # otherwise resolve it to the "gpt-4.1" tier ($2/$8) and overcount ~20x.
-    # Some integrations log the litellm-style "openai/gpt-4.1-nano" slug (and it
-    # surfaces as served_model), which can't prefix-match anything — price both.
-    "gpt-4.1-nano":         {"in": 0.10, "cached": 0.025, "cache_write": 0.10, "out": 0.40},
-    "openai/gpt-4.1-nano":  {"in": 0.10, "cached": 0.025, "cache_write": 0.10, "out": 0.40},
-    # gpt-5.4-nano. Served as gpt-5.4-nano-2026-03-17, covered by prefix match.
-    "gpt-5.4-nano":     {"in": 0.20, "cached": 0.02, "cache_write": 0.20, "out": 1.25},
-
-    # Anthropic (5-min TTL ephemeral cache assumed)
-    "claude-opus-4":         {"in": 15.00, "cached": 1.50, "cache_write": 18.75, "out": 75.00},
-    "claude-sonnet-4":       {"in": 3.00,  "cached": 0.30, "cache_write": 3.75,  "out": 15.00},
-    "claude-haiku-4-5":      {"in": 0.80,  "cached": 0.08, "cache_write": 1.00,  "out": 4.00},
-
-    # Google Gemini
-    "gemini-2.5-pro":        {"in": 1.25, "cached": 0.31, "cache_write": 1.25, "out": 10.00},
-    "gemini-2.5-flash":      {"in": 0.30, "cached": 0.075, "cache_write": 0.30, "out": 2.50},
-
-    # xAI Grok (grok-2 / grok-3 era)
-    "grok-2":                {"in": 2.00, "cached": 0.50, "cache_write": 2.00, "out": 10.00},
-    "grok-3":                {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
-    # xAI Grok-4 family. grok-4-fast tiers are cheaper than grok-3; the
-    # non-reasoning variant is what most production RAG pipelines use.
-    # xAI deploys point-release suffixes (grok-4-1-fast-*) as the rates
-    # don't change between them; covered by explicit entries below.
-    "grok-4":                         {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
-    "grok-4-fast":                    {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
-    "grok-4-fast-non-reasoning":      {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
-    "grok-4-fast-reasoning":          {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
-    "grok-4-1":                       {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
-    "grok-4-1-fast":                  {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
-    "grok-4-1-fast-non-reasoning":    {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
-    "grok-4-1-fast-reasoning":        {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
-    # grok-4.3: as of 2026-05-15 xAI retired the grok-4*-fast slugs and routes
-    # them here (https://docs.x.ai/developers/migration/may-15-retirement).
-    # MUST be an explicit entry: the fuzzy prefix match would otherwise resolve
-    # "grok-4.3"/"grok-4-3" to the "grok-4" tier ($3/$15) and badly overcount.
-    # Published rate is in/out only; cached_read assumed 0.25x (xAI fast-tier
-    # ratio), cache_write == in. Verify cached price against an invoice.
-    "grok-4.3":                       {"in": 1.25, "cached": 0.31, "cache_write": 1.25, "out": 2.50},
-    "grok-4-3":                       {"in": 1.25, "cached": 0.31, "cache_write": 1.25, "out": 2.50},
-}
+# Filled on first use by ensure_prices_loaded() from the LiteLLM-generated
+# package snapshot / user feed. Empty at import so we never hand-maintain a
+# parallel catalog here.
+RATES: dict[str, dict[str, float]] = {}
 
 
-# Models a provider RETIRED and now silently serves as a different (priced)
-# model from a date onward. The requested slug keeps resolving, so the only way
-# to cost it correctly is to know the reroute: on/after the effective date, the
-# slug bills at its replacement's rate. slug -> (effective_date, replacement).
-# xAI, 2026-05-15: https://docs.x.ai/developers/migration/may-15-retirement
-REROUTES = {
+# Optional rename map — NOT from LiteLLM. Only for providers that keep the old
+# request slug after they change what they bill (xAI 2026-05-15 retirement).
+# Uncertain by nature; disable by clearing or not passing `when` to calculate_cost.
+# https://docs.x.ai/developers/migration/may-15-retirement
+REROUTES: dict[str, tuple[str, str]] = {
     "grok-4-fast":                 ("2026-05-15", "grok-4.3"),
     "grok-4-fast-non-reasoning":   ("2026-05-15", "grok-4.3"),
     "grok-4-fast-reasoning":       ("2026-05-15", "grok-4.3"),
@@ -77,9 +36,6 @@ REROUTES = {
     "grok-4-1-fast-reasoning":     ("2026-05-15", "grok-4.3"),
     "grok-4-0709":                 ("2026-05-15", "grok-4.3"),
     "grok-3":                      ("2026-05-15", "grok-4.3"),
-    # Omitted until priced: grok-code-fast-1 -> grok-build-0.1 (xAI published no
-    # rate for grok-build-0.1; rerouting to an unpriced model would silently
-    # read $0, which is worse than leaving the slug at its own rate).
 }
 
 
@@ -152,18 +108,19 @@ _prices_load_lock = threading.Lock()
 
 
 def ensure_prices_loaded() -> None:
-    """Apply a previously-refreshed price feed on first use. Idempotent and
-    safe to call from every pricing entry point — a no-op after the first
-    call. Every consumer of RATES/REROUTES/PRICES_META (CLI, dashboard,
-    projectconfig overrides, storage cost aggregation) must call this before
-    reading those globals directly, since only calculate_cost/resolve_model/
-    is_known_model trigger it implicitly."""
+    """Load the LiteLLM-derived catalog on first use. Idempotent.
+
+    Order: package snapshot (shipped with the wheel) → user persisted file
+    (dashboard refresh / CLI) merges on top. Every consumer of RATES must call
+    this (or go through calculate_cost / resolve_model / is_known_model).
+    """
     global _prices_loaded
     if _prices_loaded:
         return
     with _prices_load_lock:
         if _prices_loaded:
             return
+        load_package_prices()
         load_persisted_prices()
         _prices_loaded = True
 
@@ -304,14 +261,60 @@ def is_known_model(model: str) -> bool:
     return _lookup_rates(model) is not None
 
 
-def refresh_rates_from_litellm() -> int:
-    """Pull current rates from litellm's model_cost map into RATES, so the
-    hand-maintained snapshot stays current. Returns the number of models
-    added/updated. No-op (returns 0) if litellm isn't installed.
+def _litellm_row_to_rate(info: dict) -> dict[str, float] | None:
+    """Convert one litellm model_cost entry to promptry's per-1M shape."""
+    if not isinstance(info, dict):
+        return None
+    inp = info.get("input_cost_per_token")
+    out = info.get("output_cost_per_token")
+    if inp is None and out is None:
+        return None
+    in_m = float(inp or 0) * 1_000_000
+    out_m = float(out or 0) * 1_000_000
+    cached = info.get("cache_read_input_token_cost")
+    cached_m = (float(cached) * 1_000_000) if cached is not None else in_m * 0.5
+    cw = info.get("cache_creation_input_token_cost")
+    cw_m = (float(cw) * 1_000_000) if cw is not None else in_m
+    return {"in": in_m, "cached": cached_m, "cache_write": cw_m, "out": out_m}
 
-    litellm stores per-token USD as input_cost_per_token / output_cost_per_token
-    (and cache_*); we convert to per-1M and the {in,cached,cache_write,out}
-    shape promptry uses.
+
+def _alias_keys(name: str) -> list[str]:
+    """Extra keys so provider-prefixed litellm slugs also match bare names.
+
+    e.g. ``azure_ai/grok-4`` → also ``grok-4``; ``openrouter/x-ai/grok-4`` →
+    ``x-ai/grok-4`` and ``grok-4``. First registration wins (do not overwrite).
+    """
+    aliases: list[str] = []
+    if "/" not in name:
+        return aliases
+    parts = name.split("/")
+    # full tail after first segment, and final segment only
+    if len(parts) >= 2:
+        aliases.append("/".join(parts[1:]))
+    if len(parts) >= 2:
+        aliases.append(parts[-1])
+    # de-dupe while preserving order, skip identity
+    out: list[str] = []
+    seen = {name}
+    for a in aliases:
+        if a and a not in seen:
+            seen.add(a)
+            out.append(a)
+    return out
+
+
+def refresh_rates_from_litellm(*, replace: bool = True) -> int:
+    """Pull current rates from litellm's ``model_cost`` map into RATES.
+
+    This is the **authoritative** catalog when litellm is installed. Returns
+    the number of litellm rows applied (aliases count separately in RATES but
+    not in this return value). No-op (0) if litellm isn't installed.
+
+    litellm stores per-token USD; we convert to per-1M
+    ``{in, cached, cache_write, out}``.
+
+    ``replace=True`` (default) clears the table first so we don't keep stale
+    hand rows. REROUTES are left alone (not from litellm).
     """
     try:
         import litellm  # noqa
@@ -321,39 +324,40 @@ def refresh_rates_from_litellm() -> int:
     if not model_cost:
         return 0
 
+    if replace:
+        RATES.clear()
+
     updated = 0
     for name, info in model_cost.items():
-        if not isinstance(info, dict):
+        rate = _litellm_row_to_rate(info)
+        if rate is None:
             continue
-        inp = info.get("input_cost_per_token")
-        out = info.get("output_cost_per_token")
-        if inp is None and out is None:
-            continue
-        in_m = (inp or 0) * 1_000_000
-        out_m = (out or 0) * 1_000_000
-        cached = info.get("cache_read_input_token_cost")
-        cached_m = (cached * 1_000_000) if cached is not None else in_m * 0.5
-        cw = info.get("cache_creation_input_token_cost")
-        cw_m = (cw * 1_000_000) if cw is not None else in_m
-        RATES[name] = {"in": in_m, "cached": cached_m, "cache_write": cw_m, "out": out_m}
+        RATES[name] = rate
         updated += 1
+        for alias in _alias_keys(str(name)):
+            # Prefer the first (usually more specific provider path) already set
+            RATES.setdefault(alias, rate)
+
     if updated:
+        from datetime import datetime, timezone
+        PRICES_META["source"] = "litellm"
+        PRICES_META["version"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        PRICES_META["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         _recompute_rate_indexes()
     return updated
 
 
 # --------------------------------------------------------------------------
-# Price feed: bundled snapshot + opt-in refresh, no hosted service.
+# Price feed: LiteLLM catalog published as static JSON (no hand rate table).
 #
-# The bundled RATES above ship with the package. A user can refresh them from
-# a STATIC published feed (a plain JSON file the maintainer commits/publishes)
-# or from a locally-installed litellm. A refresh writes the result to
-# ~/.promptry/prices.json, which is loaded on import to override the bundled
-# snapshot. Nothing phones home unless the user runs `promptry prices --refresh`.
+# CI runs scripts/update_prices_feed.py (litellm → prices.json). That file is
+# committed and also packaged under promptry/data/. Dashboards pull the GitHub
+# raw URL on a timer; CLI `promptry prices --refresh` does the same on demand.
+# `promptry prices --litellm` hits a local litellm install (no network).
 # --------------------------------------------------------------------------
 
-# Provenance of the rates currently in RATES. Updated when a feed is applied.
-PRICES_META: dict = {"version": "2026-06-01", "source": "bundled", "updated": None}
+# Provenance of the rates currently in RATES. Updated when a feed/litellm is applied.
+PRICES_META: dict = {"version": None, "source": "none", "updated": None}
 
 # Conventional location of the maintainer-published feed. Override with --url.
 DEFAULT_FEED_URL = "https://raw.githubusercontent.com/bihanikeshav/promptry/main/prices.json"
@@ -431,18 +435,31 @@ def diff_rates(old: dict, new: dict) -> dict:
     return {"added": added, "removed": removed, "changed": changed}
 
 
-def apply_feed(data: dict) -> int:
-    """Merge a validated feed into RATES/REROUTES and update PRICES_META.
-    Returns the number of rates applied. Existing models are overwritten;
-    models absent from the feed are left untouched (feeds are additive)."""
+def apply_feed(data: dict, *, replace: bool | None = None) -> int:
+    """Apply a validated feed into RATES (and optional REROUTES).
+
+    Full LiteLLM catalogs replace the table; small patch feeds merge so tests
+    and ad-hoc additions still work. REROUTES in the feed are merged into the
+    code-level map (never wiping the xAI defaults just because a feed omitted them).
+    """
     validate_feed(data)
+    src = str(data.get("source") or "feed")
+    n_rates = len(data.get("rates") or {})
+    if replace is None:
+        replace = bool(
+            data.get("mode") == "replace"
+            or src.startswith("litellm")
+            or n_rates > 100
+        )
+    if replace:
+        RATES.clear()
     for name, r in data["rates"].items():
         RATES[name] = _normalize_rate(r)
-    for slug, pair in data.get("reroutes", {}).items():
+    for slug, pair in (data.get("reroutes") or {}).items():
         REROUTES[slug] = (pair[0], pair[1])
     if data.get("version"):
         PRICES_META["version"] = data["version"]
-    PRICES_META["source"] = data.get("source", "feed")
+    PRICES_META["source"] = src
     PRICES_META["updated"] = data.get("updated") or PRICES_META.get("updated")
     _recompute_rate_indexes()
     return len(data["rates"])
@@ -475,16 +492,36 @@ def refresh_from_feed(url: str | None = None, fetcher=None, persist: bool = True
     return {"url": url, "count": count, "diff": diff_rates(before, {k: dict(v) for k, v in RATES.items()})}
 
 
+def load_package_prices() -> int:
+    """Load the LiteLLM snapshot shipped inside the package (promptry/data/prices.json).
+
+    Returns number of rates applied, or 0 if missing/unreadable.
+    """
+    import json as _json
+    try:
+        from importlib.resources import files
+        resource = files("promptry.data").joinpath("prices.json")
+        if not resource.is_file():
+            return 0
+        data = _json.loads(resource.read_text(encoding="utf-8"))
+        n = apply_feed(data, replace=True)
+        if PRICES_META.get("source") in (None, "none", "feed"):
+            PRICES_META["source"] = data.get("source") or "package"
+        return n
+    except Exception:
+        return 0
+
+
 def load_persisted_prices() -> int:
-    """Apply a previously-refreshed ~/.promptry/prices.json if it exists, so
-    refreshed rates take effect on import. Returns the number applied (0 if no
-    file or it's unreadable — a bad cache must never break cost computation)."""
+    """Apply a previously-refreshed ~/.promptry/prices.json if it exists.
+    Returns the number applied (0 if no file or unreadable — never raises)."""
     import json as _json
     try:
         path = prices_file_path()
         if not path.is_file():
             return 0
         data = _json.loads(path.read_text(encoding="utf-8"))
+        # User refresh replaces the package snapshot entirely when it's a full catalog
         return apply_feed(data)
     except Exception:
         return 0

@@ -12,9 +12,11 @@ from promptry import pricing
 def _restore_pricing_globals():
     """The feed functions mutate module-global RATES/REROUTES/PRICES_META.
     Snapshot and restore so tests stay independent."""
+    pricing.ensure_prices_loaded()
     rates = {k: dict(v) for k, v in pricing.RATES.items()}
     reroutes = dict(pricing.REROUTES)
     meta = dict(pricing.PRICES_META)
+    loaded = pricing._prices_loaded
     yield
     pricing.RATES.clear()
     pricing.RATES.update(rates)
@@ -22,22 +24,25 @@ def _restore_pricing_globals():
     pricing.REROUTES.update(reroutes)
     pricing.PRICES_META.clear()
     pricing.PRICES_META.update(meta)
+    pricing._prices_loaded = loaded
+    pricing._recompute_rate_indexes()
 
 
 class TestExportFeed:
     def test_export_is_json_serializable_and_complete(self):
+        pricing.ensure_prices_loaded()
         feed = pricing.export_feed()
         assert set(feed) >= {"version", "rates", "reroutes"}
-        assert "gpt-4o" in feed["rates"]
-        # reroutes serialize as [effective_date, replacement] lists
+        assert len(feed["rates"]) > 0
+        # code-level xAI reroutes still serialize from REROUTES
         assert feed["reroutes"]["grok-3"] == ["2026-05-15", "grok-4.3"]
         json.dumps(feed)  # must not raise
 
     def test_export_round_trips_through_apply(self):
+        pricing.ensure_prices_loaded()
         feed = pricing.export_feed()
-        # applying the exported feed should be a no-op on the known models
         before = {k: dict(v) for k, v in pricing.RATES.items()}
-        pricing.apply_feed(feed)
+        pricing.apply_feed(feed, replace=True)
         assert pricing.RATES == before
 
 

@@ -1456,38 +1456,43 @@ Aliases: `PROMPTRY_DASHBOARD_TOKEN` is accepted as a fallback name for the same 
 
 Public when locked: the SPA shell, static assets, `/api/health`, `/api/auth/status|login|logout`. Every other `/api/*` route returns **401** without a valid session or Bearer.
 
-### Price feed (auto-refresh)
+### Price feed (LiteLLM catalog)
 
-Cost uses a rate table (`$/1M` tokens, cache-aware). Sources, in order of freshness:
+**We do not maintain our own model price list.** The catalog is **LiteLLM’s**
+`model_cost` map (thousands of provider/model slugs), snapshotted and published.
 
-1. **Bundled snapshot** shipped inside the package (always available offline).
-2. **Persisted refresh** at `~/.promptry/prices.json` (or `PROMPTRY_PRICES_FILE`).
-3. **Published feed** — [`prices.json`](https://github.com/bihanikeshav/promptry/blob/main/prices.json) on `main`, also at  
-   `https://raw.githubusercontent.com/bihanikeshav/promptry/main/prices.json`.
+| Source | When |
+|--------|------|
+| **Packaged** `promptry/data/prices.json` | Shipped in the wheel — offline default |
+| **Published feed** on GitHub `main` | Dashboard pulls on start + every 24h |
+| **Live litellm** | `promptry prices --litellm` or `POST /api/cost/refresh-rates?source=litellm` |
+| **`[pricing.*]` in promptry.toml** | Your overrides for missing/custom slugs |
 
-**Dashboard default:** on startup, and then every **24 hours**, pull the published feed and write it to the persisted path. Opt out:
+**Not from LiteLLM:** optional **reroutes** (e.g. xAI retired slugs → bill as
+`grok-4.3`) stay a tiny hand map in code. They only apply when you pass a call
+date into `calculate_cost`. Skeptical? Ignore them — cost by the logged model name.
+
+**Dashboard default:** pull the published feed on startup and every **24h**. Opt out:
 
 ```bash
-export PROMPTRY_PRICES_AUTO_REFRESH=0          # stay offline
-export PROMPTRY_PRICES_REFRESH_HOURS=12        # optional interval
-export PROMPTRY_PRICES_FEED_URL=https://...    # optional alternate feed
+export PROMPTRY_PRICES_AUTO_REFRESH=0
+export PROMPTRY_PRICES_REFRESH_HOURS=12
+export PROMPTRY_PRICES_FEED_URL=https://raw.githubusercontent.com/bihanikeshav/promptry/main/prices.json
 ```
 
-**CLI (always opt-in network):**
+**CLI:**
 
 ```bash
-promptry prices                  # list current rates + provenance
+promptry prices                  # list rates + provenance (source=litellm|package|…)
 promptry prices --refresh        # pull published feed → ~/.promptry/prices.json
-promptry prices --litellm        # merge from a local litellm install (no network)
+promptry prices --litellm        # rebuild from local litellm (needs promptry[llm])
 promptry prices --check          # ledger models with no rate
-promptry prices --export out.json
 ```
 
-**Maintainer path:** a daily GitHub Action runs `scripts/update_prices_feed.py` (litellm + bundled) and commits `prices.json` when rates change. Running dashboards pick up the new file on their next pull — they do **not** call vendor pricing APIs themselves.
+**Maintainer path:** daily GitHub Action runs `scripts/update_prices_feed.py`
+(requires litellm) and commits `prices.json` + `promptry/data/prices.json`.
 
-**Manual API:** `GET /api/cost/prices-meta`, `POST /api/cost/refresh-rates?source=feed|litellm|both`.
-
-Custom gaps still use `[pricing.<model>]` overrides in `promptry.toml`.
+**API:** `GET /api/cost/prices-meta`, `POST /api/cost/refresh-rates?source=feed|litellm|both`.
 
 ## Config
 

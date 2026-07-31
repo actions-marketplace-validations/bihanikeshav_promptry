@@ -27,17 +27,17 @@ jobs:
           # Editable install so scripts/ can import promptry from this tree
           pip install -e ".[llm]"
 
-      - name: Refresh prices.json
-        run: python scripts/update_prices_feed.py --out prices.json
+      - name: Refresh prices from LiteLLM
+        run: python scripts/update_prices_feed.py
 
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add prices.json
+          git add prices.json promptry/data/prices.json
           if git diff --staged --quiet; then
             echo "No price changes."
           else
-            git commit -m "chore(prices): refresh feed $(date -u +%Y-%m-%d)"
+            git commit -m "chore(prices): refresh LiteLLM feed $(date -u +%Y-%m-%d)"
             git push
           fi

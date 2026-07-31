@@ -1,4 +1,8 @@
-"""Tests for promptry.pricing — cache-aware cost math."""
+"""Tests for promptry.pricing — cache-aware cost math.
+
+Product catalog = LiteLLM snapshot. These tests pin a small **fixture overlay**
+of rates so dollar assertions stay stable when litellm updates.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +20,31 @@ from promptry.pricing import (
     resolve_model,
     _lookup_rates,
 )
+
+# Stable numbers for unit tests of math / prefix / reroute behavior only.
+_FIXTURE_RATES = {
+    "gpt-4o": {"in": 2.50, "cached": 1.25, "cache_write": 2.50, "out": 10.00},
+    "gpt-4o-mini": {"in": 0.15, "cached": 0.075, "cache_write": 0.15, "out": 0.60},
+    "claude-sonnet-4": {"in": 3.00, "cached": 0.30, "cache_write": 3.75, "out": 15.00},
+    "gemini-2.5-flash": {"in": 0.30, "cached": 0.075, "cache_write": 0.30, "out": 2.50},
+    "grok-2": {"in": 2.00, "cached": 0.50, "cache_write": 2.00, "out": 10.00},
+    "grok-3": {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
+    "grok-4": {"in": 3.00, "cached": 0.75, "cache_write": 3.00, "out": 15.00},
+    "grok-4.3": {"in": 1.25, "cached": 0.31, "cache_write": 1.25, "out": 2.50},
+    "grok-4-3": {"in": 1.25, "cached": 0.31, "cache_write": 1.25, "out": 2.50},
+    "grok-4-fast": {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    "grok-4-fast-non-reasoning": {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+    "grok-4-1-fast-non-reasoning": {"in": 0.20, "cached": 0.05, "cache_write": 0.20, "out": 0.50},
+}
+
+
+@pytest.fixture(autouse=True)
+def _fixture_rate_overlay():
+    pricing.ensure_prices_loaded()
+    for name, rate in _FIXTURE_RATES.items():
+        RATES[name] = dict(rate)
+    pricing._recompute_rate_indexes()
+    yield
 
 
 class TestLookupRates:
@@ -285,14 +314,16 @@ class TestRateIndexPerf:
         assert _lookup_rates("gpt-4o")["out"] == pytest.approx(222.0)
 
     def test_cache_does_not_leak_deleted_keys_rates(self):
-        # Prime the cache for "gpt-4o", then delete that key and add a
-        # different one so the total key count is unchanged (no length
-        # mismatch to trigger self-healing). The deleted key's rates must
-        # never be handed back for a query that no longer matches anything.
-        old_rate = dict(_lookup_rates("gpt-4o"))
-        del RATES["gpt-4o"]
+        # Use a unique slug so other litellm keys (e.g. gpt-4) can't prefix-match.
+        slug = "zzunique-price-model"
+        RATES[slug] = {"in": 1.0, "cached": 0.5, "cache_write": 1.0, "out": 2.0}
+        pricing._recompute_rate_indexes()
+        old_rate = dict(_lookup_rates(slug))
+        del RATES[slug]
         RATES["zzz-replacement-model"] = old_rate
-        result = _lookup_rates("gpt-4o")
+        # same key count as before this swap only if we also drop one elsewhere —
+        # force recompute off by matching length: add and delete within same size
+        result = _lookup_rates(slug)
         assert result is None
         assert _lookup_rates("zzz-replacement-model") == old_rate
 

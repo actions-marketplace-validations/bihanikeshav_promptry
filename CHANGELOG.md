@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.7 (2026-07-31)
+
+- **Pricing catalog = LiteLLM only.** Removed the hand-maintained ~24-model
+  rate table. Rates come from LiteLLM’s `model_cost` map via:
+  - packaged `promptry/data/prices.json` (CI-generated snapshot),
+  - published `prices.json` on GitHub (dashboard 24h pull / `prices --refresh`),
+  - or live `promptry prices --litellm` when litellm is installed.
+- Provider-prefixed slugs also register bare aliases (`azure_ai/grok-4` → `grok-4`).
+- **Reroutes** remain a small optional xAI map in code — **not** from LiteLLM.
+
 ## 1.0.6 (2026-07-31)
 
 - **Docs: shared dashboard secret** — README + guide + INTEGRATION document the
