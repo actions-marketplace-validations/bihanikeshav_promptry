@@ -10,25 +10,56 @@ inside its handler functions, so the patch is honored everywhere.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from promptry.storage import get_storage  # noqa: F401 -- see module docstring
+from promptry.dashboard.auth import AuthMiddleware, auth_required
 
-app = FastAPI(title="promptry dashboard", docs_url="/api/docs")
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Pull the published prices.json feed on start + every 24h (opt-out via
+    # PROMPTRY_PRICES_AUTO_REFRESH=0). Failures are logged, never fatal.
+    try:
+        from promptry.pricing import start_dashboard_price_refresh
+        start_dashboard_price_refresh()
+    except Exception:
+        pass
+    yield
+
+
+app = FastAPI(title="promptry dashboard", docs_url="/api/docs", lifespan=_lifespan)
+
+# Auth first (outermost added = runs first on request in Starlette).
+# When PROMPTRY_AUTH_TOKEN is set, /api/* requires a session cookie or Bearer.
+app.add_middleware(AuthMiddleware)
+
+# CORS: open for local tooling when auth is off; with auth enabled, same-origin
+# only (cookies + Bearer from other origins should go through your proxy, not
+# browser cross-site).
+if auth_required():
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[],  # same-origin; no cross-origin browser access
+        allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH"],
+        allow_headers=["Authorization", "Content-Type"],
+        allow_credentials=True,
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH"],
+        allow_headers=["*"],
+    )
 
 from promptry.dashboard.routers import (  # noqa: E402 -- after app/get_storage are defined
     admin,
+    auth_routes,
     prompts,
     evals,
     cost,
@@ -37,6 +68,7 @@ from promptry.dashboard.routers import (  # noqa: E402 -- after app/get_storage 
     playground,
 )
 
+app.include_router(auth_routes.router)
 app.include_router(admin.router)
 app.include_router(prompts.router)
 app.include_router(evals.router)

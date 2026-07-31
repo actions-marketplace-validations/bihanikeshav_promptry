@@ -1,0 +1,43 @@
+# Keep the published price feed (prices.json on main) current.
+# Dashboard clients auto-pull this file on start + every 24h.
+name: Update prices feed
+
+on:
+  schedule:
+    # 06:15 UTC daily
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install promptry + litellm
+        run: |
+          python -m pip install -U pip
+          # Editable install so scripts/ can import promptry from this tree
+          pip install -e ".[llm]"
+
+      - name: Refresh prices.json
+        run: python scripts/update_prices_feed.py --out prices.json
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add prices.json
+          if git diff --staged --quiet; then
+            echo "No price changes."
+          else
+            git commit -m "chore(prices): refresh feed $(date -u +%Y-%m-%d)"
+            git push
+          fi

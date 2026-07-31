@@ -24,6 +24,15 @@
 
 [dashboard]
 # default_days = 14           # default time window in the dashboard
+# cms = false                 # allow prompt edits from the UI (needs render_prompt in app)
+#
+# Auth is env-only (never commit secrets) — one shared secret for the whole team:
+#   PROMPTRY_AUTH_TOKEN=...   # openssl rand -hex 32; store in vault; rotate = restart + update vault
+#   Browser session cookie lasts 7 days; Bearer uses the same secret.
+# Prices (dashboard auto-pulls published prices.json every 24h by default):
+#   PROMPTRY_PRICES_AUTO_REFRESH=0     # stay offline
+#   PROMPTRY_PRICES_REFRESH_HOURS=24
+#   PROMPTRY_PRICES_FEED_URL=https://raw.githubusercontent.com/bihanikeshav/promptry/main/prices.json
 
 [judge]
 # model = "gpt-4o-mini"       # LLM-judge model id for llm_judge assertions

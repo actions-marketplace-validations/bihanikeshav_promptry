@@ -145,6 +145,56 @@ class TestRefreshFromFeed:
         assert cost == pytest.approx(1.0)
 
 
+class TestAutoRefresh:
+    def test_need_refresh_when_never_updated(self, monkeypatch):
+        pricing.PRICES_META["updated"] = None
+        monkeypatch.delenv("PROMPTRY_PRICES_FILE", raising=False)
+        # point at a missing file so mtime can't save us
+        monkeypatch.setenv("PROMPTRY_PRICES_FILE", "/tmp/promptry-no-such-prices.json")
+        pricing._prices_loaded = True  # skip load
+        assert pricing.prices_need_refresh(max_age_hours=24) is True
+
+    def test_stale_after_age(self, monkeypatch):
+        pricing.PRICES_META["updated"] = "2000-01-01T00:00:00Z"
+        pricing._prices_loaded = True
+        assert pricing.prices_need_refresh(max_age_hours=24) is True
+
+    def test_fresh_skips_network(self, monkeypatch):
+        from datetime import datetime, timezone
+        pricing.PRICES_META["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        pricing._prices_loaded = True
+        called = {"n": 0}
+
+        def boom(_url):
+            called["n"] += 1
+            raise AssertionError("should not fetch")
+
+        res = pricing.maybe_refresh_prices(max_age_hours=24, fetcher=boom, force=False)
+        assert res is None
+        assert called["n"] == 0
+
+    def test_force_refreshes(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_PRICES_FILE", str(tmp_path / "prices.json"))
+        pricing.PRICES_META["updated"] = "2099-01-01T00:00:00Z"  # "fresh"
+        pricing._prices_loaded = True
+        feed = {"version": "2099-02-02", "rates": {"auto-model-z": {"in": 1.0, "out": 2.0}}}
+        res = pricing.maybe_refresh_prices(
+            force=True,
+            fetcher=lambda _u: json.dumps(feed),
+        )
+        assert res is not None
+        assert pricing.is_known_model("auto-model-z")
+
+    def test_auto_refresh_env_flag(self, monkeypatch):
+        monkeypatch.delenv("PROMPTRY_PRICES_AUTO_REFRESH", raising=False)
+        assert pricing.auto_refresh_enabled(default=True) is True
+        assert pricing.auto_refresh_enabled(default=False) is False
+        monkeypatch.setenv("PROMPTRY_PRICES_AUTO_REFRESH", "0")
+        assert pricing.auto_refresh_enabled(default=True) is False
+        monkeypatch.setenv("PROMPTRY_PRICES_AUTO_REFRESH", "1")
+        assert pricing.auto_refresh_enabled(default=False) is True
+
+
 class TestLazyPersistedLoad:
     """perf: load_persisted_prices() runs on first pricing use, not at
     import time. Simulate a fresh process by resetting the lazy-load flag."""

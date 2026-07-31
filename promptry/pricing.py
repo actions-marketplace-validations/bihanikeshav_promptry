@@ -490,6 +490,180 @@ def load_persisted_prices() -> int:
         return 0
 
 
+# --------------------------------------------------------------------------
+# Auto-refresh (dashboard): pull the published feed on startup + every N hours.
+#
+# The feed is a static JSON file in the promptry repo (prices.json on main),
+# not a live vendor API. CI can update that file daily from litellm; each
+# dashboard process then pulls it. Network is opt-out for the dashboard
+# (default on) and always opt-in for the CLI (`promptry prices --refresh`).
+# --------------------------------------------------------------------------
+
+_DEFAULT_REFRESH_HOURS = 24.0
+_auto_refresh_thread: threading.Thread | None = None
+_auto_refresh_lock = threading.Lock()
+
+
+def prices_feed_url() -> str:
+    """Published feed URL. Override with PROMPTRY_PRICES_FEED_URL."""
+    import os
+    return (os.environ.get("PROMPTRY_PRICES_FEED_URL") or "").strip() or DEFAULT_FEED_URL
+
+
+def prices_stale_hours() -> float | None:
+    """How many hours since PRICES_META['updated'] (or the persisted file's
+    mtime). None if we have no timestamp at all (bundled snapshot never
+    refreshed)."""
+    ensure_prices_loaded()
+    from datetime import datetime, timezone
+    updated = PRICES_META.get("updated")
+    if updated:
+        try:
+            ts = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return max(0.0, (datetime.now(timezone.utc) - ts.astimezone(timezone.utc)).total_seconds() / 3600.0)
+        except ValueError:
+            pass
+    try:
+        path = prices_file_path()
+        if path.is_file():
+            mtime = path.stat().st_mtime
+            return max(0.0, (datetime.now(timezone.utc).timestamp() - mtime) / 3600.0)
+    except OSError:
+        pass
+    return None
+
+
+def prices_need_refresh(max_age_hours: float = _DEFAULT_REFRESH_HOURS) -> bool:
+    """True if we should hit the network for a fresh feed."""
+    age = prices_stale_hours()
+    if age is None:
+        return True  # never refreshed on this machine
+    return age >= float(max_age_hours)
+
+
+def auto_refresh_enabled(default: bool = False) -> bool:
+    """PROMPTRY_PRICES_AUTO_REFRESH: 1/true/on enables, 0/false/off disables.
+    When unset, returns `default` (dashboard passes True; CLI uses False)."""
+    import os
+    raw = (os.environ.get("PROMPTRY_PRICES_AUTO_REFRESH") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+def auto_refresh_interval_hours() -> float:
+    import os
+    raw = (os.environ.get("PROMPTRY_PRICES_REFRESH_HOURS") or "").strip()
+    if not raw:
+        return _DEFAULT_REFRESH_HOURS
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return _DEFAULT_REFRESH_HOURS
+
+
+def maybe_refresh_prices(
+    *,
+    max_age_hours: float | None = None,
+    url: str | None = None,
+    force: bool = False,
+    fetcher=None,
+) -> dict | None:
+    """Fetch + apply + persist the published feed if stale (or force=True).
+
+    Returns the refresh_from_feed result dict, or None if skipped / failed.
+    Never raises — a bad network or feed must not take down the dashboard.
+    """
+    import logging
+    log = logging.getLogger("promptry.pricing")
+    hours = _DEFAULT_REFRESH_HOURS if max_age_hours is None else float(max_age_hours)
+    if not force and not prices_need_refresh(hours):
+        return None
+    try:
+        ensure_prices_loaded()
+        from datetime import datetime, timezone
+        res = refresh_from_feed(url or prices_feed_url(), fetcher=fetcher, persist=True)
+        # Ensure provenance carries a wall-clock timestamp even if the feed
+        # omitted `updated` (older exports).
+        if not PRICES_META.get("updated"):
+            PRICES_META["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            # re-persist with the stamp so age checks work offline
+            try:
+                import json as _json
+                path = prices_file_path()
+                data = _json.loads(path.read_text(encoding="utf-8")) if path.is_file() else export_feed()
+                data["updated"] = PRICES_META["updated"]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(_json.dumps(data, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        log.info(
+            "price feed refreshed: %s rates from %s",
+            res.get("count"), res.get("url"),
+        )
+        return res
+    except Exception as exc:
+        log.warning("price feed refresh failed: %s", exc)
+        return None
+
+
+def start_auto_refresh_loop(
+    *,
+    interval_hours: float | None = None,
+    url: str | None = None,
+    force_first: bool = True,
+) -> threading.Thread | None:
+    """Background thread: refresh once (if force_first) then every interval.
+
+    Idempotent — a second call is a no-op while the first thread is alive.
+    Daemon thread so it never blocks process exit.
+    """
+    global _auto_refresh_thread
+    with _auto_refresh_lock:
+        if _auto_refresh_thread is not None and _auto_refresh_thread.is_alive():
+            return _auto_refresh_thread
+        hours = auto_refresh_interval_hours() if interval_hours is None else float(interval_hours)
+        hours = max(1.0, hours)
+        feed_url = url  # capture
+
+        def _loop() -> None:
+            import time
+            if force_first:
+                maybe_refresh_prices(force=True, url=feed_url)
+            while True:
+                time.sleep(hours * 3600.0)
+                maybe_refresh_prices(force=True, url=feed_url)
+
+        t = threading.Thread(target=_loop, name="promptry-price-refresh", daemon=True)
+        t.start()
+        _auto_refresh_thread = t
+        return t
+
+
+def start_dashboard_price_refresh() -> threading.Thread | None:
+    """Dashboard startup hook. Auto-refresh is ON by default for the dashboard
+    process; set PROMPTRY_PRICES_AUTO_REFRESH=0 to stay offline.
+
+    Skipped automatically under pytest so unit tests never hit the network.
+    """
+    import os
+    if os.environ.get("PYTEST_CURRENT_TEST") is not None:
+        return None
+    if os.environ.get("PROMPTRY_TESTING") in ("1", "true", "yes"):
+        return None
+    if not auto_refresh_enabled(default=True):
+        return None
+    return start_auto_refresh_loop(
+        interval_hours=auto_refresh_interval_hours(),
+        url=prices_feed_url(),
+        force_first=True,
+    )
+
+
 def build_cost_report(
     storage,
     days: int = 7,

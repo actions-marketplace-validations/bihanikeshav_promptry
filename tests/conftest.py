@@ -18,7 +18,9 @@ def registry(storage):
 
 
 @pytest.fixture(autouse=True)
-def clean_state():
+def clean_state(monkeypatch):
+    # Dashboard lifespan would otherwise pull the public price feed during tests.
+    monkeypatch.setenv("PROMPTRY_PRICES_AUTO_REFRESH", "0")
     reset_registry()
     reset_config()
     clear_suites()
@@ -26,3 +28,4 @@ def clean_state():
     reset_registry()
     reset_config()
     clear_suites()
+

@@ -63,12 +63,107 @@ export function backendHost(): string {
   return window.location.host;
 }
 
+/** Origin of the API (no trailing slash). Prefer page origin over hard-coded ports. */
+export function backendOrigin(): string {
+  if (BASE) {
+    try { return new URL(BASE, window.location.origin).origin; } catch { /* fall through */ }
+  }
+  return window.location.origin;
+}
+
+/** Example curl for feedback ingest — host matches how the user opened the UI. */
+export function feedbackCurlExample(opts: { authRequired?: boolean } = {}): string {
+  const origin = backendOrigin();
+  const auth = opts.authRequired
+    ? ` -H 'Authorization: Bearer $PROMPTRY_AUTH_TOKEN'`
+    : "";
+  return (
+    `curl -X POST ${origin}/api/feedback` +
+    ` -H 'Content-Type: application/json'` +
+    auth +
+    ` -d '{"request_id":"abc","rating":1}'`
+  );
+}
+
+export class AuthError extends Error {
+  constructor(message = "authentication required") {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
+export type AuthStatus = {
+  required: boolean;
+  authenticated: boolean;
+};
+
+/** Fired when any API call gets 401 so the auth gate can show the login form. */
+export const AUTH_REQUIRED_EVENT = "promptry:auth-required";
+
+async function request(path: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    credentials: "include",
+  });
+  if (res.status === 401) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+    }
+    throw new AuthError();
+  }
+  return res;
+}
+
 async function fetchJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await request(path);
   if (!res.ok) {
     throw new Error(`API error ${res.status}: ${await res.text()}`);
   }
   return res.json();
+}
+
+async function fetchJsonMutate<T>(path: string, init: RequestInit): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.body != null && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const res = await request(path, { ...init, headers });
+  if (!res.ok) {
+    throw new Error(`API error ${res.status}: ${await res.text()}`);
+  }
+  // 204 / empty body
+  const text = await res.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
+}
+
+// ---- Auth ----
+
+export function getAuthStatus(): Promise<AuthStatus> {
+  // status is public even when auth is on — do not go through request() 401 path
+  // for the initial gate check (unauthenticated users must read this).
+  return fetch(`${BASE}/api/auth/status`, { credentials: "include" }).then(async (res) => {
+    if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+    return res.json();
+  });
+}
+
+export async function login(token: string): Promise<AuthStatus & { ok: boolean }> {
+  const res = await fetch(`${BASE}/api/auth/login`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { detail?: string }).detail || `login failed (${res.status})`);
+  }
+  return data as AuthStatus & { ok: boolean };
+}
+
+export async function logout(): Promise<AuthStatus & { ok: boolean }> {
+  return fetchJsonMutate("/api/auth/logout", { method: "POST" });
 }
 
 // ---- Onboarding ----
@@ -195,13 +290,7 @@ export function getSuiteCandidates(params: {
 }
 
 export async function createSuite(body: CreateSuiteRequest): Promise<CreateSuiteResponse> {
-  const res = await fetch(`${BASE}/api/suites`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
-  return res.json();
+  return fetchJsonMutate("/api/suites", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function getSuiteDefinition(name: string): Promise<SuiteDefinitionResponse> {
@@ -218,25 +307,19 @@ export function listExamples(name: string): Promise<{ examples: GoldenExample[] 
   return fetchJson(`/api/prompts/${encodeURIComponent(name)}/examples`);
 }
 export async function addExample(name: string, invocationId: number): Promise<{ ok: boolean; id: number }> {
-  const res = await fetch(`${BASE}/api/prompts/${encodeURIComponent(name)}/examples`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
+  return fetchJsonMutate(`/api/prompts/${encodeURIComponent(name)}/examples`, {
+    method: "POST",
     body: JSON.stringify({ invocation_id: invocationId }),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
-  return res.json();
 }
 export async function deleteExample(id: number): Promise<{ ok: boolean }> {
-  const res = await fetch(`${BASE}/api/examples/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
+  return fetchJsonMutate(`/api/examples/${id}`, { method: "DELETE" });
 }
 export async function runExamples(name: string, model: string, threshold = 0.8): Promise<GoldenRunResult> {
-  const res = await fetch(`${BASE}/api/prompts/${encodeURIComponent(name)}/examples/run`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
+  return fetchJsonMutate(`/api/prompts/${encodeURIComponent(name)}/examples/run`, {
+    method: "POST",
     body: JSON.stringify({ model, threshold }),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
-  return res.json();
 }
 
 export function getCostCoverage(days = 30): Promise<CostCoverage> {
@@ -247,23 +330,17 @@ export function getConfig(): Promise<ProjectConfig> {
   return fetchJson(`/api/config`);
 }
 export async function updateConfig(body: Partial<ProjectConfig>) {
-  const res = await fetch(`${BASE}/api/config`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
+  return fetchJsonMutate(`/api/config`, { method: "POST", body: JSON.stringify(body) });
 }
 
 export function listBudgets(): Promise<{ budgets: BudgetStatus[] }> {
   return fetchJson(`/api/budgets`);
 }
 export async function createBudget(b: { scope: string; target?: string | null; period: string; limit_usd: number }) {
-  const res = await fetch(`${BASE}/api/budgets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
+  return fetchJsonMutate(`/api/budgets`, { method: "POST", body: JSON.stringify(b) });
 }
 export async function deleteBudget(id: number) {
-  const res = await fetch(`${BASE}/api/budgets/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
+  return fetchJsonMutate(`/api/budgets/${id}`, { method: "DELETE" });
 }
 
 export function listInvocations(params: { name?: string; days?: number; limit?: number; offset?: number; capturedOnly?: boolean; order?: "recent" | "cost"; sort?: string; direction?: "asc" | "desc"; minRating?: number } = {}): Promise<{ invocations: InvocationRow[] }> {
@@ -305,13 +382,10 @@ export function getInvocationScan(id: number): Promise<PiiScan> {
 }
 
 export async function promotePrompt(name: string, version: number, env: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`${BASE}/api/prompts/${encodeURIComponent(name)}/promote`, {
+  return fetchJsonMutate(`/api/prompts/${encodeURIComponent(name)}/promote`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ version, env }),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
-  return res.json();
 }
 
 export function getSuiteBisect(name: string): Promise<BisectResult> {
@@ -319,29 +393,20 @@ export function getSuiteBisect(name: string): Promise<BisectResult> {
 }
 
 export async function lintPromptText(content: string): Promise<{ variables: string[]; lint: LintFinding[] }> {
-  const res = await fetch(`${BASE}/api/prompts/lint`, {
+  return fetchJsonMutate(`/api/prompts/lint`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
 }
 
 export async function savePromptContent(
   name: string,
   content: string
 ): Promise<{ ok: boolean; version: number; hash: string }> {
-  const res = await fetch(
-    `${BASE}/api/prompts/${encodeURIComponent(name)}/content`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    }
-  );
-  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
-  return res.json();
+  return fetchJsonMutate(`/api/prompts/${encodeURIComponent(name)}/content`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
 }
 
 // ---- Models ----
@@ -370,15 +435,10 @@ export async function runPlaygroundEval(
   response: string,
   assertions: PlaygroundAssertionDef[],
 ): Promise<PlaygroundEvalResponse> {
-  const res = await fetch(`${BASE}/api/playground/eval`, {
+  return fetchJsonMutate(`/api/playground/eval`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ response, assertions }),
   });
-  if (!res.ok) {
-    throw new Error(`API error ${res.status}: ${await res.text()}`);
-  }
-  return res.json();
 }
 
 export interface PlaygroundModelRunResponse {
@@ -396,15 +456,10 @@ export async function runPlaygroundModel(req: {
   context: string;
   temperature: number;
 }): Promise<PlaygroundModelRunResponse> {
-  const res = await fetch(`${BASE}/api/playground/model`, {
+  return fetchJsonMutate(`/api/playground/model`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
   });
-  if (!res.ok) {
-    throw new Error(`API error ${res.status}: ${await res.text()}`);
-  }
-  return res.json();
 }
 
 // ---- Cost ----

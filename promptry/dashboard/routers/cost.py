@@ -179,9 +179,55 @@ def delete_budget(budget_id: int):
     return {"ok": True}
 
 
+@router.get("/api/cost/prices-meta")
+def cost_prices_meta():
+    """Provenance of the rate table currently in memory (source, updated, age)."""
+    from promptry import pricing
+    pricing.ensure_prices_loaded()
+    age = pricing.prices_stale_hours()
+    return {
+        "meta": dict(pricing.PRICES_META),
+        "model_count": len(pricing.RATES),
+        "age_hours": age,
+        "feed_url": pricing.prices_feed_url(),
+        "auto_refresh": pricing.auto_refresh_enabled(default=True),
+        "refresh_interval_hours": pricing.auto_refresh_interval_hours(),
+        "persisted_path": str(pricing.prices_file_path()),
+    }
+
+
 @router.post("/api/cost/refresh-rates")
-def cost_refresh_rates():
-    """Pull current rates from litellm's model_cost into the rate table."""
-    from promptry.pricing import refresh_rates_from_litellm
-    n = refresh_rates_from_litellm()
-    return {"ok": True, "updated": n}
+def cost_refresh_rates(source: str = "feed"):
+    """Refresh the rate table.
+
+    * ``source=feed`` (default) — pull the published ``prices.json`` feed
+      (GitHub raw URL, or ``PROMPTRY_PRICES_FEED_URL``).
+    * ``source=litellm`` — merge rates from a locally-installed litellm.
+    * ``source=both`` — feed first, then litellm on top.
+    """
+    from promptry import pricing
+    pricing.ensure_prices_loaded()
+    source = (source or "feed").strip().lower()
+    result: dict = {"ok": True, "source": source}
+
+    if source in ("feed", "both"):
+        res = pricing.maybe_refresh_prices(force=True)
+        result["feed"] = res if res is not None else {"ok": False, "error": "refresh failed or skipped"}
+    if source in ("litellm", "both"):
+        n = pricing.refresh_rates_from_litellm()
+        result["litellm_updated"] = n
+        if n:
+            # Persist litellm merge so restarts keep it
+            try:
+                import json as _json
+                path = pricing.prices_file_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(_json.dumps(pricing.export_feed(), indent=2), encoding="utf-8")
+            except Exception:
+                pass
+    if source not in ("feed", "litellm", "both"):
+        from fastapi import HTTPException
+        raise HTTPException(400, detail="source must be feed|litellm|both")
+    result["meta"] = dict(pricing.PRICES_META)
+    result["model_count"] = len(pricing.RATES)
+    return result

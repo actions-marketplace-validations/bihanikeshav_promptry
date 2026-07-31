@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { Wordmark } from "./ui";
-import { backendHost, getCostData } from "../api/client";
+import { backendHost, getAuthStatus, getCostData, logout } from "../api/client";
 import type { CostResponse } from "../api/types";
 
 function fmtTok(n: number): string {
@@ -66,6 +66,7 @@ function useVersion(): string {
 function ConnectionStatus() {
   const [state, setState] = useState<"checking" | "connected" | "offline">("checking");
   const [version, setVersion] = useState<string>("");
+  const [authRequired, setAuthRequired] = useState(false);
   useEffect(() => {
     let alive = true;
     const ping = () =>
@@ -75,17 +76,40 @@ function ConnectionStatus() {
         .catch(() => { if (alive) setState("offline"); });
     ping();
     const t = setInterval(ping, 15000);
+    getAuthStatus().then((s) => { if (alive) setAuthRequired(!!s.required); }).catch(() => {});
     return () => { alive = false; clearInterval(t); };
   }, []);
   const color = state === "connected" ? "var(--success)" : state === "offline" ? "var(--error)" : "var(--muted)";
   return (
-    <div style={{ padding: "8px 10px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ width: 7, height: 7, borderRadius: 999, background: color, boxShadow: `0 0 0 3px color-mix(in oklch, ${color} 18%, transparent)` }} />
-      <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {state === "offline" ? "disconnected" : backendHost()}
-      </span>
-      {state === "connected" && version && (
-        <span className="mono" style={{ fontSize: 10, color: "var(--muted)", marginLeft: "auto" }}>v{version}</span>
+    <div style={{ borderTop: "1px solid var(--border)" }}>
+      <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ width: 7, height: 7, borderRadius: 999, background: color, boxShadow: `0 0 0 3px color-mix(in oklch, ${color} 18%, transparent)` }} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {state === "offline" ? "disconnected" : backendHost()}
+        </span>
+        {state === "connected" && version && (
+          <span className="mono" style={{ fontSize: 10, color: "var(--muted)", marginLeft: "auto" }}>v{version}</span>
+        )}
+      </div>
+      {authRequired && (
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            logout()
+              .catch(() => {})
+              .finally(() => window.location.reload());
+          }}
+          style={{
+            width: "100%",
+            justifyContent: "center",
+            margin: "0 0 8px",
+            fontSize: 11.5,
+            color: "var(--secondary)",
+          }}
+        >
+          Sign out
+        </button>
       )}
     </div>
   );

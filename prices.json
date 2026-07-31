@@ -1,0 +1,185 @@
+{
+  "version": "2026-07-31",
+  "updated": "2026-07-31T01:45:56Z",
+  "rates": {
+    "gpt-4o": {
+      "in": 2.5,
+      "cached": 1.25,
+      "cache_write": 2.5,
+      "out": 10.0
+    },
+    "gpt-4o-mini": {
+      "in": 0.15,
+      "cached": 0.075,
+      "cache_write": 0.15,
+      "out": 0.6
+    },
+    "gpt-4.1": {
+      "in": 2.0,
+      "cached": 0.5,
+      "cache_write": 2.0,
+      "out": 8.0
+    },
+    "gpt-4.1-mini": {
+      "in": 0.4,
+      "cached": 0.1,
+      "cache_write": 0.4,
+      "out": 1.6
+    },
+    "gpt-4.1-nano": {
+      "in": 0.1,
+      "cached": 0.025,
+      "cache_write": 0.1,
+      "out": 0.4
+    },
+    "openai/gpt-4.1-nano": {
+      "in": 0.1,
+      "cached": 0.025,
+      "cache_write": 0.1,
+      "out": 0.4
+    },
+    "gpt-5.4-nano": {
+      "in": 0.2,
+      "cached": 0.02,
+      "cache_write": 0.2,
+      "out": 1.25
+    },
+    "claude-opus-4": {
+      "in": 15.0,
+      "cached": 1.5,
+      "cache_write": 18.75,
+      "out": 75.0
+    },
+    "claude-sonnet-4": {
+      "in": 3.0,
+      "cached": 0.3,
+      "cache_write": 3.75,
+      "out": 15.0
+    },
+    "claude-haiku-4-5": {
+      "in": 0.8,
+      "cached": 0.08,
+      "cache_write": 1.0,
+      "out": 4.0
+    },
+    "gemini-2.5-pro": {
+      "in": 1.25,
+      "cached": 0.31,
+      "cache_write": 1.25,
+      "out": 10.0
+    },
+    "gemini-2.5-flash": {
+      "in": 0.3,
+      "cached": 0.075,
+      "cache_write": 0.3,
+      "out": 2.5
+    },
+    "grok-2": {
+      "in": 2.0,
+      "cached": 0.5,
+      "cache_write": 2.0,
+      "out": 10.0
+    },
+    "grok-3": {
+      "in": 3.0,
+      "cached": 0.75,
+      "cache_write": 3.0,
+      "out": 15.0
+    },
+    "grok-4": {
+      "in": 3.0,
+      "cached": 0.75,
+      "cache_write": 3.0,
+      "out": 15.0
+    },
+    "grok-4-fast": {
+      "in": 0.2,
+      "cached": 0.05,
+      "cache_write": 0.2,
+      "out": 0.5
+    },
+    "grok-4-fast-non-reasoning": {
+      "in": 0.2,
+      "cached": 0.05,
+      "cache_write": 0.2,
+      "out": 0.5
+    },
+    "grok-4-fast-reasoning": {
+      "in": 0.2,
+      "cached": 0.05,
+      "cache_write": 0.2,
+      "out": 0.5
+    },
+    "grok-4-1": {
+      "in": 3.0,
+      "cached": 0.75,
+      "cache_write": 3.0,
+      "out": 15.0
+    },
+    "grok-4-1-fast": {
+      "in": 0.2,
+      "cached": 0.05,
+      "cache_write": 0.2,
+      "out": 0.5
+    },
+    "grok-4-1-fast-non-reasoning": {
+      "in": 0.2,
+      "cached": 0.05,
+      "cache_write": 0.2,
+      "out": 0.5
+    },
+    "grok-4-1-fast-reasoning": {
+      "in": 0.2,
+      "cached": 0.05,
+      "cache_write": 0.2,
+      "out": 0.5
+    },
+    "grok-4.3": {
+      "in": 1.25,
+      "cached": 0.31,
+      "cache_write": 1.25,
+      "out": 2.5
+    },
+    "grok-4-3": {
+      "in": 1.25,
+      "cached": 0.31,
+      "cache_write": 1.25,
+      "out": 2.5
+    }
+  },
+  "reroutes": {
+    "grok-4-fast": [
+      "2026-05-15",
+      "grok-4.3"
+    ],
+    "grok-4-fast-non-reasoning": [
+      "2026-05-15",
+      "grok-4.3"
+    ],
+    "grok-4-fast-reasoning": [
+      "2026-05-15",
+      "grok-4.3"
+    ],
+    "grok-4-1-fast": [
+      "2026-05-15",
+      "grok-4.3"
+    ],
+    "grok-4-1-fast-non-reasoning": [
+      "2026-05-15",
+      "grok-4.3"
+    ],
+    "grok-4-1-fast-reasoning": [
+      "2026-05-15",
+      "grok-4.3"
+    ],
+    "grok-4-0709": [
+      "2026-05-15",
+      "grok-4.3"
+    ],
+    "grok-3": [
+      "2026-05-15",
+      "grok-4.3"
+    ]
+  },
+  "source": "bundled-export"
+}

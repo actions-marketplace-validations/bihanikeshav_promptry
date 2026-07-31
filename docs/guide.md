@@ -35,6 +35,8 @@ Full documentation for promptry. For a quick overview, see the [README](../READM
 - [CLI reference](#cli-reference)
 - [MCP server](#mcp-server-llm-agent-integration)
 - [Dashboard](#dashboard)
+  - [Dashboard auth](#dashboard-auth)
+  - [Price feed (auto-refresh)](#price-feed-auto-refresh)
 - [Config](#config)
 - [Project config (promptry.toml)](#project-config)
 - [Custom storage backend](#custom-storage-backend)
@@ -748,7 +750,7 @@ POST /api/budgets
 Missing: llama-3.3-70b, mixtral-8x7b
 ```
 
-Fix it by adding a `[pricing.*]` override in [`promptry.toml`](#project-config), or pull current rates from litellm with `POST /api/cost/refresh-rates`.
+Fix it by adding a `[pricing.*]` override in [`promptry.toml`](#project-config), pulling the published feed (`promptry prices --refresh` or the dashboard auto-refresh), or `POST /api/cost/refresh-rates?source=feed|litellm|both`.
 
 ### Traces and feedback
 
@@ -1427,6 +1429,65 @@ promptry dashboard --no-open      # don't auto-open browser
 ```
 
 The dashboard reads from the same SQLite database as the CLI — no separate data source.
+
+### Dashboard auth
+
+The process **always binds 127.0.0.1**. Local use needs no login. As soon as you reverse-proxy the UI onto a hostname (or tunnel it), set a **single shared secret** for the whole deployment:
+
+```bash
+export PROMPTRY_AUTH_TOKEN="$(openssl rand -hex 32)"
+# systemd EnvironmentFile example:
+#   PROMPTRY_AUTH_TOKEN=...   # chmod 600
+promptry dashboard --no-open
+```
+
+**Design: one API key, not per-user tokens.**
+
+| | |
+|--|--|
+| **Who gets the secret?** | Everyone who should open the dashboard — via password manager / team vault. Operators with shell can read the env file. |
+| **Browser** | Login form posts the secret → server sets an **HttpOnly** session cookie (`promptry_session`), **Secure** on HTTPS, **SameSite=Lax**, valid **7 days**. After that, paste the same secret again. |
+| **Scripts / curl / feedback** | `Authorization: Bearer $PROMPTRY_AUTH_TOKEN` (no cookie needed). |
+| **Self-serve mint?** | **No.** An open “give me a token” endpoint would defeat auth. Locked-out users re-read the vault or ask an operator. |
+| **Rotate** | Write a new `PROMPTRY_AUTH_TOKEN`, restart the process, update the vault **once**. All existing sessions fail verification (cookies are HMAC’d with the secret) → everyone re-logs with the new value. Scripts must update their Bearer token too. |
+| **Auth off** | Unset the env var. API is open — only appropriate while bound to localhost. |
+
+Aliases: `PROMPTRY_DASHBOARD_TOKEN` is accepted as a fallback name for the same secret.
+
+Public when locked: the SPA shell, static assets, `/api/health`, `/api/auth/status|login|logout`. Every other `/api/*` route returns **401** without a valid session or Bearer.
+
+### Price feed (auto-refresh)
+
+Cost uses a rate table (`$/1M` tokens, cache-aware). Sources, in order of freshness:
+
+1. **Bundled snapshot** shipped inside the package (always available offline).
+2. **Persisted refresh** at `~/.promptry/prices.json` (or `PROMPTRY_PRICES_FILE`).
+3. **Published feed** — [`prices.json`](https://github.com/bihanikeshav/promptry/blob/main/prices.json) on `main`, also at  
+   `https://raw.githubusercontent.com/bihanikeshav/promptry/main/prices.json`.
+
+**Dashboard default:** on startup, and then every **24 hours**, pull the published feed and write it to the persisted path. Opt out:
+
+```bash
+export PROMPTRY_PRICES_AUTO_REFRESH=0          # stay offline
+export PROMPTRY_PRICES_REFRESH_HOURS=12        # optional interval
+export PROMPTRY_PRICES_FEED_URL=https://...    # optional alternate feed
+```
+
+**CLI (always opt-in network):**
+
+```bash
+promptry prices                  # list current rates + provenance
+promptry prices --refresh        # pull published feed → ~/.promptry/prices.json
+promptry prices --litellm        # merge from a local litellm install (no network)
+promptry prices --check          # ledger models with no rate
+promptry prices --export out.json
+```
+
+**Maintainer path:** a daily GitHub Action runs `scripts/update_prices_feed.py` (litellm + bundled) and commits `prices.json` when rates change. Running dashboards pick up the new file on their next pull — they do **not** call vendor pricing APIs themselves.
+
+**Manual API:** `GET /api/cost/prices-meta`, `POST /api/cost/refresh-rates?source=feed|litellm|both`.
+
+Custom gaps still use `[pricing.<model>]` overrides in `promptry.toml`.
 
 ## Config
 

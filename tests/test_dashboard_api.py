@@ -544,3 +544,42 @@ class TestFeedback:
         data = client.get("/api/feedback/stats").json()
         assert data["total"] == 0 and data["positive_rate"] is None
         assert client.get("/api/feedback").json()["feedback"] == []
+
+# ---- Auth (optional PROMPTRY_AUTH_TOKEN) ----
+
+class TestAuth:
+    def test_status_open_when_unset(self, client, monkeypatch):
+        monkeypatch.delenv("PROMPTRY_AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("PROMPTRY_DASHBOARD_TOKEN", raising=False)
+        # re-import path uses env at request time
+        resp = client.get("/api/auth/status")
+        assert resp.status_code == 200
+        assert resp.json() == {"required": False, "authenticated": True}
+
+    def test_protects_api_when_token_set(self, client, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_AUTH_TOKEN", "test-secret-token-abc")
+        assert client.get("/api/prompts").status_code == 401
+        assert client.get("/api/health").status_code == 200
+        st = client.get("/api/auth/status").json()
+        assert st["required"] is True and st["authenticated"] is False
+
+    def test_bearer_unlocks(self, client, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_AUTH_TOKEN", "test-secret-token-abc")
+        bad = client.get("/api/prompts", headers={"Authorization": "Bearer wrong"})
+        assert bad.status_code == 401
+        ok = client.get("/api/prompts", headers={"Authorization": "Bearer test-secret-token-abc"})
+        assert ok.status_code == 200
+
+    def test_login_cookie_session(self, client, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_AUTH_TOKEN", "test-secret-token-abc")
+        fail = client.post("/api/auth/login", json={"token": "nope"})
+        assert fail.status_code == 401
+        ok = client.post("/api/auth/login", json={"token": "test-secret-token-abc"})
+        assert ok.status_code == 200
+        assert ok.json()["authenticated"] is True
+        assert client.cookies.get("promptry_session")
+        assert client.get("/api/prompts").status_code == 200
+        assert client.get("/api/auth/status").json()["authenticated"] is True
+        client.post("/api/auth/logout")
+        assert client.get("/api/prompts").status_code == 401
+

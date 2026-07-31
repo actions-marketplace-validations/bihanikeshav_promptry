@@ -248,14 +248,47 @@ If your app collects thumbs-up/down or ratings, send them back keyed by the
 `request_id` you passed in step 1, so a rating links to the exact call:
 
 ```bash
-curl -X POST localhost:8420/api/feedback -H 'Content-Type: application/json' \
+# Use the dashboard origin you actually open (local, tunnel, or reverse-proxy host).
+# When PROMPTRY_AUTH_TOKEN is set, also send: -H "Authorization: Bearer $PROMPTRY_AUTH_TOKEN"
+curl -X POST "$PROMPTRY_URL/api/feedback" -H 'Content-Type: application/json' \
   -d '{"request_id": "abc123", "rating": 0.0, "comment": "wrong figure"}'
+# local default: PROMPTRY_URL=http://localhost:8420
 ```
 
 Ratings then show on the invocation, feed the online-drift signal, and let you
 filter traces by low ratings to build eval cases from real failures.
 
 ---
+
+## 8. Dashboard auth (when reverse-proxied)
+
+The process always binds `127.0.0.1`. If you put nginx/Caddy in front of a public
+hostname, set **one shared secret** for the whole deployment:
+
+```bash
+export PROMPTRY_AUTH_TOKEN="$(openssl rand -hex 32)"   # put in vault + systemd EnvironmentFile
+promptry dashboard --port 8420 --no-open
+```
+
+- **Model:** single API key for everyone (not per-user tokens). Rotate once → everyone re-enters the new value; all session cookies invalidate.
+- **Browser:** login form → HttpOnly session cookie (**7 days**).
+- **Machines / feedback curl:** `Authorization: Bearer $PROMPTRY_AUTH_TOKEN`.
+- **Distribution:** password manager / team vault. No public “issue me a token” route.
+- **Rotate:** rewrite the env file, restart the unit, update the vault.
+
+Unset `PROMPTRY_AUTH_TOKEN` = open API (fine only while localhost-only).
+
+## 9. Price feed (optional)
+
+Cost math uses a bundled rate table. For fresher numbers:
+
+```bash
+promptry prices --refresh          # pull published prices.json → ~/.promptry/prices.json
+# or let the dashboard do it: on start + every 24h (PROMPTRY_PRICES_AUTO_REFRESH=0 to disable)
+```
+
+The published file lives in the promptry repo and is refreshed by CI; your
+server does **not** call OpenAI/Anthropic pricing APIs itself.
 
 ## Agent checklist
 
@@ -267,6 +300,7 @@ filter traces by low ratings to build eval cases from real failures.
 - [ ] Add an `evals.py` with a `@suite` that runs the real pipeline + assertions.
 - [ ] Add `promptry run … --compare prod` to CI; optionally `[slo]` budgets.
 - [ ] Commit `.promptry/config.toml`; set provider keys in the environment.
+- [ ] If the dashboard is public: set `PROMPTRY_AUTH_TOKEN`, store in vault, document rotate.
 - [ ] (Optional) POST feedback with the `request_id` to close the loop.
 
 Keep each change small and verifiable. promptry is designed so you can adopt

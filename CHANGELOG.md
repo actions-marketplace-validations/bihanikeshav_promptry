@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.6 (2026-07-31)
+
+- **Docs: shared dashboard secret** — README + guide + INTEGRATION document the
+  single-API-key auth model, session TTL (7d), vault distribution, and rotation.
+- **Price feed auto-refresh** — dashboard pulls the published `prices.json`
+  feed on startup and every 24h (opt-out: `PROMPTRY_PRICES_AUTO_REFRESH=0`).
+  CLI remains opt-in (`promptry prices --refresh`). Repo ships `prices.json`;
+  daily GitHub Action refreshes it from litellm when available.
+- `GET /api/cost/prices-meta`, `POST /api/cost/refresh-rates?source=feed|litellm|both`.
+
+## 1.0.5 (2026-07-31)
+
+Dashboard hardening for reverse-proxied / public hosts.
+
+- **Feedback curl host** — empty-state copy uses the page origin
+  (`window.location.origin`) instead of hard-coded `localhost:8420`.
+- **Optional auth** — set `PROMPTRY_AUTH_TOKEN` (or `PROMPTRY_DASHBOARD_TOKEN`)
+  to lock every `/api/*` route except health + auth. Browser login issues an
+  HttpOnly signed session cookie; machine clients send
+  `Authorization: Bearer <token>`. Unset = open (local-only default).
+- CLI prints whether auth is on at dashboard start.
+
 ## 1.0.4 (2026-07-09)
 
 Cache optimization — a dashboard page (`/cache`) and CLI (`promptry cache`) with

@@ -1992,10 +1992,10 @@ def dashboard_cmd(
     no_open: bool = typer.Option(False, "--no-open", help="Don't auto-open browser."),
     local: bool = typer.Option(False, "--local", help="Deprecated, kept for backwards compat."),
 ):
-    """Start the promptry dashboard web UI (local-only)."""
+    """Start the promptry dashboard web UI (local-only bind)."""
     if local:
         console.print("[yellow]Warning:[/yellow] --local flag is deprecated and no longer needed. "
-                      "The dashboard is always localhost-only.")
+                      "The dashboard always binds 127.0.0.1.")
 
     try:
         import uvicorn
@@ -2004,6 +2004,7 @@ def dashboard_cmd(
         console.print("  Please ensure promptry is properly installed with: pip install --upgrade promptry")
         raise typer.Exit(1)
 
+    import os
     import socket
     import threading
     import time
@@ -2028,9 +2029,26 @@ def dashboard_cmd(
     finally:
         probe.close()
 
+    auth_on = bool(
+        (os.environ.get("PROMPTRY_AUTH_TOKEN") or os.environ.get("PROMPTRY_DASHBOARD_TOKEN") or "").strip()
+    )
+
     console.print(f"\n[bold]promptry dashboard[/bold] starting on port {port}\n")
     console.print(f"  UI:    {local_url}/")
     console.print(f"  API:   {local_url}/api/health")
+    if auth_on:
+        console.print("  Auth:  [green]on[/green] (PROMPTRY_AUTH_TOKEN)")
+    else:
+        console.print(
+            "  Auth:  [yellow]off[/yellow] — set PROMPTRY_AUTH_TOKEN before "
+            "exposing via reverse proxy"
+        )
+    prices_flag = (os.environ.get("PROMPTRY_PRICES_AUTO_REFRESH") or "1").strip().lower()
+    if prices_flag in ("0", "false", "off", "no"):
+        console.print("  Prices: offline (PROMPTRY_PRICES_AUTO_REFRESH=0)")
+    else:
+        hrs = (os.environ.get("PROMPTRY_PRICES_REFRESH_HOURS") or "24").strip()
+        console.print(f"  Prices: auto-refresh feed every {hrs}h (opt-out: PROMPTRY_PRICES_AUTO_REFRESH=0)")
     console.print()
 
     # Only open the browser AFTER uvicorn has bound the port — otherwise the

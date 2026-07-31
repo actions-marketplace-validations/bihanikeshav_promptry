@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, HashRouter } from "react-router-dom";
 import App from "./App";
+import AuthGate from "./components/AuthGate";
 import "./styles.css";
 
 // In a demo build (VITE_DEMO), install the mock-fetch layer before render and
@@ -19,7 +20,13 @@ async function boot() {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <Router>
-        <App />
+        {DEMO ? (
+          <App />
+        ) : (
+          <AuthGate>
+            <App />
+          </AuthGate>
+        )}
       </Router>
     </React.StrictMode>
   );

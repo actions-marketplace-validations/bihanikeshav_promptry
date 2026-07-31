@@ -2,11 +2,22 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { KPI, PageHeader, Sparkline, StatusPill, CopyField } from "../components/ui";
 import { pct, relTime, usd, scoreColor } from "../utils";
-import { getCostData, listBudgets, listFeedback, getFeedbackStats, getOnboardingStatus } from "../api/client";
+import { getCostData, listBudgets, listFeedback, getFeedbackStats, getOnboardingStatus, feedbackCurlExample, getAuthStatus } from "../api/client";
 import type { LayoutContext } from "../components/Layout";
 import type { CostResponse, BudgetStatus, FeedbackRow, FeedbackStats, OnboardingStatus } from "../api/types";
 
 const DOCS_URL = "https://promptry.meownikov.xyz/docs.html";
+
+/** Curl snippet for feedback ingest — host follows the page origin (not localhost:8420). */
+function FeedbackCurlHint() {
+  const [value, setValue] = useState(() => feedbackCurlExample());
+  useEffect(() => {
+    getAuthStatus()
+      .then((s) => setValue(feedbackCurlExample({ authRequired: s.required })))
+      .catch(() => setValue(feedbackCurlExample()));
+  }, []);
+  return <CopyField value={value} />;
+}
 
 /* First-run getting-started card. Replaces the zero-value KPI grid when the
    user has recorded nothing yet — three numbered steps, each with a
@@ -353,7 +364,7 @@ export default function Overview() {
         <SectionCard title="Recent feedback" sub="what end-users are saying" action={<button className="btn" onClick={() => navigate("/feedback")}>All feedback ›</button>}>
           {recentFb.length === 0 ? (
             <Empty text="No feedback yet — POST end-user ratings to /api/feedback, keyed by the request_id you pass to track_invocation.">
-              <CopyField value={'curl -X POST localhost:8420/api/feedback -d \'{"request_id":"abc","rating":1}\''} />
+              <FeedbackCurlHint />
             </Empty>
           ) : (
             <table className="pr" style={{ tableLayout: "fixed", width: "100%" }}>

@@ -99,7 +99,7 @@ promptry run my-suite --module evals.yaml  # run it
 | **Model comparison** | Statistical comparison against the historical baseline, not snapshot-to-snapshot. |
 | **Invocations ledger** | Every call recorded: tokens, cost, latency, model. Opt-in sampled request/response trace capture; per-call ratings/feedback via `POST /api/feedback`. |
 | **Cost tracking** | Per-model pricing with module → prompt → call drill-down, per-call template-vs-payload split, and a coverage check that flags un-priced models. Cache-aware, across OpenAI, Anthropic, Gemini, Grok. |
-| **Price feed** | Bundled, reroute-aware price table you refresh on your terms: `promptry prices` lists rates, `--refresh` pulls a static published feed or your local litellm into `~/.promptry/prices.json`, `--check` flags un-priced ledger models. No hosted service, no phone-home. |
+| **Price feed** | Bundled rates + published `prices.json` on GitHub. Dashboard auto-pulls the feed on start and every 24h (opt-out). CLI: `promptry prices --refresh`. Daily CI keeps the feed current from litellm. |
 | **Budgets** | Daily and monthly spend caps with breach alerts. |
 | **PII / secret scanning** | Captured request/response text is scanned for API keys, private keys, JWTs, emails, SSNs, and card numbers; the dashboard warns with masked findings. |
 | **Safety suite** | 25 jailbreak / injection / PII / encoding templates across 6 categories. Extensible via `templates.toml`. |
@@ -120,6 +120,24 @@ promptry run my-suite --module evals.yaml  # run it
 ```bash
 promptry dashboard
 ```
+
+Binds **127.0.0.1** only. Reverse-proxy it for remote access, then **lock it** with a single shared secret (one API key for the whole team — not per-user tokens):
+
+```bash
+# generate once; put in a password manager / team vault
+export PROMPTRY_AUTH_TOKEN="$(openssl rand -hex 32)"
+promptry dashboard --no-open
+```
+
+| Piece | Lifetime | Notes |
+|-------|----------|--------|
+| **`PROMPTRY_AUTH_TOKEN`** | Until you rotate it | Shared by everyone; paste at login or send as `Authorization: Bearer …` |
+| **Session cookie** | **7 days** | Issued after browser login; re-enter the same secret when it expires |
+| **Rotate** | — | Change the env var + restart → **all** sessions die; update the vault once |
+
+There is no self-serve “mint me a token” endpoint (that would defeat the lock). Distribute the secret via vault; operators with shell can read the env file. See [Dashboard auth](docs/guide.md#dashboard-auth).
+
+**Prices:** the dashboard pulls the published feed ([`prices.json`](prices.json) on `main`) at startup and every 24h. Opt out with `PROMPTRY_PRICES_AUTO_REFRESH=0`. Manual: `promptry prices --refresh`.
 
 Eval health and spend at a glance — drill into evals or cost for detail.
 ![Overview](docs/screenshots/dashboard-overview.png)
