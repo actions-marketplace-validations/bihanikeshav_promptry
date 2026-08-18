@@ -174,6 +174,10 @@ def _run_loop(suite_name: str, module: str, interval_minutes: int):
     Imports the module, runs the suite, checks drift, sleeps, repeat.
     """
     global _shutdown
+    # Reset the module-global flag so a restart within the same process (or a
+    # test) actually runs, rather than exiting immediately because a prior run
+    # set it True on shutdown.
+    _shutdown = False
 
     import importlib
     from promptry.runner import run_suite
