@@ -65,6 +65,49 @@ class BaseStorage(ABC):
     ) -> int:
         ...
 
+    def save_eval_run_atomic(
+        self,
+        *,
+        results: list[dict],
+        suite_name,
+        prompt_name=None,
+        prompt_version=None,
+        model_version=None,
+        overall_pass=True,
+        overall_score=None,
+    ) -> int:
+        """Persist an eval run *and* all its result rows as one unit.
+
+        The run row and its per-assertion result rows must land together: a
+        run persisted without its results shows up on the dashboard as a
+        "passing" run with no detail (a corrupt audit trail). Backends that
+        support transactions override this to make it atomic; this default
+        keeps the ordering in one place for backends that don't.
+
+        ``results`` is a list of dicts with keys ``test_name``,
+        ``assertion_type``, ``passed`` and optional ``score``, ``details``,
+        ``latency_ms``. Returns the new run's id.
+        """
+        run_id = self.save_eval_run(
+            suite_name=suite_name,
+            prompt_name=prompt_name,
+            prompt_version=prompt_version,
+            model_version=model_version,
+            overall_pass=overall_pass,
+            overall_score=overall_score,
+        )
+        for r in results:
+            self.save_eval_result(
+                run_id=run_id,
+                test_name=r["test_name"],
+                assertion_type=r["assertion_type"],
+                passed=r["passed"],
+                score=r.get("score"),
+                details=r.get("details"),
+                latency_ms=r.get("latency_ms"),
+            )
+        return run_id
+
     @abstractmethod
     def get_eval_runs(self, suite_name, offset=0, limit=50) -> list[EvalRunRecord]:
         ...

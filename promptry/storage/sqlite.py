@@ -1037,6 +1037,45 @@ class SQLiteStorage(BaseStorage):
             self._conn.commit()
             return cur.lastrowid
 
+    def save_eval_run_atomic(
+        self,
+        *,
+        results: list[dict],
+        suite_name,
+        prompt_name=None,
+        prompt_version=None,
+        model_version=None,
+        overall_pass=True,
+        overall_score=None,
+    ) -> int:
+        """Insert the run row and every result row inside a single
+        transaction (one commit), so a crash or write failure can never leave
+        a visible run whose per-assertion results are partial or missing."""
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    """INSERT INTO eval_runs
+                       (suite_name, prompt_name, prompt_version, model_version, overall_pass, overall_score)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (suite_name, prompt_name, prompt_version, model_version,
+                     int(overall_pass), overall_score),
+                )
+                run_id = cur.lastrowid
+                for r in results:
+                    details_json = json.dumps(r["details"]) if r.get("details") else None
+                    self._conn.execute(
+                        """INSERT INTO eval_results
+                           (run_id, test_name, assertion_type, passed, score, details, latency_ms)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (run_id, r["test_name"], r["assertion_type"], int(r["passed"]),
+                         r.get("score"), details_json, r.get("latency_ms")),
+                    )
+                self._conn.commit()
+                return run_id
+            except Exception:
+                self._conn.rollback()
+                raise
+
     def get_eval_runs(self, suite_name, offset=0, limit=50) -> list[EvalRunRecord]:
         with self._lock:
             cur = self._conn.execute(

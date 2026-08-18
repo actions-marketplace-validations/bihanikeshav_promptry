@@ -221,6 +221,39 @@ class RemoteStorage(BaseStorage):
         })
         return result_id
 
+    def save_eval_run_atomic(
+        self, *, results, suite_name, prompt_name=None, prompt_version=None,
+        model_version=None, overall_pass=True, overall_score=None,
+    ) -> int:
+        # The local SQLite store is the atomic source of truth (run + all
+        # results in one transaction). Remote telemetry is shipped per event,
+        # best-effort, exactly as save_eval_run/save_eval_result do.
+        run_id = self._local.save_eval_run_atomic(
+            results=results, suite_name=suite_name, prompt_name=prompt_name,
+            prompt_version=prompt_version, model_version=model_version,
+            overall_pass=overall_pass, overall_score=overall_score,
+        )
+        self._emit("eval_run", {
+            "run_id": run_id,
+            "suite_name": suite_name,
+            "prompt_name": prompt_name,
+            "prompt_version": prompt_version,
+            "model_version": model_version,
+            "overall_pass": overall_pass,
+            "overall_score": overall_score,
+        })
+        for r in results:
+            self._emit("eval_result", {
+                "run_id": run_id,
+                "test_name": r["test_name"],
+                "assertion_type": r["assertion_type"],
+                "passed": r["passed"],
+                "score": r.get("score"),
+                "details": r.get("details"),
+                "latency_ms": r.get("latency_ms"),
+            })
+        return run_id
+
     def tag_prompt(self, prompt_id, tag):
         self._local.tag_prompt(prompt_id, tag)
         self._emit("prompt_tag", {"prompt_id": prompt_id, "tag": tag})
