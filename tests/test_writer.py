@@ -118,9 +118,10 @@ class _BlockingStorage:
 
 
 class TestBackpressure:
-    """A full queue must drop (not block forever, not crash the caller)."""
+    """A full queue must never silently drop: it falls back to a synchronous
+    write (never blocks forever, never crashes the caller, never loses data)."""
 
-    def test_queue_full_drops_and_warns(self, caplog):
+    def test_queue_full_writes_synchronously_and_warns(self, caplog):
         st = _BlockingStorage()
         writer = AsyncWriter(st, max_queue=3)
         try:
@@ -136,22 +137,27 @@ class TestBackpressure:
             assert _wait_until(lambda: writer.pending == 3), \
                 f"queue should saturate at maxsize, got {writer.pending}"
 
-            # Extra enqueues on a full queue must be DROPPED, not raise.
+            # Extra writes on a full queue must fall back to a synchronous
+            # write (warn, but do NOT drop) — the queue never grows past max.
             with caplog.at_level("WARNING", logger="promptry.writer"):
                 for i in range(2):
-                    writer.save_eval_result(run_id=1, test_name=f"drop{i}",
+                    writer.save_eval_result(run_id=1, test_name=f"extra{i}",
                                             assertion_type="c", passed=True)
             assert any("write queue full" in r.message for r in caplog.records)
-            # Backpressure caps the queue; it never grows past maxsize.
             assert writer.pending == 3
+            # The overflow writes landed immediately, synchronously.
+            assert _wait_until(
+                lambda: {"extra0", "extra1"} <= {s["test_name"] for s in st.saved}
+            ), "overflow writes were not written synchronously"
         finally:
             st.release.set()
             writer.close()
 
-        # After release: the in-flight op + the 3 queued ones land; drops don't.
-        assert len(st.saved) == 4
+        # After release: in-flight op + 3 queued + 2 synchronous overflow = 6.
+        # Nothing is lost.
+        assert len(st.saved) == 6
         names = {s["test_name"] for s in st.saved}
-        assert not any(n.startswith("drop") for n in names)
+        assert {"blocker", "q0", "q1", "q2", "extra0", "extra1"} == names
 
 
 class _FlakyStorage:

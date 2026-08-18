@@ -13,6 +13,7 @@ from __future__ import annotations
 import atexit
 import logging
 import queue
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass
@@ -43,8 +44,13 @@ class AsyncWriter(BaseStorage):
     fast anyway (no write on duplicate content).
     """
 
-    def __init__(self, storage: BaseStorage, max_queue: int = 10000):
+    def __init__(self, storage: BaseStorage, max_queue: int = 10000,
+                 close_storage: bool = True):
         self._storage = storage
+        # Whether close() also closes the wrapped storage. False when the
+        # storage handle is shared/owned by someone else, so we don't close a
+        # connection out from under other users.
+        self._close_storage = close_storage
         self._queue: queue.Queue = queue.Queue(maxsize=max_queue)
         self._lock = threading.Lock()
         self._running = True
@@ -74,21 +80,50 @@ class AsyncWriter(BaseStorage):
             except queue.Empty:
                 continue
             try:
-                method = getattr(self._storage, op.method)
-                method(*op.args, **op.kwargs)
+                self._run_with_retry(op)
             except Exception:
-                log.exception("async write failed: %s", op.method)
+                # Retries exhausted (or a non-transient error): log loudly and
+                # move on. task_done() below still fires so flush() can't hang.
+                log.exception("async write failed after retries: %s", op.method)
             finally:
                 self._queue.task_done()
 
+    def _run_with_retry(self, op: "WriteOp", attempts: int = 3):
+        """Run one queued write, retrying only a transient 'database is locked'.
+
+        Retrying an IntegrityError (or any logic error) just delays the drain,
+        so only sqlite3.OperationalError is retried.
+        """
+        method = getattr(self._storage, op.method)
+        for i in range(attempts):
+            try:
+                method(*op.args, **op.kwargs)
+                return
+            except sqlite3.OperationalError:
+                if i == attempts - 1:
+                    raise
+                time.sleep(0.05 * (i + 1))
+
+    def _write_now(self, method: str, args: tuple, kwargs: dict):
+        """Last-resort synchronous write so a queued op is never silently lost."""
+        try:
+            getattr(self._storage, method)(*args, **kwargs)
+        except Exception:
+            log.exception("synchronous fallback write failed: %s", method)
+
     def _enqueue(self, method: str, *args, **kwargs):
+        # If the writer is already closed, the drain thread is gone — writing to
+        # the queue would strand the op forever. Do it inline instead.
+        if not self._running:
+            self._write_now(method, args, kwargs)
+            return
         try:
             self._queue.put(WriteOp(method, args, kwargs), timeout=1.0)
         except queue.Full:
-            log.warning(
-                "write queue full, dropping %s — increase max_queue or check for slowdowns",
-                method,
-            )
+            # Never drop the write. Fall back to a synchronous write: the worst
+            # case is a latency blip on this call, not lost data.
+            log.warning("write queue full; writing %s synchronously", method)
+            self._write_now(method, args, kwargs)
 
     def flush(self, timeout: float = 5.0):
         """Wait for all pending writes to finish, with timeout."""
@@ -113,6 +148,11 @@ class AsyncWriter(BaseStorage):
     def save_eval_run(self, **kwargs):
         # synchronous -- callers need the returned run_id
         return self._storage.save_eval_run(**kwargs)
+
+    def save_eval_run_atomic(self, **kwargs):
+        # Eval persistence must be atomic and durable, so it never rides the
+        # async queue (which could partially drop it) — write straight through.
+        return self._storage.save_eval_run_atomic(**kwargs)
 
     def save_eval_result(self, **kwargs):
         self._enqueue("save_eval_result", **kwargs)
@@ -292,4 +332,13 @@ class AsyncWriter(BaseStorage):
         self._running = False
         self.flush()
         self._thread.join(timeout=2.0)
-        self._storage.close()
+        # Drop the atexit hook so we don't try to flush a closed writer at
+        # interpreter exit.
+        try:
+            atexit.unregister(self.flush)
+        except Exception:
+            pass
+        # Only close the wrapped storage if we own it. A shared handle must not
+        # be closed out from under other holders.
+        if self._close_storage:
+            self._storage.close()
