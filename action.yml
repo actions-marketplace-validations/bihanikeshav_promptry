@@ -24,6 +24,10 @@ inputs:
     description: "pip extras to install with promptry"
     required: false
     default: "semantic"
+  version:
+    description: "Pin a specific promptry version (e.g. 1.0.8). Empty installs the latest."
+    required: false
+    default: ""
   pr-comment:
     description: "Post a comment on the PR with results (default: true)"
     required: false
@@ -43,7 +47,16 @@ runs:
 
     - name: Install promptry
       shell: bash
-      run: pip install "promptry[${{ inputs.extras }}]"
+      env:
+        # Passed via env (never interpolated into the script body) so a
+        # crafted input value can't break out into shell commands.
+        EXTRAS: ${{ inputs.extras }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        spec="promptry"
+        if [ -n "$EXTRAS" ]; then spec="promptry[$EXTRAS]"; fi
+        if [ -n "$VERSION" ]; then spec="$spec==$VERSION"; fi
+        pip install "$spec"
 
     - name: Install project dependencies
       shell: bash
@@ -58,28 +71,34 @@ runs:
     - name: Run eval suite
       id: eval
       shell: bash
+      env:
+        # All caller-controlled values arrive via env, never interpolated
+        # into the script — this is GitHub's documented defense against
+        # shell/script injection from untrusted inputs.
+        SUITE: ${{ inputs.suite }}
+        MODULE: ${{ inputs.module }}
+        COMPARE: ${{ inputs.compare }}
+        PR_COMMENT: ${{ inputs.pr-comment }}
+        EVENT_NAME: ${{ github.event_name }}
       run: |
-        COMPARE_FLAG=""
-        if [ -n "${{ inputs.compare }}" ]; then
-          COMPARE_FLAG="--compare ${{ inputs.compare }}"
-        fi
-
         MD_FILE="${RUNNER_TEMP}/promptry-summary.md"
         HTML_FILE="${RUNNER_TEMP}/promptry-report.html"
+
+        # Build the argv as an array so each value stays a single, safely
+        # quoted argument (no word-splitting, no injection).
+        args=(run "$SUITE" --module "$MODULE")
+        if [ -n "$COMPARE" ]; then args+=(--compare "$COMPARE"); fi
 
         # Run the suite. On PRs we also generate a Markdown summary and
         # HTML report so the follow-up step can post a comment. We never
         # want the comment step skipped just because the eval regressed,
         # so we capture the exit code and re-raise it at the end.
-        set +e
-        if [ "${{ inputs.pr-comment }}" = "true" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
-          promptry run "${{ inputs.suite }}" --module "${{ inputs.module }}" \
-            $COMPARE_FLAG \
-            --markdown "$MD_FILE" \
-            --output "$HTML_FILE"
-        else
-          promptry run "${{ inputs.suite }}" --module "${{ inputs.module }}" $COMPARE_FLAG
+        if [ "$PR_COMMENT" = "true" ] && [ "$EVENT_NAME" = "pull_request" ]; then
+          args+=(--markdown "$MD_FILE" --output "$HTML_FILE")
         fi
+
+        set +e
+        promptry "${args[@]}"
         EVAL_EXIT=$?
         set -e
 
