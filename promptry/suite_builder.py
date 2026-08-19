@@ -14,10 +14,76 @@ Two public entry points:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+
+# ---------------------------------------------------------------------------
+# Untrusted-surface guards (HTTP dashboard + MCP).
+#
+# The dashboard and MCP server are the network-reachable surface; hand-authored
+# evals.yaml files and the CLI are trusted authorship. These helpers enforce
+# that boundary so a suite created over HTTP/MCP can neither run arbitrary code
+# (`pipeline`) nor write/read files outside the project tree.
+# ---------------------------------------------------------------------------
+
+class SuiteInputError(ValueError):
+    """A suite create/edit request that fails a security or shape check."""
+
+
+def api_pipeline_allowed() -> bool:
+    """Whether pipeline suites may be created over the API/MCP (opt-in)."""
+    return os.environ.get("PROMPTRY_ALLOW_API_PIPELINE", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def check_pipeline_allowed(pipeline) -> None:
+    """Reject a ``pipeline`` spec arriving over an untrusted surface.
+
+    A ``pipeline`` is an arbitrary ``"module:function"`` imported and executed
+    when the suite later runs (in CI, the scheduler, or ``promptry run``), so
+    accepting one from the network is remote code execution. Suites written by
+    hand into ``evals.yaml`` are trusted and unaffected. Opt back in with
+    ``PROMPTRY_ALLOW_API_PIPELINE=1``.
+    """
+    if pipeline and not api_pipeline_allowed():
+        raise SuiteInputError(
+            "pipeline suites cannot be created via the API/MCP because a "
+            "pipeline runs arbitrary code when the suite runs. Add the suite "
+            "to evals.yaml directly, or set PROMPTRY_ALLOW_API_PIPELINE=1 to "
+            "allow it."
+        )
+
+
+def safe_suite_path(user_path, root, default_name: str = "evals.yaml") -> Path:
+    """Confine a caller-supplied suite output/read path to the project tree.
+
+    Rejects absolute paths, parent-directory escapes (resolved, so symlinks and
+    ``..`` are covered), non-YAML suffixes, and any dot-prefixed path component
+    (which would otherwise reach ``.git/hooks``, ``.github/workflows``, ``.env``
+    and similar code-exec sinks). Returns the resolved path, or
+    ``<root>/<default_name>`` when no path is supplied.
+    """
+    root = Path(root).resolve()
+    if not user_path:
+        return root / default_name
+    p = Path(user_path)
+    if p.is_absolute():
+        raise SuiteInputError("output path must be relative to the project directory")
+    if any(part.startswith(".") for part in p.parts):
+        raise SuiteInputError(
+            "output path must not contain dot-prefixed directories or files"
+        )
+    resolved = (root / p).resolve()
+    if not resolved.is_relative_to(root):
+        raise SuiteInputError("output path escapes the project directory")
+    if resolved.suffix.lower() not in {".yaml", ".yml"}:
+        raise SuiteInputError("output path must end in .yaml or .yml")
+    return resolved
 
 
 # ---------------------------------------------------------------------------
