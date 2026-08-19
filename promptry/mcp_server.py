@@ -256,7 +256,10 @@ def create_eval_suite(
     directory). If a suite of the same name already exists there, the call
     fails unless overwrite=true, which replaces it in place.
     """
-    from promptry.suite_builder import build_suite_dict, write_yaml_suite
+    from promptry.suite_builder import (
+        build_suite_dict, write_yaml_suite,
+        check_pipeline_allowed, safe_suite_path, SuiteInputError,
+    )
 
     name = (name or "").strip()
     if not name:
@@ -265,19 +268,29 @@ def create_eval_suite(
         return "Error: provide at least one case."
     if not pipeline and not (model and prompt):
         return "Error: provide either 'pipeline', or both 'model' and 'prompt'."
+
+    # MCP args are attacker-influenceable (an agent can be steered by content it
+    # reads), so apply the same untrusted-surface guards as the HTTP route: no
+    # arbitrary-code pipeline, no writes outside the project tree.
+    try:
+        check_pipeline_allowed(pipeline)
+        target = safe_suite_path(path, Path.cwd())
+    except SuiteInputError as e:
+        return f"Error: {e}"
+
     try:
         suite = build_suite_dict(
             name=name, cases=cases, model=model, prompt=prompt,
             pipeline=pipeline, description=description,
         )
-        names = write_yaml_suite(Path(path), suite, overwrite=overwrite)
+        names = write_yaml_suite(target, suite, overwrite=overwrite)
     except ValueError as e:
         hint = " (pass overwrite=true to replace it)" if "already exists" in str(e) else ""
         return f"Error: {e}{hint}"
     except (KeyError, TypeError) as e:
         return f"Error: malformed cases — {e}"
     return (
-        f"Created suite '{name}' with {len(suite['cases'])} case(s) in {path}. "
+        f"Created suite '{name}' with {len(suite['cases'])} case(s) in {target}. "
         f"Run it with run_eval('{name}'); it now appears on the dashboard under Evals "
         f"(and is editable there). Suites in file: {', '.join(names)}."
     )

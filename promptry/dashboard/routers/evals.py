@@ -395,7 +395,10 @@ def create_suite(body: _CreateSuiteIn):
     Body: ``{name, model, prompt, cases:[{input, context?, expect:[{type,value}]}]}``
     (use ``pipeline`` instead of ``model``/``prompt`` to call an existing
     pipeline). Rejects a name that already exists unless ``overwrite=true``."""
-    from promptry.suite_builder import build_suite_dict, write_yaml_suite
+    from promptry.suite_builder import (
+        build_suite_dict, write_yaml_suite,
+        check_pipeline_allowed, safe_suite_path, SuiteInputError,
+    )
 
     name = (body.name or "").strip()
     if not name:
@@ -408,6 +411,14 @@ def create_suite(body: _CreateSuiteIn):
             detail="provide either 'pipeline' or both 'model' and 'prompt'",
         )
 
+    # Untrusted-surface guards: no arbitrary-code pipeline, no writes outside
+    # the project tree.
+    try:
+        check_pipeline_allowed(body.pipeline)
+        target = safe_suite_path(body.output, Path.cwd())
+    except SuiteInputError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     suite = build_suite_dict(
         name=name,
         cases=[c.model_dump() for c in body.cases],
@@ -417,7 +428,6 @@ def create_suite(body: _CreateSuiteIn):
         description=body.description,
     )
 
-    target = Path(body.output) if body.output else (Path.cwd() / "evals.yaml")
     try:
         write_yaml_suite(target, suite, overwrite=body.overwrite)
     except ValueError as exc:
@@ -434,9 +444,12 @@ def suite_definition(name: str, output: Optional[str] = Query(default=None)):
     """Read a suite back into the creator's edit shape. Only YAML-declared
     suites are editable in the UI; a suite defined in Python (evals.py) is
     returned as ``editable: false`` so the UI can show it read-only."""
-    from promptry.suite_builder import read_yaml_suite
+    from promptry.suite_builder import read_yaml_suite, safe_suite_path, SuiteInputError
 
-    target = Path(output) if output else (Path.cwd() / "evals.yaml")
+    try:
+        target = safe_suite_path(output, Path.cwd())
+    except SuiteInputError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     definition = read_yaml_suite(target, name)
     if definition is not None:
         return {"editable": True, "source": "yaml", "path": str(target),
