@@ -36,25 +36,28 @@ def run_suite(
     overall_score = sum(scores) / len(scores) if scores else 0.0
     overall_pass = test_result.passed
 
-    run_id = storage.save_eval_run(
+    # Persist the run row and all its assertion results atomically, so a
+    # failure can never leave a visible "passing" run with missing detail.
+    results = [
+        {
+            "test_name": test_result.test_name,
+            "assertion_type": assertion.assertion_type,
+            "passed": assertion.passed,
+            "score": assertion.score,
+            "details": assertion.details,
+            "latency_ms": test_result.latency_ms,
+        }
+        for assertion in test_result.assertions
+    ]
+    run_id = storage.save_eval_run_atomic(
         suite_name=suite_name,
         prompt_name=prompt_name,
         prompt_version=prompt_version,
         model_version=model_version,
         overall_pass=overall_pass,
         overall_score=overall_score,
+        results=results,
     )
-
-    for assertion in test_result.assertions:
-        storage.save_eval_result(
-            run_id=run_id,
-            test_name=test_result.test_name,
-            assertion_type=assertion.assertion_type,
-            passed=assertion.passed,
-            score=assertion.score,
-            details=assertion.details,
-            latency_ms=test_result.latency_ms,
-        )
 
     return SuiteResult(
         suite_name=suite_name,
