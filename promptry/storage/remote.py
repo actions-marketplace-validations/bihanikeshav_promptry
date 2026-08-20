@@ -498,6 +498,12 @@ class RemoteStorage(BaseStorage):
     def purge_old_audit(self, days) -> int:
         return self._local.purge_old_audit(days)
 
+    def get_trace(self, trace_id) -> list:
+        return self._local.get_trace(trace_id)
+
+    def list_traces(self, days: int = 7, limit: int = 100) -> list:
+        return self._local.list_traces(days, limit)
+
     def close(self):
         self._running = False
         if self._thread.is_alive():

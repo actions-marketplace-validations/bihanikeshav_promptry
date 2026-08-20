@@ -257,6 +257,14 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_invocations_response_uq "
         "ON invocations(response_id) WHERE response_id IS NOT NULL",
     ]),
+    (11, "cost-attributed call trees: index trace_id in invocation metadata", [
+        # trace_id lives in the metadata JSON (set by the capture core inside a
+        # `with promptry.trace(...)` block). An expression index makes grouping
+        # a trace's calls cheap without a schema/column change.
+        "CREATE INDEX IF NOT EXISTS idx_invocations_trace "
+        "ON invocations(json_extract(metadata, '$.trace_id')) "
+        "WHERE json_valid(metadata)",
+    ]),
 ]
 
 
@@ -1980,3 +1988,43 @@ class SQLiteStorage(BaseStorage):
             )
             self._conn.commit()
             return cur.rowcount
+
+    # ---- cost-attributed call trees ----
+
+    def get_trace(self, trace_id: str) -> list[dict]:
+        """All invocations in one trace, oldest first, with the per-step cost /
+        tokens / latency waterfall data."""
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT id, prompt_name, created_at, cost, tokens_in, tokens_out,
+                          model, latency_ms,
+                          json_extract(metadata, '$.span_name') AS span_name,
+                          json_extract(metadata, '$.api') AS api,
+                          json_extract(metadata, '$.status') AS status
+                   FROM invocations
+                   WHERE json_valid(metadata) AND json_extract(metadata, '$.trace_id') = ?
+                   ORDER BY id ASC""",
+                (trace_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def list_traces(self, days: int = 7, limit: int = 100) -> list[dict]:
+        """Recent traces with their step count, total cost, and total tokens."""
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT json_extract(metadata, '$.trace_id') AS trace_id,
+                          COUNT(*) AS steps,
+                          COALESCE(SUM(cost), 0) AS cost,
+                          COALESCE(SUM(tokens_in), 0) AS tokens_in,
+                          COALESCE(SUM(tokens_out), 0) AS tokens_out,
+                          MIN(created_at) AS started_at,
+                          MAX(created_at) AS ended_at
+                   FROM invocations
+                   WHERE json_valid(metadata) AND json_extract(metadata, '$.trace_id') IS NOT NULL
+                     AND created_at >= datetime('now', ? || ' days')
+                   GROUP BY trace_id
+                   ORDER BY started_at DESC
+                   LIMIT ?""",
+                (f"-{int(days)}", int(limit)),
+            )
+            return [dict(r) for r in cur.fetchall()]

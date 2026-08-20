@@ -37,13 +37,26 @@ class CallRecord:
     provider_cost: Optional[float] = None  # provider-reported cost (wins over computed)
     error: Optional[str] = None
     latency_ms: Optional[float] = None
+    trace_id: Optional[str] = None        # cost-attributed call tree grouping
+    span_name: Optional[str] = None
     metadata: dict = field(default_factory=dict)
 
 
 def record_call(rec: CallRecord, *, capture: bool = False, sample_rate: float = 1.0) -> None:
     """The single sink. Never raises into the caller's request."""
     try:
+        # Fill in the active trace if the record didn't already carry one
+        # (streaming captures it at stream-start; non-streaming reads it here).
+        if rec.trace_id is None:
+            from promptry import naming
+            tr = naming.current_trace()
+            if tr:
+                rec.trace_id, rec.span_name = tr
         meta: dict[str, Any] = {"provider": rec.provider, "api": rec.api}
+        if rec.trace_id:
+            meta["trace_id"] = rec.trace_id
+            if rec.span_name:
+                meta["span_name"] = rec.span_name
         if rec.model:
             meta["model"] = rec.model
         if rec.input_tokens is not None:
@@ -121,6 +134,10 @@ class StreamRecorder:
         self._id = self._model = None
         self._error: Optional[str] = None
         self._done = False
+        # Capture the active trace now (stream-start, in the caller's context);
+        # the success hook fires later when the context is gone.
+        from promptry import naming
+        self._trace = base.trace_id and (base.trace_id, base.span_name) or naming.current_trace()
 
     def absorb(self, event: Any) -> bool:
         """Feed one event; return True if it should be yielded to the caller."""
@@ -167,6 +184,8 @@ class StreamRecorder:
             cache_write_tokens=self._cwrite,
             output_text=("".join(self._text) or None),
             response_id=self._id or self._base.response_id,
+            trace_id=(self._trace[0] if self._trace else None),
+            span_name=(self._trace[1] if self._trace else None),
         )
         record_call(rec, capture=self._capture, sample_rate=self._sample_rate)
 

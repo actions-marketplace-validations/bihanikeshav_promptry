@@ -78,7 +78,7 @@ from promptry.garak import (
     GarakEval,
     GarakRun,
 )
-from promptry.naming import task
+from promptry.naming import task, trace
 # Imported from the callback module directly (not promptry.integrations, which
 # would pull litellm at import); enable_litellm() itself imports litellm lazily.
 from promptry.integrations.litellm_callback import enable_litellm
@@ -88,6 +88,7 @@ __all__ = [
     "track_context",
     "track_invocation",
     "task",
+    "trace",
     "enable_litellm",
     "seed_prompt",
     "get_prompt_template",

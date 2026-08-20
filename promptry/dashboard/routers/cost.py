@@ -166,6 +166,30 @@ class _BudgetIn(BaseModel):
     limit_usd: float
 
 
+@router.get("/api/traces")
+def list_traces(days: int = Query(default=7, ge=1), limit: int = Query(default=100, ge=1, le=500)):
+    """Recent cost-attributed call trees (grouped from `with promptry.trace(...)`)
+    with per-trace step count and total cost/tokens. Alpha."""
+    from promptry.dashboard.server import get_storage
+    storage = get_storage()
+    if not storage.supports("list_traces"):
+        return {"traces": []}
+    return {"traces": storage.list_traces(days=days, limit=limit)}
+
+
+@router.get("/api/traces/{trace_id}")
+def get_trace(trace_id: str):
+    """One trace's per-step token/$ waterfall. Alpha."""
+    from promptry.dashboard.server import get_storage
+    storage = get_storage()
+    if not storage.supports("get_trace"):
+        return {"steps": []}
+    steps = storage.get_trace(trace_id)
+    total_cost = round(sum((s.get("cost") or 0) for s in steps), 6)
+    return {"trace_id": trace_id, "steps": steps, "total_cost": total_cost,
+            "step_count": len(steps)}
+
+
 @router.post("/api/budgets")
 def create_budget(body: _BudgetIn, request: Request,
                   _actor: authlib.Actor = Depends(authlib.require_role("admin"))):

@@ -412,3 +412,13 @@ class BaseStorage(ABC):
     def purge_old_audit(self, days: int) -> int:
         """Delete audit entries older than `days`. Returns rows deleted. Optional."""
         raise NotImplementedError
+
+    # ---- cost-attributed call trees (optional capability) ----
+
+    def get_trace(self, trace_id: str) -> list[dict]:
+        """Invocations in one trace, oldest first, with per-step cost. Optional."""
+        raise NotImplementedError
+
+    def list_traces(self, days: int = 7, limit: int = 100) -> list[dict]:
+        """Recent traces with step count + total cost/tokens. Optional."""
+        raise NotImplementedError

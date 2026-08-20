@@ -32,6 +32,11 @@ _task_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "promptry_task", default=None)
 _suppress_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "promptry_suppress", default=False)
+# (trace_id, span_name) for cost-attributed call trees — groups the LLM calls
+# made inside a `with promptry.trace(...)` block so the dashboard can show a
+# per-step token/$ waterfall ("which step of my agent burned the tokens").
+_trace_var: contextvars.ContextVar[Optional[tuple]] = contextvars.ContextVar(
+    "promptry_trace", default=None)
 
 
 @contextmanager
@@ -61,6 +66,30 @@ def resume_capture(token) -> None:
 
 def is_suppressed() -> bool:
     return _suppress_var.get()
+
+
+@contextmanager
+def trace(name: str):
+    """Group the LLM calls made inside this block into one cost-attributed call
+    tree. Nested traces share the outermost trace id; the innermost name labels
+    the step. Yields the trace id.
+
+        with promptry.trace("checkout_agent"):
+            client.chat.completions.create(...)   # step recorded under the trace
+    """
+    import os
+    parent = _trace_var.get()
+    trace_id = parent[0] if parent else os.urandom(8).hex()
+    token = _trace_var.set((trace_id, name))
+    try:
+        yield trace_id
+    finally:
+        _trace_var.reset(token)
+
+
+def current_trace() -> Optional[tuple]:
+    """The active (trace_id, span_name), or None outside any trace()."""
+    return _trace_var.get()
 
 
 # ---- call-site inference ----
