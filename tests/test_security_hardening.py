@@ -158,7 +158,10 @@ def test_atomic_rolls_back_on_failure(storage):
 # #4 AsyncWriter never silently drops; ownership-aware close
 # ---------------------------------------------------------------------------
 
-def test_full_queue_falls_back_to_sync_write(storage):
+def test_full_queue_durable_sync_fallback_capture_sheds_loudly(storage):
+    """On a saturated queue, durability-critical writes fall back to a
+    synchronous write (never lost), while high-volume capture writes shed load
+    — but loudly (counted on stats()/metrics), never silently."""
     w = AsyncWriter(storage, close_storage=False)
     try:
         import queue as _q
@@ -167,9 +170,16 @@ def test_full_queue_falls_back_to_sync_write(storage):
             raise _q.Full
 
         w._queue.put = always_full  # force the Full path
+
+        # Durable write: synchronous fallback, never dropped.
+        w.save_eval_result(run_id=1, test_name="t", assertion_type="c", passed=True)
+        assert w.stats()["sync_fallbacks"] == 1
+
+        # Capture write: shed (not written synchronously → no added latency),
+        # but the drop is counted, so it is visible rather than silent.
         w.record_invocation(prompt_name="p", input_text="i", output_text="o")
-        # The write must have happened synchronously, not been dropped.
-        assert storage.count_invocations() == 1
+        assert storage.count_invocations() == 0
+        assert w.stats()["dropped"] == 1
     finally:
         w.close()
 
