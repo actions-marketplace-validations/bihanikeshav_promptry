@@ -554,7 +554,10 @@ class TestAuth:
         # re-import path uses env at request time
         resp = client.get("/api/auth/status")
         assert resp.status_code == 200
-        assert resp.json() == {"required": False, "authenticated": True}
+        body = resp.json()
+        assert body["required"] is False
+        assert body["authenticated"] is True
+        assert body["posture"] == "open"
 
     def test_protects_api_when_token_set(self, client, monkeypatch):
         monkeypatch.setenv("PROMPTRY_AUTH_TOKEN", "test-secret-token-abc")

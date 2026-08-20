@@ -170,9 +170,12 @@ class TestInvocationTypedColumns:
             );
             """
         )
-        # The new typed-columns migration is the last entry; everything before
-        # it is pre-applied.
-        prior = [m for m in _MIGRATIONS[:-1]]
+        # Pre-apply every migration up to (but excluding) the typed-columns
+        # migration, located by content so later additions to _MIGRATIONS don't
+        # break this fixture.
+        typed_ver = next(v for v, _d, stmts in _MIGRATIONS
+                         if any("ADD COLUMN cost" in s for s in stmts))
+        prior = [m for m in _MIGRATIONS if m[0] < typed_ver]
         for version, desc, _ in prior:
             conn.execute(
                 "INSERT INTO schema_version (version, description) VALUES (?, ?)",
@@ -250,7 +253,9 @@ class TestInvocationTypedColumns:
             );
             """
         )
-        for version, desc, _ in _MIGRATIONS[:-1]:
+        typed_ver = next(v for v, _d, stmts in _MIGRATIONS
+                         if any("ADD COLUMN cost" in s for s in stmts))
+        for version, desc, _ in [m for m in _MIGRATIONS if m[0] < typed_ver]:
             conn.execute(
                 "INSERT INTO schema_version (version, description) VALUES (?, ?)",
                 (version, desc),
