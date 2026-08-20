@@ -205,6 +205,46 @@ class TestRouteRBAC:
         assert entry["detail"]["limit_usd"] == 5.0
 
 
+class TestPromotionApproval:
+    """Change control: protected-env promotion needs admin sign-off; history
+    is recorded in the audit trail."""
+
+    def _setup(self, client, storage, monkeypatch):
+        monkeypatch.setattr("promptry.projectconfig.cms_enabled", lambda: True)
+        monkeypatch.delenv("PROMPTRY_PROTECTED_ENVS", raising=False)  # default {'prod'}
+        storage.save_prompt(name="greeting", content="hello", content_hash="h1")
+        _bootstrap_admin(client)
+        _login(client, "admin@b.com", "admin-pass-1")
+        client.post("/api/users", json={"email": "ed@b.com",
+                                        "password": "editor-pass-1", "role": "editor"})
+        client.cookies.clear()
+
+    def test_editor_can_promote_to_staging_not_prod(self, client, storage, monkeypatch):
+        self._setup(client, storage, monkeypatch)
+        _login(client, "ed@b.com", "editor-pass-1")
+        assert client.post("/api/prompts/greeting/promote",
+                           json={"version": 1, "env": "staging"}).status_code == 200
+        r = client.post("/api/prompts/greeting/promote",
+                        json={"version": 1, "env": "prod"})
+        assert r.status_code == 403
+        assert "admin" in r.json()["detail"]
+
+    def test_admin_can_promote_to_prod(self, client, storage, monkeypatch):
+        self._setup(client, storage, monkeypatch)
+        _login(client, "admin@b.com", "admin-pass-1")
+        assert client.post("/api/prompts/greeting/promote",
+                           json={"version": 1, "env": "prod"}).status_code == 200
+
+    def test_promotion_history_records_actor_and_env(self, client, storage, monkeypatch):
+        self._setup(client, storage, monkeypatch)
+        _login(client, "admin@b.com", "admin-pass-1")
+        client.post("/api/prompts/greeting/promote", json={"version": 1, "env": "prod"})
+        hist = client.get("/api/prompts/greeting/promotions").json()["promotions"]
+        assert hist and hist[0]["env"] == "prod"
+        assert hist[0]["actor"] == "admin@b.com"
+        assert hist[0]["version"] == 1
+
+
 class TestTokenMode:
     def test_bearer_token_is_admin(self, client, monkeypatch):
         monkeypatch.setenv("PROMPTRY_AUTH_TOKEN", "sekret-token")
