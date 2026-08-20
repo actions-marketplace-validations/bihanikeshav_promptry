@@ -16,6 +16,7 @@ Judge config is read via :func:`promptry.projectconfig.load_project_config`
 """
 from __future__ import annotations
 
+import os
 from typing import Callable
 
 from promptry.projectconfig import load_project_config
@@ -25,6 +26,27 @@ _LITELLM_MISSING = (
     "are not installed.\n"
     "Install them with:  pip install 'promptry[llm]'   (or 'promptry[full]')"
 )
+
+# Default per-request timeout (seconds) for provider calls. Without this a
+# wedged connection blocks the caller — and the background scheduler — forever.
+# Override per call with timeout=..., or globally via PROMPTRY_LLM_TIMEOUT.
+_DEFAULT_LLM_TIMEOUT = 300.0
+
+
+def _default_timeout() -> float:
+    """Resolve the default LLM call timeout (seconds) from the environment.
+
+    A malformed PROMPTRY_LLM_TIMEOUT must never crash every completion, so any
+    parse error falls back to the built-in default.
+    """
+    raw = os.environ.get("PROMPTRY_LLM_TIMEOUT")
+    if not raw:
+        return _DEFAULT_LLM_TIMEOUT
+    try:
+        val = float(raw)
+        return val if val > 0 else _DEFAULT_LLM_TIMEOUT
+    except (TypeError, ValueError):
+        return _DEFAULT_LLM_TIMEOUT
 
 
 def completion(model: str, messages: list[dict], **kwargs):
@@ -45,6 +67,9 @@ def completion(model: str, messages: list[dict], **kwargs):
         apply_key_aliases()
     except Exception:
         pass
+    # Bound the call so a hung provider socket can't block the caller (or the
+    # scheduler) indefinitely. An explicit timeout= from the caller wins.
+    kwargs.setdefault("timeout", _default_timeout())
     return litellm.completion(model=model, messages=messages, **kwargs)
 
 
