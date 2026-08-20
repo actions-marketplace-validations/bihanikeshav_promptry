@@ -20,14 +20,17 @@ Security notes for operators:
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import os
 import secrets
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -126,9 +129,9 @@ def request_is_https(request: Request) -> bool:
     return proto == "https"
 
 
-def session_cookie_kwargs(request: Request) -> dict:
+def session_cookie_kwargs(request: Request, *, key: str = COOKIE_NAME) -> dict:
     return {
-        "key": COOKIE_NAME,
+        "key": key,
         "httponly": True,
         "samesite": "lax",
         "secure": request_is_https(request),
@@ -138,12 +141,11 @@ def session_cookie_kwargs(request: Request) -> dict:
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Block unauthenticated API access when PROMPTRY_AUTH_TOKEN is set."""
+    """Gate /api/* access. Off in open mode; requires a valid actor once a
+    shared token is set (token mode) or any user account exists (multi-user
+    mode). Resolves the actor onto request.state for downstream role checks."""
 
     async def dispatch(self, request: Request, call_next):
-        if not auth_required():
-            return await call_next(request)
-
         # CORS preflight never carries Authorization cookies reliably across
         # all browsers; let OPTIONS through so the browser can complete the handshake.
         if request.method == "OPTIONS":
@@ -153,18 +155,27 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Non-API (SPA + static assets) stays public so the login UI can load.
         if not path.startswith("/api"):
             return await call_next(request)
-        if path in _PUBLIC_API_EXACT:
+        # Auth endpoints (status/login/logout/oidc) must be reachable pre-auth.
+        if path in _PUBLIC_API_EXACT or path.startswith("/api/auth/"):
             return await call_next(request)
 
-        if is_authenticated(request):
+        storage = _get_storage()
+        # Open mode: no shared token AND no user accounts -> unauthenticated
+        # local access, preserving the historical localhost default.
+        if not auth_required() and not multiuser_enabled(storage):
+            return await call_next(request)
+
+        actor = resolve_actor(request)
+        request.state.actor = actor
+        if actor.is_authenticated:
             return await call_next(request)
 
         return JSONResponse(
             status_code=401,
             content={
                 "detail": "authentication required",
-                "hint": "POST /api/auth/login with {\"token\": \"…\"} or send "
-                        "Authorization: Bearer $PROMPTRY_AUTH_TOKEN",
+                "hint": "POST /api/auth/login, or send "
+                        "Authorization: Bearer <token>",
             },
             headers={"WWW-Authenticate": "Bearer"},
         )
@@ -173,3 +184,213 @@ class AuthMiddleware(BaseHTTPMiddleware):
 def generate_token() -> str:
     """Helper for operators / docs: 32-byte hex secret."""
     return secrets.token_hex(32)
+
+
+# ---------------------------------------------------------------------------
+# Multi-user identity (optional, layered on top of the single-token mode above)
+#
+# Three postures, chosen automatically — no config flag:
+#   * open       — no token, no user accounts. Localhost default; full access.
+#   * token      — PROMPTRY_AUTH_TOKEN set, no user accounts. Shared secret.
+#   * multi-user — one or more user accounts exist (created via the API). Each
+#                  request is a specific user with a role; the shared token, if
+#                  also set, still works as an admin/service credential.
+#
+# Multi-user activates the moment the first account is created, so token/open
+# deployments keep working untouched.
+# ---------------------------------------------------------------------------
+
+USER_COOKIE_NAME = "promptry_user"
+ROLES = ("viewer", "editor", "admin")
+_ROLE_RANK = {r: i for i, r in enumerate(ROLES)}
+_PBKDF2_ITERS = 240_000
+
+
+@dataclass
+class Actor:
+    """Who is making a request. `role` is always set so route guards work in
+    every posture (open mode resolves to a full-access local admin)."""
+    kind: str          # 'user' | 'token' | 'anonymous'
+    role: str = "viewer"
+    user_id: int | None = None
+    email: str | None = None
+
+    @property
+    def is_authenticated(self) -> bool:
+        return self.kind in ("user", "token")
+
+
+def hash_password(password: str) -> str:
+    """PBKDF2-HMAC-SHA256 (stdlib, no extra dependency). Django-style string."""
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERS)
+    return (
+        f"pbkdf2_sha256${_PBKDF2_ITERS}$"
+        f"{base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}"
+    )
+
+
+def verify_password(password: str, stored: str | None) -> bool:
+    if not stored:
+        return False
+    try:
+        algo, iters, salt_b64, hash_b64 = stored.split("$")
+        if algo != "pbkdf2_sha256":
+            return False
+        salt = base64.b64decode(salt_b64)
+        expected = base64.b64decode(hash_b64)
+    except (ValueError, TypeError):
+        return False
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iters))
+    return hmac.compare_digest(dk, expected)
+
+
+def server_secret() -> str:
+    """Stable key for signing user sessions, independent of any shared token
+    (multi-user mode may run with no PROMPTRY_AUTH_TOKEN). From
+    PROMPTRY_SECRET_KEY, else a random key persisted (0600) next to the DB so
+    sessions survive restarts."""
+    env = (os.environ.get("PROMPTRY_SECRET_KEY") or "").strip()
+    if env:
+        return env
+    try:
+        from promptry.config import get_config
+        path = Path(get_config().storage.db_path).expanduser().parent / "session_secret"
+    except Exception:
+        path = Path.home() / ".promptry" / "session_secret"
+    try:
+        if path.exists():
+            val = path.read_text(encoding="utf-8").strip()
+            if val:
+                return val
+        path.parent.mkdir(parents=True, exist_ok=True)
+        val = secrets.token_hex(32)
+        path.write_text(val, encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass  # best-effort on platforms without POSIX perms
+        return val
+    except OSError:
+        # Read-only FS: fall back to a per-process key (sessions won't survive
+        # a restart, but auth still functions).
+        return secrets.token_hex(32)
+
+
+def mint_user_session(user_id: int, *, ttl: int = SESSION_TTL_S) -> str:
+    """Signed value ``u1.<uid>.<exp>.<sig>``. Only the id is embedded; role and
+    active status are resolved live from storage so changes take effect at once."""
+    exp = int(time.time()) + int(ttl)
+    payload = f"u1.{int(user_id)}.{exp}"
+    return f"{payload}.{_sign(payload, server_secret())}"
+
+
+def parse_user_session(value: str) -> Optional[int]:
+    """Return the user id from a valid, unexpired session, else None."""
+    if not value:
+        return None
+    parts = value.split(".")
+    if len(parts) != 4 or parts[0] != "u1":
+        return None
+    try:
+        uid = int(parts[1])
+        exp = int(parts[2])
+    except ValueError:
+        return None
+    if exp < int(time.time()):
+        return None
+    payload = f"u1.{parts[1]}.{parts[2]}"
+    if not hmac.compare_digest(parts[3], _sign(payload, server_secret())):
+        return None
+    return uid
+
+
+def _get_storage():
+    try:
+        from promptry.dashboard.server import get_storage
+        return get_storage()
+    except Exception:
+        return None
+
+
+_MULTIUSER_CACHE: dict = {"v": None}
+
+
+def multiuser_enabled(storage=None) -> bool:
+    """True once any user account exists. Cached; invalidated on user create/
+    delete via invalidate_multiuser_cache()."""
+    if _MULTIUSER_CACHE["v"] is not None:
+        return _MULTIUSER_CACHE["v"]
+    storage = storage or _get_storage()
+    enabled = False
+    if storage is not None:
+        try:
+            enabled = storage.supports("count_users") and storage.count_users() > 0
+        except Exception:
+            enabled = False
+    _MULTIUSER_CACHE["v"] = enabled
+    return enabled
+
+
+def invalidate_multiuser_cache() -> None:
+    _MULTIUSER_CACHE["v"] = None
+
+
+def resolve_actor(request: Request) -> Actor:
+    """Resolve the caller to an Actor across all postures. Never raises."""
+    storage = _get_storage()
+    token = auth_token()
+
+    # 1) A signed user-session cookie (multi-user) — role/active resolved live.
+    cookie = request.cookies.get(USER_COOKIE_NAME)
+    if cookie and storage is not None:
+        uid = parse_user_session(cookie)
+        if uid is not None:
+            try:
+                u = storage.get_user_by_id(uid)
+            except (NotImplementedError, Exception):
+                u = None
+            if u and u.get("is_active", 1):
+                return Actor("user", role=u.get("role", "viewer"),
+                             user_id=u["id"], email=u.get("email"))
+
+    # 2) The shared token (Bearer, or a legacy token cookie) — admin/service.
+    if token:
+        provided = bearer_token(request)
+        if provided and token_matches(provided, token):
+            return Actor("token", role="admin")
+        legacy = request.cookies.get(COOKIE_NAME)
+        if legacy and verify_session(legacy, token):
+            return Actor("token", role="admin")
+
+    # 3) Anonymous. In open mode (no token, no users) this is the full-access
+    #    local operator; otherwise it is an unauthenticated caller the gate
+    #    below will reject.
+    if not token and not multiuser_enabled(storage):
+        return Actor("anonymous", role="admin")
+    return Actor("anonymous", role="viewer")
+
+
+def role_at_least(actor: Actor, minimum: str) -> bool:
+    return _ROLE_RANK.get(actor.role, -1) >= _ROLE_RANK.get(minimum, 99)
+
+
+def current_actor(request: Request) -> Actor:
+    """FastAPI dependency: the resolved actor (memoized on request.state)."""
+    actor = getattr(request.state, "actor", None)
+    if actor is None:
+        actor = resolve_actor(request)
+        request.state.actor = actor
+    return actor
+
+
+def require_role(minimum: str):
+    """FastAPI dependency factory: 403 unless the actor has >= `minimum` role."""
+    def _dep(request: Request) -> Actor:
+        actor = current_actor(request)
+        if not actor.is_authenticated and (auth_required() or multiuser_enabled()):
+            raise HTTPException(status_code=401, detail="authentication required")
+        if not role_at_least(actor, minimum):
+            raise HTTPException(status_code=403, detail=f"requires {minimum} role")
+        return actor
+    return _dep
