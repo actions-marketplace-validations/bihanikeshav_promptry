@@ -25,6 +25,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -401,6 +402,54 @@ def client_ip(request: Request) -> Optional[str]:
     if fwd:
         return fwd.split(",")[0].strip()
     return request.client.host if request.client else None
+
+
+class _LoginThrottle:
+    """In-memory brute-force guard for the login endpoint. After
+    PROMPTRY_LOGIN_MAX_ATTEMPTS (default 5) failures from one client within the
+    window, that client is locked out for PROMPTRY_LOGIN_LOCKOUT_S (default
+    900s). A success clears the counter. Per-process (right for the usual
+    single-instance self-hosted deploy)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._fails: dict[str, list[float]] = {}
+        self._locked_until: dict[str, float] = {}
+
+    @staticmethod
+    def _cfg() -> tuple[int, float]:
+        try:
+            attempts = int(os.environ.get("PROMPTRY_LOGIN_MAX_ATTEMPTS", "5"))
+        except ValueError:
+            attempts = 5
+        try:
+            lockout = float(os.environ.get("PROMPTRY_LOGIN_LOCKOUT_S", "900"))
+        except ValueError:
+            lockout = 900.0
+        return max(1, attempts), max(1.0, lockout)
+
+    def retry_after(self, key: str) -> float:
+        with self._lock:
+            return max(0.0, self._locked_until.get(key, 0.0) - time.time())
+
+    def record_failure(self, key: str) -> None:
+        attempts, lockout = self._cfg()
+        now = time.time()
+        with self._lock:
+            window = [t for t in self._fails.get(key, []) if now - t < lockout]
+            window.append(now)
+            self._fails[key] = window
+            if len(window) >= attempts:
+                self._locked_until[key] = now + lockout
+                self._fails[key] = []
+
+    def reset(self, key: str) -> None:
+        with self._lock:
+            self._fails.pop(key, None)
+            self._locked_until.pop(key, None)
+
+
+login_throttle = _LoginThrottle()
 
 
 def audit_event(request: Request, action: str, *, target=None,

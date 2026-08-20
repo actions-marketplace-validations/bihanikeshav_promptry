@@ -19,9 +19,16 @@ def _env(monkeypatch):
     monkeypatch.setenv("PROMPTRY_SECRET_KEY", "test-secret-key")
     monkeypatch.delenv("PROMPTRY_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("PROMPTRY_DASHBOARD_TOKEN", raising=False)
+    monkeypatch.delenv("PROMPTRY_LOGIN_MAX_ATTEMPTS", raising=False)
+    monkeypatch.delenv("PROMPTRY_LOGIN_LOCKOUT_S", raising=False)
     authlib.invalidate_multiuser_cache()
+    authlib.login_throttle.reset("testclient")  # TestClient's client.host
+    authlib.login_throttle._fails.clear()
+    authlib.login_throttle._locked_until.clear()
     yield
     authlib.invalidate_multiuser_cache()
+    authlib.login_throttle._fails.clear()
+    authlib.login_throttle._locked_until.clear()
 
 
 @pytest.fixture
@@ -93,6 +100,20 @@ class TestGateAndLogin:
         me = client.get("/api/auth/me").json()
         assert me["role"] == "admin" and me["email"] == email
         assert client.get("/api/users").status_code == 200
+
+    def test_bruteforce_lockout(self, client, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_LOGIN_MAX_ATTEMPTS", "3")
+        monkeypatch.setenv("PROMPTRY_LOGIN_LOCKOUT_S", "900")
+        email, pw = _bootstrap_admin(client)
+        client.cookies.clear()
+        # 3 failures trip the lockout; the next attempt is 429 even with the
+        # CORRECT password, proving it blocks before credential verification.
+        for _ in range(3):
+            assert client.post("/api/auth/login",
+                               json={"email": email, "password": "wrong"}).status_code == 401
+        r = client.post("/api/auth/login", json={"email": email, "password": pw})
+        assert r.status_code == 429
+        assert "Retry-After" in r.headers
 
     def test_bad_password_denied(self, client):
         email, _ = _bootstrap_admin(client)

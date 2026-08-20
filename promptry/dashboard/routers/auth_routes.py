@@ -75,6 +75,17 @@ def whoami(request: Request):
 def login(body: LoginBody, request: Request, response: Response):
     from promptry.dashboard.server import get_storage
 
+    # Brute-force guard: lock out a client after too many failed attempts.
+    throttle_key = authlib.client_ip(request) or "unknown"
+    wait = authlib.login_throttle.retry_after(throttle_key)
+    if wait > 0:
+        _audit(request, "auth.login", actor=(body.email or "token"), result="throttled")
+        return JSONResponse(
+            status_code=429,
+            content={"ok": False, "detail": f"too many attempts; retry in {int(wait) + 1}s"},
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
+
     # --- multi-user: email + password ---
     if body.email and body.password:
         storage = get_storage()
@@ -85,10 +96,12 @@ def login(body: LoginBody, request: Request, response: Response):
             user = None
         if (not user or not user.get("is_active", 1)
                 or not authlib.verify_password(body.password, user.get("password_hash"))):
+            authlib.login_throttle.record_failure(throttle_key)
             _audit(request, "auth.login", actor=body.email.strip().lower(),
                    result="denied")
             return JSONResponse(status_code=401,
                                 content={"ok": False, "detail": "invalid credentials"})
+        authlib.login_throttle.reset(throttle_key)
         session = authlib.mint_user_session(user["id"])
         response.set_cookie(value=session,
                             **authlib.session_cookie_kwargs(request,
@@ -106,9 +119,11 @@ def login(body: LoginBody, request: Request, response: Response):
     if expected is None:
         return {"ok": True, "required": False, "authenticated": True}
     if not body.token or not authlib.token_matches(body.token.strip(), expected):
+        authlib.login_throttle.record_failure(throttle_key)
         _audit(request, "auth.login", actor="token", result="denied")
         return JSONResponse(status_code=401,
                             content={"ok": False, "detail": "invalid token"})
+    authlib.login_throttle.reset(throttle_key)
     session = authlib.mint_session(expected)
     response.set_cookie(value=session, **authlib.session_cookie_kwargs(request))
     _audit(request, "auth.login", actor="token")
