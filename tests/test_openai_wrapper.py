@@ -191,6 +191,69 @@ class TestRecording:
         assert storage.count_invocations() == 0
 
 
+class TestEmbeddings:
+    def test_embeddings_recorded_as_cost_row(self, storage):
+        resp = types.SimpleNamespace(model="text-embedding-3-small",
+                                     usage=types.SimpleNamespace(prompt_tokens=1000))
+
+        class _RealEmb:
+            def create(self, **kw):
+                return resp
+        emb = pio._Embeddings(_RealEmb(), {"task": "emb", "capture": False,
+                                           "sample_rate": 1.0}, False)
+        emb.create(model="text-embedding-3-small", input=["a", "b", "c"])
+        inv = storage.get_invocation(storage.list_invocations(name="emb", days=1)[0]["id"])
+        assert inv["metadata"]["api"] == "embeddings"
+        assert inv["metadata"]["tokens_in"] == 1000
+        assert inv["metadata"]["batch"] == 3
+        assert "tokens_out" not in inv["metadata"]
+        assert inv["output_text"] is None
+
+
+class TestResponsesApi:
+    def test_non_streaming_recorded(self, storage):
+        resp = types.SimpleNamespace(
+            id="resp_1", model="gpt-4o", output_text="the answer",
+            usage=types.SimpleNamespace(input_tokens=20, output_tokens=5,
+                input_tokens_details=types.SimpleNamespace(cached_tokens=2)))
+
+        class _RealResp:
+            def create(self, **kw):
+                return resp
+        r = pio._Responses(_RealResp(), {"task": "resp", "capture": True,
+                                         "sample_rate": 1.0}, False)
+        r.create(model="gpt-4o", input="hello", instructions="be terse")
+        inv = storage.get_invocation(storage.list_invocations(name="resp", days=1)[0]["id"])
+        assert inv["metadata"]["api"] == "responses"
+        assert inv["metadata"]["tokens_in"] == 20 and inv["metadata"]["tokens_out"] == 5
+        assert inv["output_text"] == "the answer"
+        assert storage.get_prompt("resp") is not None  # instructions registered as system
+
+    def test_streaming_recorded(self, storage):
+        events = [
+            types.SimpleNamespace(type="response.created",
+                response=types.SimpleNamespace(id="resp_s", model="gpt-4o", usage=None)),
+            types.SimpleNamespace(type="response.output_text.delta", delta="Hel"),
+            types.SimpleNamespace(type="response.output_text.delta", delta="lo"),
+            types.SimpleNamespace(type="response.completed",
+                response=types.SimpleNamespace(id="resp_s", model="gpt-4o",
+                    usage=types.SimpleNamespace(input_tokens=10, output_tokens=2,
+                        input_tokens_details=None))),
+        ]
+
+        class _RealResp:
+            def create(self, **kw):
+                return iter(events)
+        r = pio._Responses(_RealResp(), {"task": "rs", "capture": True,
+                                         "sample_rate": 1.0}, False)
+        stream = r.create(model="gpt-4o", input="hi", stream=True)
+        consumed = list(stream)
+        assert len(consumed) == 4                       # no events swallowed
+        inv = storage.get_invocation(storage.list_invocations(name="rs", days=1)[0]["id"])
+        assert inv["output_text"] == "Hello"
+        assert inv["metadata"]["tokens_in"] == 10
+
+
 class TestResponseIdDedup:
     """A provider response id dedups the same call seen by two capture layers."""
 

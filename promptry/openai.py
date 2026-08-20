@@ -208,6 +208,224 @@ class _Chat:
         return getattr(self._real, name)
 
 
+# ---------------------------------------------------------------------------
+# Embeddings — a cost row with input tokens and no output (RAG spend).
+# ---------------------------------------------------------------------------
+
+def _embeddings_input_text(kwargs: dict[str, Any]) -> str | None:
+    inp = kwargs.get("input")
+    if inp is None:
+        return None
+    if isinstance(inp, (list, tuple)):
+        return "\n".join(str(x) for x in inp)
+    return str(inp)
+
+
+def _record_embeddings(kwargs, response, opts, exc=None) -> None:
+    try:
+        inp = kwargs.get("input")
+        batch = len(inp) if isinstance(inp, (list, tuple)) else 1
+        usage = getattr(response, "usage", None)
+        core.record_call(core.CallRecord(
+            name=naming.infer_task(opts["task"]), provider="openai", api="embeddings",
+            status="error" if exc else "ok",
+            error=(f"{type(exc).__name__}: {str(exc)[:300]}" if exc else None),
+            model=getattr(response, "model", None) or kwargs.get("model"),
+            input_tokens=getattr(usage, "prompt_tokens", None) if usage is not None else None,
+            output_tokens=None,
+            input_text=_embeddings_input_text(kwargs),
+            metadata={"batch": batch},
+        ), capture=opts["capture"], sample_rate=opts["sample_rate"])
+    except Exception:
+        logger.debug("promptry embeddings tracking failed", exc_info=True)
+
+
+class _Embeddings:
+    def __init__(self, real, opts, is_async):
+        self._real = real
+        self._opts = opts
+        self._is_async = is_async
+
+    def create(self, *args, **kwargs):
+        try:
+            resp = self._real.create(*args, **kwargs)
+        except Exception as exc:
+            if not naming.is_suppressed():
+                _record_embeddings(kwargs, None, self._opts, exc)
+            raise
+        if not naming.is_suppressed():
+            _record_embeddings(kwargs, resp, self._opts)
+        return resp
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class _AsyncEmbeddings(_Embeddings):
+    async def create(self, *args, **kwargs):
+        try:
+            resp = await self._real.create(*args, **kwargs)
+        except Exception as exc:
+            if not naming.is_suppressed():
+                _record_embeddings(kwargs, None, self._opts, exc)
+            raise
+        if not naming.is_suppressed():
+            _record_embeddings(kwargs, resp, self._opts)
+        return resp
+
+
+# ---------------------------------------------------------------------------
+# Responses API — different shape (input string/items, output items, and the
+# system prompt lives in `instructions`).
+# ---------------------------------------------------------------------------
+
+def _responses_input_text(kwargs: dict[str, Any]) -> str | None:
+    inp = kwargs.get("input")
+    if inp is None:
+        return None
+    if isinstance(inp, str):
+        return f"user: {inp}"
+    if isinstance(inp, (list, tuple)):
+        parts = []
+        for item in inp:
+            if isinstance(item, dict):
+                role = item.get("role", "")
+                content = item.get("content", "")
+                if isinstance(content, list):
+                    content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+                parts.append(f"{role}: {content}")
+        return "\n".join(parts) if parts else None
+    return str(inp)
+
+
+def _responses_output_text(response: Any) -> str | None:
+    # The SDK aggregates text at response.output_text; fall back to walking items.
+    txt = getattr(response, "output_text", None)
+    if txt:
+        return txt
+    try:
+        parts = []
+        for item in getattr(response, "output", None) or []:
+            for c in getattr(item, "content", None) or []:
+                t = getattr(c, "text", None)
+                if t:
+                    parts.append(t)
+        return "\n".join(parts) or None
+    except Exception:
+        return None
+
+
+def _responses_usage(response: Any) -> dict:
+    u = getattr(response, "usage", None)
+    meta = {}
+    if u is not None:
+        meta["input_tokens"] = getattr(u, "input_tokens", None)
+        meta["output_tokens"] = getattr(u, "output_tokens", None)
+        details = getattr(u, "input_tokens_details", None)
+        meta["cached_tokens"] = getattr(details, "cached_tokens", None) if details is not None else None
+    return meta
+
+
+def _responses_adapter(event: Any) -> core.StreamDelta | None:
+    try:
+        etype = getattr(event, "type", "")
+        if etype == "response.output_text.delta":
+            return core.StreamDelta(text=getattr(event, "delta", None))
+        if etype in ("response.created", "response.completed", "response.incomplete"):
+            resp = getattr(event, "response", None)
+            d = core.StreamDelta(response_id=getattr(resp, "id", None),
+                                 model=getattr(resp, "model", None))
+            u = _responses_usage(resp)
+            d.input_tokens = u.get("input_tokens")
+            d.output_tokens = u.get("output_tokens")
+            d.cached_tokens = u.get("cached_tokens")
+            return d
+        return None
+    except Exception:
+        return None
+
+
+def _record_responses(kwargs, response, opts, exc=None) -> None:
+    try:
+        u = _responses_usage(response) if response is not None else {}
+        core.record_call(core.CallRecord(
+            name=naming.infer_task(opts["task"]), provider="openai", api="responses",
+            status="error" if exc else "ok",
+            error=(f"{type(exc).__name__}: {str(exc)[:300]}" if exc else None),
+            model=getattr(response, "model", None) or kwargs.get("model"),
+            input_tokens=u.get("input_tokens"),
+            output_tokens=u.get("output_tokens"),
+            cached_tokens=u.get("cached_tokens"),
+            system_prompt=kwargs.get("instructions"),
+            input_text=_responses_input_text(kwargs),
+            output_text=_responses_output_text(response) if response is not None else None,
+            response_id=getattr(response, "id", None),
+        ), capture=opts["capture"], sample_rate=opts["sample_rate"])
+    except Exception:
+        logger.debug("promptry responses tracking failed", exc_info=True)
+
+
+def _responses_stream_recorder(kwargs, opts):
+    base = core.CallRecord(
+        name=naming.infer_task(opts["task"]), provider="openai", api="responses",
+        system_prompt=kwargs.get("instructions"),
+        input_text=_responses_input_text(kwargs))
+    return core.StreamRecorder(base, _responses_adapter, capture=opts["capture"],
+                               sample_rate=opts["sample_rate"])
+
+
+class _Responses:
+    def __init__(self, real, opts, is_async):
+        self._real = real
+        self._opts = opts
+        self._is_async = is_async
+
+    def create(self, *args, **kwargs):
+        if kwargs.get("stream") and not naming.is_suppressed():
+            rec = _responses_stream_recorder(kwargs, self._opts)
+            real = self._real.create(*args, **kwargs)
+            return core.TrackedStream(real, rec)
+        try:
+            resp = self._real.create(*args, **kwargs)
+        except Exception as exc:
+            if not naming.is_suppressed():
+                _record_responses(kwargs, None, self._opts, exc)
+            raise
+        if not naming.is_suppressed():
+            _record_responses(kwargs, resp, self._opts)
+        return resp
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class _AsyncResponses(_Responses):
+    async def create(self, *args, **kwargs):
+        if kwargs.get("stream") and not naming.is_suppressed():
+            rec = _responses_stream_recorder(kwargs, self._opts)
+            real = await self._real.create(*args, **kwargs)
+            return core.AsyncTrackedStream(real, rec)
+        try:
+            resp = await self._real.create(*args, **kwargs)
+        except Exception as exc:
+            if not naming.is_suppressed():
+                _record_responses(kwargs, None, self._opts, exc)
+            raise
+        if not naming.is_suppressed():
+            _record_responses(kwargs, resp, self._opts)
+        return resp
+
+
+def _attach_resources(wrapper, client, opts, is_async):
+    """Wrap embeddings + responses when the SDK exposes them (older SDKs may not)."""
+    if hasattr(client, "embeddings"):
+        cls = _AsyncEmbeddings if is_async else _Embeddings
+        wrapper.embeddings = cls(client.embeddings, opts, is_async)
+    if hasattr(client, "responses"):
+        cls = _AsyncResponses if is_async else _Responses
+        wrapper.responses = cls(client.responses, opts, is_async)
+
+
 def _opts(task: str | None, capture: bool | None, sample_rate: float) -> dict[str, Any]:
     return {"task": task, "capture": _default_capture(capture), "sample_rate": sample_rate}
 
@@ -220,9 +438,9 @@ class OpenAI:
                  promptry_sample_rate: float = 1.0, **kwargs: Any):
         import openai
         self._client = openai.OpenAI(*args, **kwargs)
-        self.chat = _Chat(self._client.chat,
-                          _opts(promptry_task, promptry_capture, promptry_sample_rate),
-                          is_async=False)
+        _o = _opts(promptry_task, promptry_capture, promptry_sample_rate)
+        self.chat = _Chat(self._client.chat, _o, is_async=False)
+        _attach_resources(self, self._client, _o, is_async=False)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
@@ -236,9 +454,9 @@ class AsyncOpenAI:
                  promptry_sample_rate: float = 1.0, **kwargs: Any):
         import openai
         self._client = openai.AsyncOpenAI(*args, **kwargs)
-        self.chat = _Chat(self._client.chat,
-                          _opts(promptry_task, promptry_capture, promptry_sample_rate),
-                          is_async=True)
+        _o = _opts(promptry_task, promptry_capture, promptry_sample_rate)
+        self.chat = _Chat(self._client.chat, _o, is_async=True)
+        _attach_resources(self, self._client, _o, is_async=True)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
