@@ -8,12 +8,13 @@ from promptry.registry import PromptRegistry
 from promptry.storage.sqlite import SQLiteStorage
 
 
-def _fake_response(model="gpt-4o", pin=100, pout=50, cached=20, content="hi there"):
+def _fake_response(model="gpt-4o", pin=100, pout=50, cached=20, content="hi there",
+                   rid="chatcmpl-abc"):
     usage = types.SimpleNamespace(
         prompt_tokens=pin, completion_tokens=pout, total_tokens=pin + pout,
         prompt_tokens_details=types.SimpleNamespace(cached_tokens=cached))
     choice = types.SimpleNamespace(message=types.SimpleNamespace(content=content))
-    return types.SimpleNamespace(model=model, usage=usage, choices=[choice])
+    return types.SimpleNamespace(id=rid, model=model, usage=usage, choices=[choice])
 
 
 class _FakeCompletions:
@@ -85,6 +86,35 @@ class TestRecording:
         tc = pio._TrackedCompletions(_FakeCompletions(_fake_response()),
                                      {"task": "bot", "capture": False, "sample_rate": 1.0})
         assert tc.some_real_attr == "proxied"
+
+    def test_name_is_inferred_from_callsite_when_unset(self, storage):
+        # task=None -> infer from the call site (this test method)
+        tc = pio._TrackedCompletions(_FakeCompletions(_fake_response()),
+                                     {"task": None, "capture": False, "sample_rate": 1.0})
+        tc.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+        rows = storage.list_invocations(days=1)
+        assert len(rows) == 1
+        assert rows[0]["prompt_name"].endswith(
+            ":TestRecording.test_name_is_inferred_from_callsite_when_unset")
+
+    def test_response_id_dedups_across_two_records(self, storage):
+        resp = _fake_response(rid="chatcmpl-dup")
+        tc = pio._TrackedCompletions(_FakeCompletions(resp),
+                                     {"task": "bot", "capture": False, "sample_rate": 1.0})
+        tc.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+        tc.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])  # same id
+        assert storage.count_invocations() == 1
+
+    def test_suppressed_context_skips_recording(self, storage):
+        tc = pio._TrackedCompletions(_FakeCompletions(_fake_response()),
+                                     {"task": "bot", "capture": False, "sample_rate": 1.0})
+        from promptry import naming
+        token = naming.suppress_capture()
+        try:
+            tc.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+        finally:
+            naming.resume_capture(token)
+        assert storage.count_invocations() == 0
 
 
 class TestResponseIdDedup:

@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from promptry import naming
 from promptry.integrations.openai import _extract_system_prompt, _extract_usage_metadata
 
 logger = logging.getLogger("promptry.openai")
@@ -55,7 +56,9 @@ def _record(kwargs: dict[str, Any], response: Any, opts: dict[str, Any]) -> None
     try:
         from promptry.registry import track, track_invocation
 
-        task = opts["task"]
+        # Name: explicit promptry_task > ambient > the call site (resolved here,
+        # while the user's frame that made this call is on the stack).
+        task = naming.infer_task(opts["task"])
         meta = _extract_usage_metadata(response)
         track_invocation(
             task,
@@ -64,6 +67,9 @@ def _record(kwargs: dict[str, Any], response: Any, opts: dict[str, Any]) -> None
             output_text=_output_text(response),
             capture=opts["capture"],
             sample_rate=opts["sample_rate"],
+            # The provider call id dedups this call if another capture layer
+            # (e.g. the LiteLLM callback) also records it.
+            response_id=getattr(response, "id", None),
         )
         # Register the (stable) system prompt so it shows in the registry and
         # the prefix-cache optimizer. track() dedups by content hash, so an
@@ -92,7 +98,9 @@ class _TrackedCompletions:
 
     def create(self, *args: Any, **kwargs: Any) -> Any:
         response = self._real.create(*args, **kwargs)
-        if not kwargs.get("stream"):
+        # Skip if an outer capture layer (e.g. the LiteLLM callback) owns this
+        # call, and skip streaming (usage isn't known until the stream is read).
+        if not kwargs.get("stream") and not naming.is_suppressed():
             _record(kwargs, response, self._opts)
         return response
 
@@ -107,7 +115,7 @@ class _AsyncTrackedCompletions:
 
     async def create(self, *args: Any, **kwargs: Any) -> Any:
         response = await self._real.create(*args, **kwargs)
-        if not kwargs.get("stream"):
+        if not kwargs.get("stream") and not naming.is_suppressed():
             _record(kwargs, response, self._opts)
         return response
 
@@ -125,14 +133,14 @@ class _Chat:
         return getattr(self._real, name)
 
 
-def _opts(task: str, capture: bool | None, sample_rate: float) -> dict[str, Any]:
+def _opts(task: str | None, capture: bool | None, sample_rate: float) -> dict[str, Any]:
     return {"task": task, "capture": _default_capture(capture), "sample_rate": sample_rate}
 
 
 class OpenAI:
     """Drop-in replacement for ``openai.OpenAI`` that records every chat call."""
 
-    def __init__(self, *args: Any, promptry_task: str = "openai",
+    def __init__(self, *args: Any, promptry_task: str | None = None,
                  promptry_capture: bool | None = None,
                  promptry_sample_rate: float = 1.0, **kwargs: Any):
         import openai
@@ -148,7 +156,7 @@ class OpenAI:
 class AsyncOpenAI:
     """Drop-in replacement for ``openai.AsyncOpenAI``."""
 
-    def __init__(self, *args: Any, promptry_task: str = "openai",
+    def __init__(self, *args: Any, promptry_task: str | None = None,
                  promptry_capture: bool | None = None,
                  promptry_sample_rate: float = 1.0, **kwargs: Any):
         import openai
