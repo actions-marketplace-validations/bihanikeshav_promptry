@@ -215,16 +215,33 @@ def _run_loop(suite_name: str, module: str, interval_minutes: int):
             result = run_suite(suite_name)
             drift = monitor.check(suite_name)
 
+            # Latency SLO gates from .promptry [slo] — a suite can pass on score
+            # yet breach a performance budget, so alert on that in the loop too.
+            slo_breaches = []
+            try:
+                from promptry.projectconfig import load_project_config
+                from promptry.slo import check_slos
+                slo_cfg = load_project_config().get("slo", {})
+                if slo_cfg:
+                    slo_breaches = check_slos(result, slo_cfg)
+            except Exception:
+                log.debug("SLO check failed", exc_info=True)
+
             log.info(
-                "run complete: pass=%s score=%.3f drift=%s",
+                "run complete: pass=%s score=%.3f drift=%s slo_breaches=%d",
                 result.overall_pass, result.overall_score, drift.is_drifting,
+                len(slo_breaches),
             )
 
-            # notify on regression or drift
-            if not result.overall_pass or drift.is_drifting:
+            # notify on regression, drift, or an SLO breach
+            if not result.overall_pass or drift.is_drifting or slo_breaches:
                 from promptry.notifications import notify_regression
-                details = f"Drift: {drift.message}" if drift.is_drifting else ""
-                notify_regression(result, details=details)
+                bits = []
+                if drift.is_drifting:
+                    bits.append(f"Drift: {drift.message}")
+                if slo_breaches:
+                    bits.append(f"SLO breaches: {len(slo_breaches)}")
+                notify_regression(result, details="; ".join(bits))
 
             # update state file with last run info
             _ensure_dir()
