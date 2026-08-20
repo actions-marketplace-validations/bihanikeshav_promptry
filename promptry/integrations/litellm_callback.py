@@ -126,12 +126,23 @@ def _build_logger_class():
             except Exception:
                 logger.debug("promptry pre-call hook failed", exc_info=True)
 
+        def _name_for(self, kwargs, stashed):
+            params = kwargs.get("litellm_params") or {}
+            return stashed.get("name") or naming.infer_task(
+                (params.get("metadata") or {}).get("promptry_task"))
+
         def _record(self, kwargs, response_obj, start_time, end_time):
             stashed = _pop(kwargs.get("litellm_call_id")) or {}
             try:
-                params = kwargs.get("litellm_params") or {}
-                name = stashed.get("name") or naming.infer_task(
-                    (params.get("metadata") or {}).get("promptry_task"))
+                name = self._name_for(kwargs, stashed)
+                # Streaming: litellm hands the assembled response via
+                # complete_streaming_response when the chunk object has no usage.
+                resp = response_obj
+                if getattr(resp, "usage", None) is None:
+                    csr = kwargs.get("complete_streaming_response")
+                    if csr is not None:
+                        resp = csr
+                response_obj = resp
                 model = getattr(response_obj, "model", None) or kwargs.get("model")
                 meta = _usage_meta(response_obj, model)
                 try:
@@ -164,16 +175,30 @@ def _build_logger_class():
         async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
             self._record(kwargs, response_obj, start_time, end_time)
 
-        def _release(self, kwargs):
+        def _record_failure(self, kwargs, response_obj):
+            """Record a failed call so error rate / failed-call volume is visible."""
             stashed = _pop(kwargs.get("litellm_call_id")) or {}
-            if stashed.get("token") is not None:
-                naming.resume_capture(stashed["token"])
+            try:
+                name = self._name_for(kwargs, stashed)
+                err = kwargs.get("exception") or response_obj
+                meta = {"provider": "litellm", "model": kwargs.get("model"),
+                        "status": "error",
+                        "error": (f"{type(err).__name__}: {str(err)[:300]}"
+                                  if err is not None else "error")}
+                from promptry.registry import track_invocation
+                track_invocation(name, metadata=meta,
+                                 input_text=_messages_text(kwargs.get("messages") or []))
+            except Exception:
+                logger.debug("promptry failure hook failed", exc_info=True)
+            finally:
+                if stashed.get("token") is not None:
+                    naming.resume_capture(stashed["token"])
 
         def log_failure_event(self, kwargs, response_obj, start_time, end_time):
-            self._release(kwargs)
+            self._record_failure(kwargs, response_obj)
 
         async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
-            self._release(kwargs)
+            self._record_failure(kwargs, response_obj)
 
     return PromptryLogger
 

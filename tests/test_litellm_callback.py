@@ -80,13 +80,34 @@ class TestLifecycle:
         lg.log_success_event(kw, _resp(), _T0, _T1)
         assert st.list_invocations(name="checkout", days=1)
 
-    def test_failure_releases_suppression(self, logger):
+    def test_failure_records_and_releases_suppression(self, logger):
         lg, st = logger
         kw = _kwargs()
+        kw["exception"] = RuntimeError("api down")
         lg.log_pre_api_call("gpt-4o", kw["messages"], kw)
         assert naming.is_suppressed() is True
         lg.log_failure_event(kw, None, _T0, _T1)
         assert naming.is_suppressed() is False
+        # the failed call is recorded (visible error rate), not silently dropped
+        rows = st.list_invocations(days=1)
+        assert len(rows) == 1
+        inv = st.get_invocation(rows[0]["id"])
+        assert inv["metadata"]["status"] == "error"
+        assert "api down" in inv["metadata"]["error"]
+
+    def test_streaming_uses_complete_streaming_response(self, logger):
+        lg, st = logger
+        kw = _kwargs()
+        # streaming: the success event's response_obj lacks usage; litellm hands
+        # the assembled response via complete_streaming_response.
+        kw["complete_streaming_response"] = _resp(rid="chatcmpl-stream")
+        chunk_without_usage = types.SimpleNamespace(id="chatcmpl-stream", model="gpt-4o",
+                                                    usage=None, choices=[])
+        lg.log_pre_api_call("gpt-4o", kw["messages"], kw)
+        lg.log_success_event(kw, chunk_without_usage, _T0, _T1)
+        rows = st.list_invocations(days=1)
+        assert len(rows) == 1
+        assert st.get_invocation(rows[0]["id"])["metadata"]["tokens_in"] == 100
 
     def test_proxy_mode_uses_model_name(self, logger):
         lg, st = logger

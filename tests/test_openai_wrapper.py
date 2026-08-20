@@ -28,6 +28,31 @@ class _FakeCompletions:
         return self._response
 
 
+def _stream_chunks(pieces=("Hel", "lo"), rid="chatcmpl-s", model="gpt-4o",
+                   with_usage=True):
+    for p in pieces:
+        yield types.SimpleNamespace(
+            model=model, id=rid,
+            choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content=p))],
+            usage=None)
+    if with_usage:
+        yield types.SimpleNamespace(
+            model=model, id=rid, choices=[],
+            usage=types.SimpleNamespace(
+                prompt_tokens=10, completion_tokens=2, total_tokens=12,
+                prompt_tokens_details=types.SimpleNamespace(cached_tokens=0)))
+
+
+class _FakeStreamCompletions:
+    def __init__(self, gen_factory):
+        self._gen_factory = gen_factory
+        self.last_kwargs = None
+
+    def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        return self._gen_factory()
+
+
 @pytest.fixture
 def storage(tmp_path, monkeypatch):
     st = SQLiteStorage(tmp_path / "t.db")
@@ -68,11 +93,60 @@ class TestRecording:
         # the system prompt is registered for the registry + cache optimizer
         assert storage.get_prompt("bot") is not None
 
-    def test_streaming_is_not_recorded(self, storage):
-        tc = pio._TrackedCompletions(_FakeCompletions(_fake_response()),
+    def test_streaming_captures_on_completion(self, storage):
+        fc = _FakeStreamCompletions(lambda: _stream_chunks())
+        tc = pio._TrackedCompletions(fc, {"task": "bot", "capture": True, "sample_rate": 1.0})
+        stream = tc.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}],
+                           stream=True)
+        assert storage.count_invocations() == 0  # nothing until consumed
+        chunks = list(stream)
+        # include_usage was injected, and the usage-only chunk was swallowed
+        assert fc.last_kwargs["stream_options"] == {"include_usage": True}
+        assert all(c.choices for c in chunks)
+        rows = storage.list_invocations(name="bot", days=1)
+        assert len(rows) == 1
+        inv = storage.get_invocation(rows[0]["id"])
+        assert inv["metadata"]["tokens_in"] == 10
+        assert inv["output_text"] == "Hello"
+
+    def test_streaming_respects_user_stream_options(self, storage):
+        fc = _FakeStreamCompletions(lambda: _stream_chunks())
+        tc = pio._TrackedCompletions(fc, {"task": "bot", "capture": False, "sample_rate": 1.0})
+        stream = tc.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}],
+                           stream=True, stream_options={"include_usage": True})
+        chunks = list(stream)
+        # user asked for usage -> the usage-only chunk is NOT swallowed
+        assert any(not c.choices for c in chunks)
+        assert storage.count_invocations() == 1
+
+    def test_tool_call_output_is_captured(self, storage):
+        msg = types.SimpleNamespace(content=None, tool_calls=[
+            types.SimpleNamespace(function=types.SimpleNamespace(
+                name="get_weather", arguments='{"city":"NYC"}'))])
+        resp = types.SimpleNamespace(
+            id="r1", model="gpt-4o",
+            usage=types.SimpleNamespace(prompt_tokens=5, completion_tokens=3,
+                prompt_tokens_details=types.SimpleNamespace(cached_tokens=0)),
+            choices=[types.SimpleNamespace(message=msg)])
+        tc = pio._TrackedCompletions(_FakeCompletions(resp),
+                                     {"task": "bot", "capture": True, "sample_rate": 1.0})
+        tc.create(model="gpt-4o", messages=[{"role": "user", "content": "weather?"}])
+        inv = storage.get_invocation(storage.list_invocations(name="bot", days=1)[0]["id"])
+        assert "get_weather" in inv["output_text"]
+
+    def test_failed_call_is_recorded_and_reraised(self, storage):
+        class _Boom:
+            def create(self, **kw):
+                raise RuntimeError("api down")
+        tc = pio._TrackedCompletions(_Boom(),
                                      {"task": "bot", "capture": False, "sample_rate": 1.0})
-        tc.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}], stream=True)
-        assert storage.list_invocations(name="bot", days=1) == []
+        with pytest.raises(RuntimeError):
+            tc.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+        rows = storage.list_invocations(name="bot", days=1)
+        assert len(rows) == 1
+        inv = storage.get_invocation(rows[0]["id"])
+        assert inv["metadata"]["status"] == "error"
+        assert "api down" in inv["metadata"]["error"]
 
     def test_tracking_failure_never_breaks_the_call(self, storage, monkeypatch):
         monkeypatch.setattr(pio, "_extract_usage_metadata",
