@@ -4,6 +4,7 @@
 import { sha256 } from './hash';
 import { DedupCache } from './dedup';
 import { Batcher } from './batcher';
+import { currentTrace } from './naming';
 import type {
   FeedbackOptions,
   InvocationOptions,
@@ -117,6 +118,16 @@ export class Promptry {
       return;
     }
     const now = new Date().toISOString();
+    // Enrich metadata with the active call-tree (trace) + cached-token signal +
+    // response id, matching the Python capture core's invocation shape.
+    const meta = this._withProject(opts.metadata);
+    if (opts.cachedTokens !== undefined) meta['cached_tokens'] = opts.cachedTokens;
+    if (opts.responseId !== undefined) meta['response_id'] = opts.responseId;
+    const tr = currentTrace();
+    if (tr) {
+      meta['trace_id'] = tr.traceId;
+      meta['span_name'] = tr.span;
+    }
     const event: TelemetryEvent = {
       type: 'invocation',
       data: {
@@ -129,7 +140,7 @@ export class Promptry {
         ...(opts.requestId !== undefined
           ? { request_id: opts.requestId }
           : {}),
-        metadata: this._withProject(opts.metadata),
+        metadata: meta,
         created_at: now,
       },
       timestamp: now,

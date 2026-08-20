@@ -1,6 +1,8 @@
 /** Re-exports + convenience singleton (mirrors Python module-level track()). */
 
 export { Promptry } from './promptry';
+// Zero-config naming + cost-attributed call trees (mirrors promptry.trace/task).
+export { task, trace, currentTrace, inferTask } from './naming';
 export type {
   PromptryOptions,
   TrackOptions,

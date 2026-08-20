@@ -35,6 +35,10 @@ export interface InvocationOptions {
   latencyMs?: number;
   /** Correlation id so trackFeedback() can tie a rating back to this call. */
   requestId?: string;
+  /** Provider response id — dedups the same call seen by two capture layers. */
+  responseId?: string;
+  /** Cached (prefix-cache) input tokens, if the provider reports them. */
+  cachedTokens?: number;
   /** Arbitrary extra metadata. */
   metadata?: Record<string, unknown>;
 }

@@ -1,7 +1,7 @@
 {
   "name": "promptry-js",
-  "version": "1.0.4",
-  "description": "Lightweight JS/TS client for promptry telemetry — ships prompt, invocation, and feedback events to your self-hosted ingest endpoint",
+  "version": "1.1.0",
+  "description": "Lightweight JS/TS client for promptry telemetry — drop-in OpenAI tracking, cost-attributed call trees, and prompt/invocation/feedback events for your self-hosted promptry",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./openai": {
+      "types": "./dist/openai.d.ts",
+      "import": "./dist/openai.js",
+      "require": "./dist/openai.cjs"
     }
   },
   "files": [
