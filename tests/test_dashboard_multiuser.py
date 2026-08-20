@@ -160,6 +160,51 @@ class TestAudit:
         assert denied
 
 
+class TestRouteRBAC:
+    """The identity spine actually protects app routes, not just user admin."""
+
+    def _make_users(self, client):
+        # bootstrap admin, then create an editor and a viewer
+        _bootstrap_admin(client)
+        _login(client, "admin@b.com", "admin-pass-1")
+        client.post("/api/users", json={"email": "ed@b.com",
+                                        "password": "editor-pass-1", "role": "editor"})
+        client.post("/api/users", json={"email": "vw@b.com",
+                                        "password": "viewer-pass-1", "role": "viewer"})
+        client.cookies.clear()
+
+    def test_admin_only_route_enforced(self, client):
+        self._make_users(client)
+        budget = {"scope": "global", "period": "monthly", "limit_usd": 10.0}
+        # viewer + editor are denied /api/budgets (admin), admin allowed
+        _login(client, "vw@b.com", "viewer-pass-1")
+        assert client.post("/api/budgets", json=budget).status_code == 403
+        client.cookies.clear()
+        _login(client, "ed@b.com", "editor-pass-1")
+        assert client.post("/api/budgets", json=budget).status_code == 403
+        client.cookies.clear()
+        _login(client, "admin@b.com", "admin-pass-1")
+        assert client.post("/api/budgets", json=budget).status_code == 200
+
+    def test_viewer_can_submit_feedback(self, client, storage):
+        self._make_users(client)
+        _login(client, "vw@b.com", "viewer-pass-1")
+        r = client.post("/api/feedback", json={"request_id": "req-1", "rating": 1.0})
+        assert r.status_code == 200
+        # ...and it is audited under the viewer's identity
+        entries = storage.list_audit(action="feedback.create")
+        assert entries and entries[0]["actor"] == "vw@b.com"
+
+    def test_mutation_is_audited_with_actor_and_target(self, client, storage):
+        self._make_users(client)
+        _login(client, "admin@b.com", "admin-pass-1")
+        client.post("/api/budgets", json={"scope": "global", "period": "monthly",
+                                          "limit_usd": 5.0})
+        entry = storage.list_audit(action="budget.create")[0]
+        assert entry["actor"] == "admin@b.com"
+        assert entry["detail"]["limit_usd"] == 5.0
+
+
 class TestTokenMode:
     def test_bearer_token_is_admin(self, client, monkeypatch):
         monkeypatch.setenv("PROMPTRY_AUTH_TOKEN", "sekret-token")
