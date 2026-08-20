@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
+
+from promptry.dashboard import auth as authlib
 
 router = APIRouter()
 
@@ -17,14 +19,20 @@ class _FeedbackIn(BaseModel):
 
 
 @router.post("/api/feedback")
-def submit_feedback(body: _FeedbackIn):
+def submit_feedback(body: _FeedbackIn, request: Request,
+                    _actor: authlib.Actor = Depends(authlib.require_role("viewer"))):
     """Ingest an end-user rating/comment from the host app, correlated to an
-    invocation by request_id (the id the app passed to track_invocation)."""
+    invocation by request_id (the id the app passed to track_invocation).
+
+    Only viewer role required: this is a data-capture endpoint host apps call
+    (typically with the shared token) whenever an end user rates a response."""
     from promptry.dashboard.server import get_storage
     storage = get_storage()
     if not storage.supports("save_feedback"):
         raise HTTPException(status_code=501, detail="feedback not supported by this backend")
     fid = storage.save_feedback(body.request_id, rating=body.rating, comment=body.comment, source=body.source)
+    authlib.audit_event(request, "feedback.create", target=body.request_id,
+                        detail={"rating": body.rating})
     return {"ok": True, "id": fid}
 
 
