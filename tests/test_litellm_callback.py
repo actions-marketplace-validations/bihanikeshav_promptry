@@ -111,11 +111,15 @@ class TestEnable:
     def test_enable_is_idempotent(self):
         import litellm
         before = list(litellm.callbacks or [])
+        # Control the precondition: litellm.callbacks is a process-global other
+        # tests may have touched, so start from a known-clean enable state.
+        cb._enabled_instance = None
         try:
             a = cb.enable_litellm()
             b = cb.enable_litellm()
             assert a is b and a is not None
-            assert sum(1 for c in litellm.callbacks if c is a) == 1
+            # the fresh instance we registered appears exactly once
+            assert sum(1 for c in (litellm.callbacks or []) if c is a) == 1
         finally:
-            litellm.callbacks = before
             cb._enabled_instance = None
+            litellm.callbacks = before
