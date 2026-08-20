@@ -401,6 +401,18 @@ class TestRunCLI:
         assert "not found" in result.output
         assert "smoke" in result.output
 
+    def test_min_score_gate_passes_above_threshold(self, tmp_path, monkeypatch):
+        self._write_evals_module(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["run", "smoke", "--min-score", "0.5"])
+        assert result.exit_code == 0, result.output
+
+    def test_min_score_gate_fails_below_threshold(self, tmp_path, monkeypatch):
+        self._write_evals_module(tmp_path, monkeypatch)
+        # threshold above the max achievable score -> CI gate fails the build
+        result = runner.invoke(app, ["run", "smoke", "--min-score", "1.1"])
+        assert result.exit_code == 1
+        assert "below --min-score" in result.output
+
 
 class TestRunCLIFormat:
     """--format json / --format junit on `promptry run`."""
