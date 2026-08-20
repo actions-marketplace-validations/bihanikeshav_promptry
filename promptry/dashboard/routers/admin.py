@@ -115,3 +115,24 @@ def update_project_config(body: _ConfigUpdate, request: Request,
                                 "dashboard", "pricing", "keys")
                                 if getattr(body, k) is not None]})
     return {"ok": True, "path": str(projectconfig.config_path())}
+
+
+# ---- data retention ----
+
+@router.get("/api/retention")
+def retention_status(_actor: authlib.Actor = Depends(authlib.require_role("admin"))):
+    """Current retention policy (days per data class) and whether it's active."""
+    from promptry import retention
+    cfg = retention.retention_config()
+    return {"config": cfg, "enabled": retention.retention_enabled(cfg)}
+
+
+@router.post("/api/retention/run")
+def retention_run(request: Request,
+                  _actor: authlib.Actor = Depends(authlib.require_role("admin"))):
+    """Apply the configured retention policy now (also runs daily automatically)."""
+    from promptry import retention
+    from promptry.dashboard.server import get_storage
+    result = retention.apply_retention(get_storage())
+    authlib.audit_event(request, "retention.run", target="manual", detail=result)
+    return {"ok": True, "result": result}

@@ -29,6 +29,13 @@ async def _lifespan(_app: FastAPI):
         start_dashboard_price_refresh()
     except Exception:
         pass
+    # Enforce data-retention policy on start + daily (no-op unless configured
+    # via PROMPTRY_*_RETENTION_DAYS). Failures are logged, never fatal.
+    try:
+        from promptry.retention import start_retention_sweep
+        start_retention_sweep()
+    except Exception:
+        pass
     yield
 
 

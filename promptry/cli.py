@@ -617,6 +617,34 @@ def suites_cmd(
         console.print(f"  {s.name}{desc}")
 
 
+@app.command("retention")
+def retention_cmd(
+    run: bool = typer.Option(False, "--run", help="Apply the policy now (default: just show it)."),
+):
+    """Show or apply the data-retention policy.
+
+    Configured via env (days): PROMPTRY_CAPTURE_RETENTION_DAYS (redact captured
+    text), PROMPTRY_INVOCATION_RETENTION_DAYS (delete rows),
+    PROMPTRY_AUDIT_RETENTION_DAYS (delete audit). The dashboard also applies it
+    daily; use --run for a one-off pass."""
+    from promptry import retention
+
+    cfg = retention.retention_config()
+    console.print("[bold]Data retention policy[/bold] [dim](days; blank = keep forever)[/dim]")
+    console.print(f"  captured text : {cfg['capture_days'] or '—'}")
+    console.print(f"  invocations   : {cfg['invocation_days'] or '—'}")
+    console.print(f"  audit log     : {cfg['audit_days'] or '—'}")
+    if not retention.retention_enabled(cfg):
+        console.print("[dim]Nothing configured. e.g. export PROMPTRY_CAPTURE_RETENTION_DAYS=90[/dim]")
+        return
+    if not run:
+        console.print("\n[dim]Pass --run to apply now.[/dim]")
+        return
+    from promptry.storage import get_storage
+    result = retention.apply_retention(get_storage())
+    console.print(f"\n[green]Applied:[/green] {result or 'nothing to purge'}")
+
+
 @app.command("drift")
 def drift_cmd(
     suite_name: str = typer.Argument(..., help="Suite to check."),
