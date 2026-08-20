@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader, Select } from "../components/ui";
-import { getConfig, updateConfig, getAuthStatus, createUser, type AuthStatus } from "../api/client";
+import { getConfig, updateConfig, getAuthStatus, createUser, getAlertsStatus, sendTestAlert, type AuthStatus, type AlertsStatus } from "../api/client";
 import type { ProjectConfig, ModelEntry } from "../api/types";
 
 const PROVIDERS = ["openai", "anthropic", "xai", "google", "azure"];
@@ -132,6 +132,71 @@ export default function Settings() {
       </div>
 
       <TeamAccessCard />
+      <AlertingCard />
+    </div>
+  );
+}
+
+/**
+ * Alerting + incident channels (env-configured; shown read-only here with a
+ * test-fire). Regression/drift/SLO/budget alerts fan out to whatever's on.
+ */
+function AlertingCard() {
+  const [st, setSt] = useState<AlertsStatus | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    getAlertsStatus().then(setSt).catch(() => setSt(null));
+  }, []);
+
+  if (!st) return null;
+
+  const Chan = ({ on, label, hint }: { on: boolean; label: string; hint: string }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+      <span style={{ width: 8, height: 8, borderRadius: 999, background: on ? "var(--success)" : "var(--muted)" }} />
+      <span style={{ color: "var(--text)" }}>{label}</span>
+      <span style={{ color: "var(--muted)", fontSize: 11 }}>{on ? "configured" : hint}</span>
+    </div>
+  );
+
+  async function test() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await sendTestAlert();
+      setMsg("Test alert sent to all configured channels.");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "failed to send");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 16, marginTop: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>Alerting &amp; incidents</span>
+        <span className="chip" style={{ fontSize: 10, background: "var(--accent-soft)", color: "var(--accent-bright)" }}>alpha</span>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.5, maxWidth: 620 }}>
+        Regression, drift, SLO-breach and budget alerts fan out to whatever is configured. Set channels via env / config:{" "}
+        <span className="mono">[notifications] webhook_url</span>, <span className="mono">PROMPTRY_PAGERDUTY_ROUTING_KEY</span>, or SMTP email.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <Chan on={st.webhook} label="Slack / webhook" hint="set [notifications] webhook_url" />
+        <Chan on={st.pagerduty} label="PagerDuty / Opsgenie" hint="set PROMPTRY_PAGERDUTY_ROUTING_KEY" />
+        <Chan on={st.email} label="Email (SMTP)" hint="set [notifications] email + SMTP" />
+        <Chan on={st.otel_export} label="OpenTelemetry export" hint="call promptry.enable_otel()" />
+      </div>
+      <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10 }}>
+        <button className="btn" disabled={busy || !st.any} onClick={test}
+          style={{ background: st.any ? "var(--accent-soft)" : undefined, border: st.any ? "1px solid var(--accent-line)" : undefined, color: st.any ? "var(--accent-bright)" : undefined }}>
+          {busy ? "Sending…" : "Send test alert"}
+        </button>
+        {!st.any && <span style={{ fontSize: 11.5, color: "var(--muted)" }}>no channels configured yet</span>}
+        {msg && <span style={{ fontSize: 12, color: "var(--secondary)" }}>{msg}</span>}
+      </div>
     </div>
   );
 }

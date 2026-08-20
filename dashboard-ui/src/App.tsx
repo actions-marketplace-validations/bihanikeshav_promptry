@@ -17,6 +17,7 @@ import SuiteCreate from "./pages/SuiteCreate";
 import Settings from "./pages/Settings";
 import Users from "./pages/Users";
 import Audit from "./pages/Audit";
+import Traces from "./pages/Traces";
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/suites/new" element={<SuiteCreate />} />
         <Route path="/models" element={<Models />} />
         <Route path="/cost" element={<Cost />} />
+        <Route path="/traces" element={<Traces />} />
         <Route path="/invocations/:id" element={<Invocation />} />
         <Route path="/feedback" element={<Feedback />} />
         <Route path="/playground" element={<Playground />} />

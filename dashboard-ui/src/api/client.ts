@@ -270,6 +270,60 @@ export function listAudit(
   return fetchJson(`/api/audit${qs ? "?" + qs : ""}`);
 }
 
+// ---- cost-attributed call trees (alpha) ----
+
+export type TraceSummary = {
+  trace_id: string;
+  steps: number;
+  cost: number;
+  tokens_in: number;
+  tokens_out: number;
+  started_at: string;
+  ended_at: string;
+};
+
+export type TraceStep = {
+  id: number;
+  prompt_name: string;
+  created_at: string;
+  cost: number | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  model: string | null;
+  latency_ms: number | null;
+  span_name: string | null;
+  api: string | null;
+  status: string | null;
+};
+
+export function listTraces(days = 7): Promise<{ traces: TraceSummary[] }> {
+  return fetchJson(`/api/traces?days=${days}`);
+}
+
+export function getTrace(
+  traceId: string
+): Promise<{ trace_id: string; steps: TraceStep[]; total_cost: number; step_count: number }> {
+  return fetchJson(`/api/traces/${encodeURIComponent(traceId)}`);
+}
+
+// ---- alerting / incidents ----
+
+export type AlertsStatus = {
+  webhook: boolean;
+  pagerduty: boolean;
+  email: boolean;
+  any: boolean;
+  otel_export: boolean;
+};
+
+export function getAlertsStatus(): Promise<AlertsStatus> {
+  return fetchJson("/api/alerts/status");
+}
+
+export function sendTestAlert(): Promise<{ ok: boolean }> {
+  return fetchJsonMutate("/api/alerts/test", { method: "POST" });
+}
+
 // ---- Onboarding ----
 
 export function getOnboardingStatus(): Promise<OnboardingStatus> {

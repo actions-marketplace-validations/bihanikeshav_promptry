@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
@@ -151,3 +151,42 @@ def retention_run(request: Request,
     result = retention.apply_retention(get_storage())
     authlib.audit_event(request, "retention.run", target="manual", detail=result)
     return {"ok": True, "result": result}
+
+
+# ---- alerting / incident integrations ----
+
+@router.get("/api/alerts/status")
+def alerts_status():
+    """Which alert channels are configured (Slack/webhook, PagerDuty, email)."""
+    from promptry import alerts
+    from promptry.otel import otel_enabled
+    return {
+        "webhook": bool(alerts._webhook_url()),
+        "pagerduty": bool(alerts._pagerduty_key()),
+        "email": bool(_notif_email()),
+        "any": alerts.alerts_configured(),
+        "otel_export": otel_enabled(),
+    }
+
+
+def _notif_email():
+    try:
+        from promptry.config import get_config
+        return getattr(get_config().notifications, "email", None)
+    except Exception:
+        return None
+
+
+@router.post("/api/alerts/test")
+def alerts_test(request: Request,
+                _actor: authlib.Actor = Depends(authlib.require_role("admin"))):
+    """Fire a test alert to every configured channel."""
+    from promptry import alerts
+    if not alerts.alerts_configured():
+        raise HTTPException(400, detail="no alert channels configured "
+                            "(set [notifications] webhook_url / PROMPTRY_PAGERDUTY_ROUTING_KEY / email)")
+    alerts.send_alert("test", "promptry test alert",
+                      "This is a test alert from the promptry dashboard.",
+                      severity="info", detail={"source": "dashboard"})
+    authlib.audit_event(request, "alerts.test", target="manual")
+    return {"ok": True}

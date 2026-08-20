@@ -221,6 +221,20 @@ const BASE_ITEMS: NavItem[] = [
     ),
   },
   {
+    to: "/traces",
+    label: "Call traces",
+    icon: (
+      <path
+        d="M3 3v10h10M5 10h3M5 7h6M5 4h4"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+  {
     to: "/feedback",
     label: "Feedback",
     icon: (
