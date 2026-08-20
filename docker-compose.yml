@@ -1,0 +1,23 @@
+# promptry dashboard — one command:  docker compose up
+# Then open http://localhost:8420
+services:
+  promptry:
+    build: .
+    image: promptry:local
+    ports:
+      - "8420:8420"
+    volumes:
+      - promptry-data:/data
+    environment:
+      PROMPTRY_DB: /data/promptry.db
+      # --- Exposing beyond localhost? Lock it down (all optional/off by default) ---
+      # PROMPTRY_AUTH_TOKEN: "change-me-to-a-long-random-secret"   # single shared-secret gate
+      # PROMPTRY_ALLOWED_HOSTS: "promptry.internal.example"        # Host allowlist (DNS-rebind guard)
+      # PROMPTRY_CORS_ORIGINS: "https://app.internal.example"      # explicit CORS allowlist
+      # --- Provider keys for live model calls / the judge (optional) ---
+      # OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      # ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    restart: unless-stopped
+
+volumes:
+  promptry-data:

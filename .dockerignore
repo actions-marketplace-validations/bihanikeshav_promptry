@@ -1,0 +1,20 @@
+# The built dashboard UI is shipped inside promptry/dashboard/static, so the
+# Node source and its dependencies never need to enter the image.
+.git
+.github
+dashboard-ui
+tests
+docs
+**/__pycache__
+*.pyc
+*.pyo
+*.db
+*.db-wal
+*.db-shm
+.venv
+venv
+.pytest_cache
+.ruff_cache
+*.egg-info
+build
+dist
