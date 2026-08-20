@@ -282,10 +282,13 @@ export function SideNav({
       ? { ...it, badge: { n: counters.regressions, tone: "error" as const } }
       : it
   );
-  // Admin-only tools appear once the caller is an admin (multi-user mode) or in
-  // open/token mode where the local operator resolves to admin.
-  const items: NavItem[] =
-    me?.role === "admin" ? [...baseItems, ...ADMIN_ITEMS] : baseItems;
+  // Admin tools stay hidden in the simple default (open, single-user) so the
+  // dashboard isn't cluttered with enterprise features nobody turned on. They
+  // appear only once auth is actually enabled — i.e. the caller is a real
+  // signed-in admin (multi-user) or the shared-token operator, not the
+  // open-mode anonymous local user.
+  const showAdmin = me?.role === "admin" && me?.kind !== "anonymous";
+  const items: NavItem[] = showAdmin ? [...baseItems, ...ADMIN_ITEMS] : baseItems;
 
   return (
     <aside

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { PageHeader, Select } from "../components/ui";
-import { getConfig, updateConfig } from "../api/client";
+import { getConfig, updateConfig, getAuthStatus, createUser, type AuthStatus } from "../api/client";
 import type { ProjectConfig, ModelEntry } from "../api/types";
 
 const PROVIDERS = ["openai", "anthropic", "xai", "google", "azure"];
@@ -129,6 +130,83 @@ export default function Settings() {
       <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
         Changes write to <span className="mono">{cfg.path}</span> — commit it to share with your team.
       </div>
+
+      <TeamAccessCard />
+    </div>
+  );
+}
+
+/**
+ * Opt-in entry point for multi-user mode. promptry defaults to a simple,
+ * single-user, no-login dashboard; creating the first account switches on the
+ * (alpha) team features: accounts, roles, and the audit log. Hidden complexity
+ * until someone asks for it.
+ */
+function TeamAccessCard() {
+  const [status, setStatus] = useState<AuthStatus | null>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAuthStatus().then(setStatus).catch(() => setStatus(null));
+  }, []);
+
+  if (!status) return null;
+  const on = status.posture === "multiuser";
+
+  async function enable() {
+    if (!email.trim() || password.length < 8) {
+      setErr("Enter an email and a password of at least 8 characters.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await createUser({ email: email.trim(), password, role: "admin" });
+      window.location.reload(); // now in multi-user mode; the login gate applies
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed to enable team access");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 16, marginTop: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>Team &amp; access</span>
+        <span className="chip" style={{ fontSize: 10, background: "var(--accent-soft)", color: "var(--accent-bright)" }}>
+          alpha
+        </span>
+      </div>
+
+      {on ? (
+        <div style={{ fontSize: 12.5, color: "var(--secondary)", marginTop: 8 }}>
+          Team access is on — accounts, roles, and the audit log are active.{" "}
+          <Link to="/users" style={{ color: "var(--accent-bright)" }}>Manage users →</Link>
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, marginBottom: 12, lineHeight: 1.5, maxWidth: 620 }}>
+            promptry runs as a simple single-user dashboard by default. Turn on team access to add
+            accounts with roles (viewer / editor / admin) and an audit log. Creating the first
+            account (an admin) enables a login screen for everyone — you can’t undo this from the UI,
+            so keep these credentials safe.
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input className="inp" placeholder="admin email" value={email}
+              onChange={(e) => setEmail(e.target.value)} style={{ width: 200 }} />
+            <input className="inp" type="password" placeholder="password (min 8)" value={password}
+              onChange={(e) => setPassword(e.target.value)} style={{ width: 180 }} />
+            <button className="btn" disabled={busy} onClick={enable}
+              style={{ background: "var(--accent-soft)", border: "1px solid var(--accent-line)", color: "var(--accent-bright)", fontWeight: 600 }}>
+              {busy ? "Enabling…" : "Enable team access"}
+            </button>
+          </div>
+          {err && <div style={{ fontSize: 12, color: "var(--error)", marginTop: 8 }}>{err}</div>}
+        </>
+      )}
     </div>
   );
 }

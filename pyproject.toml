@@ -56,8 +56,10 @@ llm = [
     "openai>=1.0.0",
     "anthropic>=0.25.0",
 ]
-# Enterprise SSO: OIDC ID-token signature verification (JWKS/RS256). Local
-# users, token mode, and open mode need none of this.
+# Enterprise SSO (ALPHA, opt-in): OIDC ID-token verification (JWKS/RS256).
+# promptry defaults to a simple single-user dashboard; nobody needs this unless
+# they deliberately turn on multi-user + SSO. Local users, token mode, and open
+# mode need none of it.
 oidc = [
     "PyJWT[crypto]>=2.6.0",
 ]
