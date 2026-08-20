@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
+
+from promptry.dashboard import auth as authlib
 
 router = APIRouter()
 
@@ -165,17 +167,22 @@ class _BudgetIn(BaseModel):
 
 
 @router.post("/api/budgets")
-def create_budget(body: _BudgetIn):
+def create_budget(body: _BudgetIn, request: Request,
+                  _actor: authlib.Actor = Depends(authlib.require_role("admin"))):
     from promptry.dashboard.server import get_storage
     storage = get_storage()
     bid = storage.save_budget(body.scope, body.period, body.limit_usd, target=body.target)
+    authlib.audit_event(request, "budget.create", target=bid,
+                        detail=body.model_dump())
     return {"ok": True, "id": bid}
 
 
 @router.delete("/api/budgets/{budget_id}")
-def delete_budget(budget_id: int):
+def delete_budget(budget_id: int, request: Request,
+                  _actor: authlib.Actor = Depends(authlib.require_role("admin"))):
     from promptry.dashboard.server import get_storage
     get_storage().delete_budget(budget_id)
+    authlib.audit_event(request, "budget.delete", target=budget_id)
     return {"ok": True}
 
 
@@ -204,7 +211,8 @@ def cost_prices_meta():
 
 
 @router.post("/api/cost/refresh-rates")
-def cost_refresh_rates(source: str = "feed"):
+def cost_refresh_rates(request: Request, source: str = "feed",
+                       _actor: authlib.Actor = Depends(authlib.require_role("admin"))):
     """Refresh the rate table.
 
     * ``source=feed`` (default) — pull the published ``prices.json`` feed
@@ -237,4 +245,6 @@ def cost_refresh_rates(source: str = "feed"):
         raise HTTPException(400, detail="source must be feed|litellm|both")
     result["meta"] = dict(pricing.PRICES_META)
     result["model_count"] = len(pricing.RATES)
+    authlib.audit_event(request, "prices.refresh", target=source,
+                        detail={"model_count": result["model_count"]})
     return result

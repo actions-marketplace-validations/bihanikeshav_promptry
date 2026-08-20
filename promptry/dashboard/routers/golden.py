@@ -1,8 +1,10 @@
 """Golden-example (eval-from-trace) routes: per-prompt promoted traces."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+
+from promptry.dashboard import auth as authlib
 
 router = APIRouter()
 
@@ -22,7 +24,8 @@ def list_examples(name: str):
 
 
 @router.post("/api/prompts/{name}/examples")
-def add_example(name: str, body: _AddExampleReq):
+def add_example(name: str, body: _AddExampleReq, request: Request,
+                _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     """Promote a captured invocation into a golden example for this prompt:
     its recorded output becomes the reference a re-run is scored against."""
     from promptry.dashboard.server import get_storage
@@ -40,14 +43,19 @@ def add_example(name: str, body: _AddExampleReq):
         source_invocation_id=body.invocation_id,
         model=meta.get("model"),
     )
+    authlib.audit_event(request, "golden.add", target=name,
+                        detail={"example_id": ex_id,
+                                "invocation_id": body.invocation_id})
     return {"ok": True, "id": ex_id}
 
 
 @router.delete("/api/examples/{example_id}")
-def delete_example(example_id: int):
+def delete_example(example_id: int, request: Request,
+                   _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     from promptry.dashboard.server import get_storage
     storage = get_storage()
     ok = storage.delete_golden_example(example_id) if storage.supports("delete_golden_example") else False
+    authlib.audit_event(request, "golden.delete", target=example_id)
     return {"ok": ok}
 
 
@@ -57,7 +65,8 @@ class _RunExamplesReq(BaseModel):
 
 
 @router.post("/api/prompts/{name}/examples/run")
-def run_examples(name: str, body: _RunExamplesReq):
+def run_examples(name: str, body: _RunExamplesReq,
+                 _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     """Re-issue every golden example through a model and score each output's
     similarity to its recorded reference; returns per-example results + accuracy."""
     from promptry.eval_from_trace import run_golden_set

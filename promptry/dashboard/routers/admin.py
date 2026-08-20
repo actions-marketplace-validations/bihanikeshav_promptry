@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+
+from promptry.dashboard import auth as authlib
 
 router = APIRouter()
 
@@ -82,7 +84,8 @@ class _ConfigUpdate(BaseModel):
 
 
 @router.post("/api/config")
-def update_project_config(body: _ConfigUpdate):
+def update_project_config(body: _ConfigUpdate, request: Request,
+                          _actor: authlib.Actor = Depends(authlib.require_role("admin"))):
     """Persist config to .promptry/config.toml (committable). Keys never stored."""
     from promptry import projectconfig
     # Load ONLY the raw legacy file being written here — never the merged
@@ -107,4 +110,8 @@ def update_project_config(body: _ConfigUpdate):
         data["keys"] = cleaned
     projectconfig.save_project_config(data)
     projectconfig.apply_pricing_overrides()
+    authlib.audit_event(request, "config.update", target="project_config",
+                        detail={"fields": [k for k in ("models", "judge",
+                                "dashboard", "pricing", "keys")
+                                if getattr(body, k) is not None]})
     return {"ok": True, "path": str(projectconfig.config_path())}

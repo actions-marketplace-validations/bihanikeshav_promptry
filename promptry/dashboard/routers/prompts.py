@@ -4,10 +4,11 @@ from __future__ import annotations
 import difflib
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from promptry.registry import PromptRegistry
+from promptry.dashboard import auth as authlib
 
 router = APIRouter()
 
@@ -306,7 +307,8 @@ class _PromptEdit(BaseModel):
 
 
 @router.post("/api/prompts/{name}/content")
-def update_prompt_content(name: str, body: _PromptEdit):
+def update_prompt_content(name: str, body: _PromptEdit, request: Request,
+                          _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     """Save an edited prompt as a new version from the dashboard.
 
     Dedups by content hash (same as track()), so saving an unchanged
@@ -334,6 +336,8 @@ def update_prompt_content(name: str, body: _PromptEdit):
     # revert to older content sticks), no-op only if identical to current latest.
     record = storage.save_prompt(name=name, content=content, content_hash=h,
                                  metadata={"source": "dashboard_edit"}, force=True)
+    authlib.audit_event(request, "prompt.update", target=name,
+                        detail={"version": record.version, "hash": record.hash})
     return {"ok": True, "name": name, "version": record.version, "hash": record.hash}
 
 
@@ -374,7 +378,8 @@ class _PromoteReq(BaseModel):
 
 
 @router.post("/api/prompts/{name}/promote")
-def promote_prompt(name: str, body: _PromoteReq):
+def promote_prompt(name: str, body: _PromoteReq, request: Request,
+                   _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     """Point an environment tag (dev/staging/prod) at a specific version so
     render_prompt(env=...) serves it — a gate between editing and going live."""
     from promptry.dashboard.server import get_storage
@@ -388,11 +393,14 @@ def promote_prompt(name: str, body: _PromoteReq):
     ok = storage.set_prompt_env(name, body.version, body.env)
     if not ok:
         raise HTTPException(status_code=404, detail=f"{name} v{body.version} not found")
+    authlib.audit_event(request, "prompt.promote", target=name,
+                        detail={"version": body.version, "env": body.env})
     return {"ok": True, "name": name, "version": body.version, "env": body.env}
 
 
 @router.post("/api/prompts/{name}/prune")
-def prune_prompt(name: str, keep: int = Query(default=1, ge=1)):
+def prune_prompt(name: str, request: Request, keep: int = Query(default=1, ge=1),
+                 _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     """Collapse a prompt's version history to the newest *keep* versions.
 
     Use on legacy prompts polluted with baked template+data versions."""
@@ -401,6 +409,8 @@ def prune_prompt(name: str, keep: int = Query(default=1, ge=1)):
     if not storage.supports("prune_prompt_versions"):
         raise HTTPException(status_code=501, detail="pruning not supported by this storage backend")
     deleted = storage.prune_prompt_versions(name, keep_last=keep)
+    authlib.audit_event(request, "prompt.prune", target=name,
+                        detail={"deleted": deleted, "kept": keep})
     return {"ok": True, "name": name, "deleted": deleted, "kept": keep}
 
 

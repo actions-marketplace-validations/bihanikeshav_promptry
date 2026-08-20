@@ -4,10 +4,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from promptry.dashboard.util import dc_to_dict as _dc_to_dict
+from promptry.dashboard import auth as authlib
 
 router = APIRouter()
 
@@ -389,7 +390,8 @@ class _CreateSuiteIn(BaseModel):
 
 
 @router.post("/api/suites")
-def create_suite(body: _CreateSuiteIn):
+def create_suite(body: _CreateSuiteIn, request: Request,
+                 _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     """Persist an assembled suite into a declarative ``evals.yaml``.
 
     Body: ``{name, model, prompt, cases:[{input, context?, expect:[{type,value}]}]}``
@@ -436,6 +438,8 @@ def create_suite(body: _CreateSuiteIn):
         status = 409 if "already exists" in str(exc) else 400
         raise HTTPException(status_code=status, detail=str(exc))
 
+    authlib.audit_event(request, "suite.create", target=name,
+                        detail={"cases": len(suite["cases"]), "path": str(target)})
     return {"name": name, "cases": len(suite["cases"]), "path": str(target)}
 
 

@@ -1,8 +1,10 @@
 """Playground routes: ad-hoc model calls and lightweight assertion checks."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+
+from promptry.dashboard import auth as authlib
 
 router = APIRouter()
 
@@ -16,7 +18,8 @@ class _PlaygroundModelReq(BaseModel):
 
 
 @router.post("/api/playground/model")
-def playground_model(body: _PlaygroundModelReq):
+def playground_model(body: _PlaygroundModelReq,
+                     _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     """Run a single prompt against a live model and return the output with
     token usage and cost. Used by the Playground's model comparison.
 
@@ -71,7 +74,8 @@ def playground_model(body: _PlaygroundModelReq):
 
 
 @router.post("/api/playground/eval")
-async def playground_eval(request: Request):
+async def playground_eval(request: Request,
+                          _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     """Run lightweight assertions against a user-provided mock response.
 
     Accepts a JSON body with:
