@@ -23,24 +23,12 @@ def _storage():
     return get_storage()
 
 
-def _client_ip(request: Request) -> Optional[str]:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else None
-
-
 def _audit(request: Request, actor: authlib.Actor, action: str, *,
            target=None, detail=None, result="ok") -> None:
-    try:
-        storage = _storage()
-        if storage.supports("record_audit"):
-            storage.record_audit(action, actor=actor.email or actor.kind,
-                                 actor_id=actor.user_id, target=str(target),
-                                 ip=_client_ip(request), result=result,
-                                 detail=detail)
-    except Exception:
-        pass
+    # Delegates to the shared audit sink (which re-resolves the same actor from
+    # the request); the actor arg is kept for call-site readability.
+    authlib.audit_event(request, action, target=target, detail=detail,
+                        result=result)
 
 
 def _active_admin_count(storage) -> int:

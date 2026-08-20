@@ -18,22 +18,17 @@ from promptry.dashboard import auth as authlib
 router = APIRouter()
 
 
-def _client_ip(request: Request) -> Optional[str]:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else None
-
-
 def _audit(request: Request, action: str, *, actor=None, actor_id=None,
            result="ok", detail=None) -> None:
-    """Best-effort audit write — never breaks the request if storage lacks it."""
+    """Audit an auth event. Auth routes pass the actor explicitly (the request
+    isn't authenticated yet at login time), so this writes directly rather than
+    resolving the current actor like the shared authlib.audit_event."""
     try:
         from promptry.dashboard.server import get_storage
         storage = get_storage()
         if storage.supports("record_audit"):
             storage.record_audit(action, actor=actor, actor_id=actor_id,
-                                 ip=_client_ip(request), result=result,
+                                 ip=authlib.client_ip(request), result=result,
                                  detail=detail)
     except Exception:
         pass

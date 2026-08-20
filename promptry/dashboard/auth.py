@@ -394,3 +394,33 @@ def require_role(minimum: str):
             raise HTTPException(status_code=403, detail=f"requires {minimum} role")
         return actor
     return _dep
+
+
+def client_ip(request: Request) -> Optional[str]:
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
+def audit_event(request: Request, action: str, *, target=None,
+                detail: dict | None = None, result: str = "ok") -> None:
+    """Write one audit entry for the current actor. Best-effort: never raises,
+    and silently no-ops on storage backends without audit support. This is the
+    single audit sink used by every route."""
+    try:
+        storage = _get_storage()
+        if storage is None or not storage.supports("record_audit"):
+            return
+        actor = current_actor(request)
+        storage.record_audit(
+            action,
+            actor=actor.email or actor.kind,
+            actor_id=actor.user_id,
+            target=(str(target) if target is not None else None),
+            ip=client_ip(request),
+            result=result,
+            detail=detail,
+        )
+    except Exception:
+        pass
