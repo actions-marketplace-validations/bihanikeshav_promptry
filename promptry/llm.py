@@ -56,6 +56,13 @@ def completion(model: str, messages: list[dict], **kwargs):
     missing). Use this when you need token usage or other response metadata;
     otherwise prefer :func:`complete`, which returns just the text.
     """
+    # Hard budget ceiling (opt-in via PROMPTRY_ENFORCE_BUDGETS). Runs before we
+    # even import litellm so a breached budget blocks the spend outright. No-op
+    # and zero storage access when enforcement is off. prompt_name flows through
+    # kwargs when a caller scopes the call to a prompt/module budget.
+    from promptry.budget import enforce_budgets
+    enforce_budgets(prompt_name=kwargs.pop("prompt_name", None))
+
     try:
         import litellm
     except ImportError as e:  # pragma: no cover - litellm is a core dep
