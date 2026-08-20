@@ -57,10 +57,37 @@ def remote_storage(tmp_path, monkeypatch):
     reset_config()
 
 
-@pytest.fixture(params=["sqlite", "remote"])
+import os as _os
+
+
+@pytest.fixture
+def postgres_storage():
+    """Live Postgres backend — only when PROMPTRY_POSTGRES_DSN is set (skipped in
+    normal CI, so SQLite stays the tested default). Fresh schema per test."""
+    dsn = _os.environ.get("PROMPTRY_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("PROMPTRY_POSTGRES_DSN not set")
+    import psycopg
+    with psycopg.connect(dsn, autocommit=True) as c:
+        c.execute("DROP SCHEMA public CASCADE")
+        c.execute("CREATE SCHEMA public")
+    from promptry.storage.postgres import PostgresStorage
+    storage = PostgresStorage(dsn=dsn)
+    yield storage
+    storage.close()
+
+
+_STORAGE_PARAMS = ["sqlite", "remote"]
+if _os.environ.get("PROMPTRY_POSTGRES_DSN"):
+    _STORAGE_PARAMS.append("postgres")
+
+
+@pytest.fixture(params=_STORAGE_PARAMS)
 def storage(request, sqlite_storage, remote_storage):
     if request.param == "sqlite":
         return sqlite_storage
+    if request.param == "postgres":
+        return request.getfixturevalue("postgres_storage")
     return remote_storage
 
 

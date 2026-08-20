@@ -1,3 +1,4 @@
+import os
 import pytest
 from promptry.storage import Storage
 from promptry.registry import PromptRegistry, reset_registry
@@ -7,7 +8,19 @@ from promptry.evaluator import clear_suites
 
 @pytest.fixture
 def storage(tmp_path):
-    db = Storage(db_path=tmp_path / "test.db")
+    # When PROMPTRY_POSTGRES_DSN is set, run the storage-backed behavior tests
+    # against a live Postgres (fresh schema per test) — used to validate the
+    # scale-tier backend. Unset (normal CI) -> SQLite, the tested default.
+    dsn = os.environ.get("PROMPTRY_POSTGRES_DSN")
+    if dsn:
+        import psycopg
+        with psycopg.connect(dsn, autocommit=True) as c:
+            c.execute("DROP SCHEMA public CASCADE")
+            c.execute("CREATE SCHEMA public")
+        from promptry.storage.postgres import PostgresStorage
+        db = PostgresStorage(dsn=dsn)
+    else:
+        db = Storage(db_path=tmp_path / "test.db")
     yield db
     db.close()
 
