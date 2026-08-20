@@ -6,7 +6,6 @@ cache-aware token usage via :func:`promptry.track`.
 
 from __future__ import annotations
 
-import functools
 import inspect
 import logging
 from typing import Any
@@ -104,43 +103,19 @@ def patch_anthropic(client: Any, prompt_name: str = "anthropic") -> None:
         # Now every client.messages.create(...) call is tracked
         response = client.messages.create(...)
 
-    The wrapper monkey-patches ``client.messages.create`` (sync or async).
-    The original response is always returned unchanged, even if tracking
-    raises an exception.
+    DEPRECATED. Prefer ``from promptry.anthropic import Anthropic`` (the drop-in)
+    or ``promptry.enable_litellm()``. Kept working as a thin shim over the shared
+    capture core, so it now records the full invocation ledger (cost/tokens),
+    streaming, tool use, and failures — not just the system prompt.
     """
-    original_create = client.messages.create
-
-    if inspect.iscoroutinefunction(original_create):
-        @functools.wraps(original_create)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            response = await original_create(*args, **kwargs)
-
-            try:
-                from promptry import track
-
-                system_prompt = _extract_system_prompt(kwargs) or ""
-                meta = _extract_usage_metadata(response)
-                track(system_prompt, prompt_name, metadata=meta)
-            except Exception:
-                logger.debug("post-call tracking failed", exc_info=True)
-
-            return response
-
-        client.messages.create = async_wrapper
-    else:
-        @functools.wraps(original_create)
-        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            response = original_create(*args, **kwargs)
-
-            try:
-                from promptry import track
-
-                system_prompt = _extract_system_prompt(kwargs) or ""
-                meta = _extract_usage_metadata(response)
-                track(system_prompt, prompt_name, metadata=meta)
-            except Exception:
-                logger.debug("post-call tracking failed", exc_info=True)
-
-            return response
-
-        client.messages.create = sync_wrapper
+    import warnings
+    warnings.warn(
+        "patch_anthropic() is deprecated; use `from promptry.anthropic import "
+        "Anthropic` or `promptry.enable_litellm()`.",
+        DeprecationWarning, stacklevel=2,
+    )
+    from promptry.anthropic import _Messages, _AsyncMessages, _opts
+    is_async = inspect.iscoroutinefunction(client.messages.create)
+    opts = _opts(prompt_name, None, 1.0)
+    cls = _AsyncMessages if is_async else _Messages
+    client.messages = cls(client.messages, opts, is_async)

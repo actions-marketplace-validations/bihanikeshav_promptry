@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import functools
-import inspect
 import logging
 from typing import Any
 
@@ -102,59 +100,16 @@ def patch_litellm(prompt_name: str = "litellm") -> None:
         # Now all litellm.completion calls are tracked
         response = litellm.completion(model="gpt-4o", messages=[...])
 
-    The wrapper monkey-patches ``litellm.completion`` (and
-    ``litellm.acompletion`` if it exists and is a coroutine) so that
-    every call records the system prompt and token usage via
-    :func:`promptry.track`.  The original response is always returned
-    unchanged, even if tracking raises an exception.
+    DEPRECATED. Use ``promptry.enable_litellm()`` — the proper LiteLLM callback,
+    which captures the full cost ledger for every provider (sync + async +
+    streaming) rather than monkey-patching ``litellm.completion`` and recording
+    no cost. This shim now just forwards to it; ``prompt_name`` is ignored (names
+    are inferred per call site).
     """
-    try:
-        import litellm  # noqa: F811 — lazy import
-    except ImportError as exc:
-        raise ImportError(
-            "litellm is required for this integration. "
-            "Please ensure promptry is properly installed with: pip install --upgrade promptry"
-        ) from exc
-
-    # --- sync wrapper ---
-    original_completion = litellm.completion
-
-    @functools.wraps(original_completion)
-    def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-        response = original_completion(*args, **kwargs)
-
-        try:
-            from promptry import track
-
-            system_prompt = _extract_system_prompt(kwargs) or ""
-            meta = _extract_usage_metadata(response)
-            track(system_prompt, prompt_name, metadata=meta)
-        except Exception:
-            logger.debug("post-call tracking failed", exc_info=True)
-
-        return response
-
-    litellm.completion = sync_wrapper
-
-    # --- async wrapper ---
-    original_acompletion = getattr(litellm, "acompletion", None)
-    if original_acompletion is not None and inspect.iscoroutinefunction(
-        original_acompletion
-    ):
-
-        @functools.wraps(original_acompletion)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            response = await original_acompletion(*args, **kwargs)
-
-            try:
-                from promptry import track
-
-                system_prompt = _extract_system_prompt(kwargs) or ""
-                meta = _extract_usage_metadata(response)
-                track(system_prompt, prompt_name, metadata=meta)
-            except Exception:
-                logger.debug("post-call tracking failed", exc_info=True)
-
-            return response
-
-        litellm.acompletion = async_wrapper
+    import warnings
+    warnings.warn(
+        "patch_litellm() is deprecated; use promptry.enable_litellm().",
+        DeprecationWarning, stacklevel=2,
+    )
+    from promptry.integrations.litellm_callback import enable_litellm
+    enable_litellm()

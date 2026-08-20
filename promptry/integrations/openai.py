@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import inspect
 import logging
 from typing import Any
@@ -65,57 +64,23 @@ def _extract_usage_metadata(response: Any) -> dict[str, Any]:
 
 
 def patch_openai(client: Any, prompt_name: str = "openai") -> None:
-    """Wrap an OpenAI client to automatically track prompts and cost.
+    """DEPRECATED. Prefer ``from promptry.openai import OpenAI`` (the drop-in) or
+    ``promptry.enable_litellm()``.
 
-    Usage::
-
-        from openai import OpenAI
-        from promptry.integrations.openai import patch_openai
-
-        client = OpenAI()
-        patch_openai(client, prompt_name="my-chatbot")
-
-        # Now all calls are automatically tracked
-        response = client.chat.completions.create(...)
-
-    The wrapper monkey-patches ``client.chat.completions.create`` so that
-    every call automatically records the system prompt and token usage via
-    :func:`promptry.track`.  The original response is always returned
-    unchanged, even if tracking raises an exception.
+    Kept working as a thin shim over the shared capture core: it swaps
+    ``client.chat.completions`` for the drop-in's tracked wrapper, so it now
+    records the full per-call invocation ledger (cost/tokens), streaming, tool
+    calls, and failures — the old version only registered the system prompt and
+    silently recorded no cost.
     """
-    original_create = client.chat.completions.create
-
-    if inspect.iscoroutinefunction(original_create):
-        @functools.wraps(original_create)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            response = await original_create(*args, **kwargs)
-
-            try:
-                from promptry import track
-
-                system_prompt = _extract_system_prompt(kwargs) or ""
-                meta = _extract_usage_metadata(response)
-                track(system_prompt, prompt_name, metadata=meta)
-            except Exception:
-                logger.debug("post-call tracking failed", exc_info=True)
-
-            return response
-
-        client.chat.completions.create = async_wrapper
-    else:
-        @functools.wraps(original_create)
-        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            response = original_create(*args, **kwargs)
-
-            try:
-                from promptry import track
-
-                system_prompt = _extract_system_prompt(kwargs) or ""
-                meta = _extract_usage_metadata(response)
-                track(system_prompt, prompt_name, metadata=meta)
-            except Exception:
-                logger.debug("post-call tracking failed", exc_info=True)
-
-            return response
-
-        client.chat.completions.create = sync_wrapper
+    import warnings
+    warnings.warn(
+        "patch_openai() is deprecated; use `from promptry.openai import OpenAI` "
+        "or `promptry.enable_litellm()`.",
+        DeprecationWarning, stacklevel=2,
+    )
+    from promptry.openai import _TrackedCompletions, _AsyncTrackedCompletions, _opts
+    is_async = inspect.iscoroutinefunction(client.chat.completions.create)
+    opts = _opts(prompt_name, None, 1.0)
+    cls = _AsyncTrackedCompletions if is_async else _TrackedCompletions
+    client.chat.completions = cls(client.chat.completions, opts)
