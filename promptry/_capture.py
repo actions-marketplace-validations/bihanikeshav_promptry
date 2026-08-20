@@ -89,6 +89,11 @@ def record_call(rec: CallRecord, *, capture: bool = False, sample_rate: float = 
         )
         if rec.system_prompt:
             track(rec.system_prompt, rec.name, metadata={"model": rec.model})
+        # OTel export (opt-in): also emit this call as a span into the customer's
+        # own collector. No-op unless promptry.enable_otel() was called.
+        from promptry import otel
+        if otel.otel_enabled():
+            otel.emit_span(rec)
     except Exception:
         logger.debug("promptry capture failed", exc_info=True)
 

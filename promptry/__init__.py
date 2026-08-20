@@ -82,6 +82,7 @@ from promptry.naming import task, trace
 # Imported from the callback module directly (not promptry.integrations, which
 # would pull litellm at import); enable_litellm() itself imports litellm lazily.
 from promptry.integrations.litellm_callback import enable_litellm
+from promptry.otel import enable_otel
 
 __all__ = [
     "track",
@@ -90,6 +91,7 @@ __all__ = [
     "task",
     "trace",
     "enable_litellm",
+    "enable_otel",
     "seed_prompt",
     "get_prompt_template",
     "render_prompt",
