@@ -62,5 +62,22 @@ def render_prometheus(storage) -> str:
         metric("promptry_budgets_breached", "Budgets currently over their limit.",
                "gauge", _breached)
 
+    # Async-writer backpressure — visible so load-shedding is never silent.
+    writer_stats = getattr(storage, "stats", None)
+    if callable(writer_stats):
+        try:
+            ws = writer_stats()
+        except Exception:
+            ws = None
+        if isinstance(ws, dict):
+            metric("promptry_writer_queue_depth", "Pending async writes queued.",
+                   "gauge", lambda: ws.get("queue_depth", 0))
+            metric("promptry_writer_sync_fallbacks_total",
+                   "Durable writes forced synchronous under backpressure.",
+                   "counter", lambda: ws.get("sync_fallbacks", 0))
+            metric("promptry_writer_dropped_total",
+                   "Capture writes shed under backpressure (raise PROMPTRY_CAPTURE_SAMPLE).",
+                   "counter", lambda: ws.get("dropped", 0))
+
     lines.append("")  # trailing newline per exposition format
     return "\n".join(lines)

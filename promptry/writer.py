@@ -52,7 +52,13 @@ class AsyncWriter(BaseStorage):
         # connection out from under other users.
         self._close_storage = close_storage
         self._queue: queue.Queue = queue.Queue(maxsize=max_queue)
+        self._capacity = max_queue
         self._lock = threading.Lock()
+        # Backpressure telemetry — so load-shedding is a *visible* signal, never
+        # silent. Surfaced on the Prometheus /metrics endpoint.
+        self._sync_fallbacks = 0
+        self._dropped = 0
+        self._last_backpressure_warn = 0.0
         self._running = True
         self._thread = threading.Thread(
             target=self._drain,
@@ -111,7 +117,15 @@ class AsyncWriter(BaseStorage):
         except Exception:
             log.exception("synchronous fallback write failed: %s", method)
 
-    def _enqueue(self, method: str, *args, **kwargs):
+    def _backpressure_warn(self, msg: str) -> None:
+        """Emit a backpressure warning at most once every 10s so a saturated
+        writer produces a steady, legible signal instead of a log flood."""
+        now = time.monotonic()
+        if now - self._last_backpressure_warn >= 10.0:
+            self._last_backpressure_warn = now
+            log.warning(msg)
+
+    def _enqueue(self, method: str, *args, droppable: bool = False, **kwargs):
         # If the writer is already closed, the drain thread is gone — writing to
         # the queue would strand the op forever. Do it inline instead.
         if not self._running:
@@ -120,9 +134,26 @@ class AsyncWriter(BaseStorage):
         try:
             self._queue.put(WriteOp(method, args, kwargs), timeout=1.0)
         except queue.Full:
-            # Never drop the write. Fall back to a synchronous write: the worst
-            # case is a latency blip on this call, not lost data.
-            log.warning("write queue full; writing %s synchronously", method)
+            if droppable:
+                # High-volume, best-effort writes (production capture) shed load
+                # under backpressure rather than adding latency to the caller's
+                # request. The drop is counted and warned — visible, not silent.
+                with self._lock:
+                    self._dropped += 1
+                    dropped = self._dropped
+                self._backpressure_warn(
+                    f"write queue saturated ({self._capacity} deep); shedding "
+                    f"capture writes ({dropped} dropped so far). Lower load with "
+                    f"PROMPTRY_CAPTURE_SAMPLE, or use remote ingest for scale."
+                )
+                return
+            # Durability-critical writes (eval results, votes, feedback) are
+            # never dropped: fall back to a synchronous write. Worst case is a
+            # latency blip on this call, not lost data.
+            with self._lock:
+                self._sync_fallbacks += 1
+            self._backpressure_warn(
+                f"write queue full; writing {method} synchronously (backpressure)")
             self._write_now(method, args, kwargs)
 
     def flush(self, timeout: float = 5.0):
@@ -138,6 +169,16 @@ class AsyncWriter(BaseStorage):
     @property
     def pending(self) -> int:
         return self._queue.qsize()
+
+    def stats(self) -> dict:
+        """Writer backpressure telemetry for /metrics and debugging."""
+        with self._lock:
+            return {
+                "queue_depth": self._queue.qsize(),
+                "queue_capacity": self._capacity,
+                "sync_fallbacks": self._sync_fallbacks,
+                "dropped": self._dropped,
+            }
 
     # ---- write methods ----
 
@@ -167,9 +208,12 @@ class AsyncWriter(BaseStorage):
     def record_invocation(self, prompt_name, metadata=None, prompt_version=None,
                           input_text=None, output_text=None, request_id=None) -> int:
         # Append-only ledger row. Run via the async queue so per-call
-        # tracking doesn't block the LLM caller. The caller doesn't need
-        # the row id back -- this is fire-and-forget telemetry.
+        # tracking doesn't block the LLM caller. The caller doesn't need the row
+        # id back -- this is fire-and-forget telemetry, and droppable: under
+        # backpressure it sheds load (counted + warned) rather than adding
+        # latency to the hot path. Turn the volume down with PROMPTRY_CAPTURE_SAMPLE.
         self._enqueue("record_invocation",
+                      droppable=True,
                       prompt_name=prompt_name,
                       metadata=metadata,
                       prompt_version=prompt_version,

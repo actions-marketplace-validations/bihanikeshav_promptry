@@ -118,8 +118,9 @@ class _BlockingStorage:
 
 
 class TestBackpressure:
-    """A full queue must never silently drop: it falls back to a synchronous
-    write (never blocks forever, never crashes the caller, never loses data)."""
+    """Durability-critical writes never drop under a full queue — they fall back
+    to a synchronous write. High-volume droppable capture writes instead shed
+    load (dropped + counted + warned), never blocking the caller."""
 
     def test_queue_full_writes_synchronously_and_warns(self, caplog):
         st = _BlockingStorage()
@@ -158,6 +159,36 @@ class TestBackpressure:
         assert len(st.saved) == 6
         names = {s["test_name"] for s in st.saved}
         assert {"blocker", "q0", "q1", "q2", "extra0", "extra1"} == names
+        assert writer.stats()["sync_fallbacks"] == 2
+
+    def test_droppable_writes_shed_under_backpressure(self, caplog):
+        st = _BlockingStorage()
+        writer = AsyncWriter(st, max_queue=3)
+        try:
+            writer.save_eval_result(run_id=1, test_name="blocker",
+                                    assertion_type="c", passed=True)
+            assert st.first_started.wait(5), "drain thread never started first op"
+            for i in range(3):
+                writer.save_eval_result(run_id=1, test_name=f"q{i}",
+                                        assertion_type="c", passed=True)
+            assert _wait_until(lambda: writer.pending == 3)
+
+            # Droppable overflow (capture) is SHED, not written, not blocking.
+            with caplog.at_level("WARNING", logger="promptry.writer"):
+                for i in range(5):
+                    writer._enqueue("save_eval_result", droppable=True,
+                                    run_id=1, test_name=f"drop{i}",
+                                    assertion_type="c", passed=True)
+            assert writer.pending == 3           # never grew past capacity
+            assert writer.stats()["dropped"] == 5
+            assert any("shedding capture" in r.message for r in caplog.records)
+        finally:
+            st.release.set()
+            writer.close()
+
+        names = {s["test_name"] for s in st.saved}
+        assert not any(n.startswith("drop") for n in names)   # shed, never landed
+        assert {"blocker", "q0", "q1", "q2"} <= names          # durable ones did
 
 
 class _FlakyStorage:
