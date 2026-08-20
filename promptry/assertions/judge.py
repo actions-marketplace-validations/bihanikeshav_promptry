@@ -234,6 +234,86 @@ def assert_llm(
 
 
 # ---------------------------------------------------------------------------
+# Shared scored-judge runner (used by g_eval and the RAG metrics). Same
+# {score, reason} contract as assert_llm, factored out so new judge-backed
+# assertions don't re-implement parsing/costing/result-appending.
+# ---------------------------------------------------------------------------
+
+def run_scored_judge(
+    grading_prompt: str,
+    assertion_type: str,
+    threshold: float,
+    judge: Callable[[str], str] | None = None,
+    extra_details: dict | None = None,
+) -> float:
+    judge_fn = judge or get_judge()
+    if judge_fn is None:
+        raise RuntimeError(
+            "No LLM judge configured. Call set_judge(fn), add a [judge] block "
+            "to promptry.toml, or pass judge=fn."
+        )
+    start = time.perf_counter()
+    raw_output = judge_fn(grading_prompt)
+    latency = (time.perf_counter() - start) * 1000
+    jc = _judge_cost_details(grading_prompt, raw_output)
+    base = {"threshold": threshold, "latency_ms": latency, **(extra_details or {}), **jc}
+    try:
+        score, reason = _parse_judge_output(raw_output)
+    except (ValueError, json.JSONDecodeError, KeyError) as e:
+        append_result(AssertionResult(
+            assertion_type=assertion_type, passed=False, score=0.0,
+            details={"error": str(e), "raw_output": raw_output[:500], **base}))
+        raise AssertionError(f"{assertion_type} judge returned unparseable output: {e}")
+    passed = score >= threshold
+    append_result(AssertionResult(
+        assertion_type=assertion_type, passed=passed, score=score,
+        details={"reason": reason, **base}))
+    if not passed:
+        raise AssertionError(
+            f"{assertion_type} score {score:.3f} < threshold {threshold} ({reason})")
+    return score
+
+
+_GEVAL_PROMPT = """You are a meticulous evaluator. Assess the RESPONSE against the CRITERIA.
+
+CRITERIA:
+{criteria}
+
+RESPONSE:
+---
+{response}
+---
+{context_block}
+Evaluate in two steps:
+1. Derive 2-5 concrete, checkable evaluation steps from the CRITERIA.
+2. Judge the RESPONSE against each step, then give one overall score.
+
+Return ONLY this JSON (no markdown fences, no extra text):
+{{"steps": ["<step 1>", "<step 2>"], "score": <float 0.0-1.0>, "reason": "<why, referencing the steps>"}}"""
+
+
+def g_eval(
+    response: str,
+    criteria: str,
+    *,
+    context: str | None = None,
+    threshold: float = 0.7,
+    judge: Callable[[str], str] | None = None,
+) -> float:
+    """G-Eval: score a response against free-text CRITERIA using a chain-of-
+    thought LLM judge that first derives evaluation steps, then scores 0.0-1.0.
+
+    The flexible, research-backed way to evaluate any custom criterion
+    ("is this reply empathetic and on-brand?") without writing a bespoke metric.
+    Pass optional `context` (retrieved docs, the question, a rubric) for grounded
+    criteria. Returns the score; raises AssertionError below `threshold`."""
+    block = f"\nCONTEXT:\n---\n{context[:2000]}\n---\n" if context else ""
+    prompt = _GEVAL_PROMPT.format(criteria=criteria, response=response[:2000],
+                                  context_block=block)
+    return run_scored_judge(prompt, "g_eval", threshold, judge, {"criteria": criteria})
+
+
+# ---------------------------------------------------------------------------
 # assert_grounded -- source grounding via LLM judge
 # ---------------------------------------------------------------------------
 

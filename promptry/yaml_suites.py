@@ -62,6 +62,11 @@ from promptry.assertions import (
     assert_schema,
     assert_llm,
     assert_grounded,
+    g_eval,
+    assert_answer_relevancy,
+    assert_faithfulness,
+    assert_context_precision,
+    assert_context_recall,
 )
 
 
@@ -152,6 +157,33 @@ def _check_grounded(output, value):
     return assert_grounded(output, value)
 
 
+def _check_g_eval(output, value):
+    if isinstance(value, dict):
+        return g_eval(output, value["criteria"], context=value.get("context"),
+                      threshold=value.get("threshold", 0.7))
+    return g_eval(output, value)
+
+
+def _check_answer_relevancy(output, value):
+    return assert_answer_relevancy(value["question"], output,
+                                   threshold=value.get("threshold", 0.7))
+
+
+def _check_faithfulness(output, value):
+    return assert_faithfulness(output, value["context"],
+                               threshold=value.get("threshold", 0.8))
+
+
+def _check_context_precision(output, value):
+    return assert_context_precision(value["question"], value["context"],
+                                    threshold=value.get("threshold", 0.7))
+
+
+def _check_context_recall(output, value):
+    return assert_context_recall(value["ground_truth"], value["context"],
+                                 threshold=value.get("threshold", 0.7))
+
+
 _DISPATCH: dict[str, Callable[[Any, Any], float]] = {
     "contains": _check_contains,
     "not_contains": _check_not_contains,
@@ -165,6 +197,11 @@ _DISPATCH: dict[str, Callable[[Any, Any], float]] = {
     "schema": _check_schema,
     "llm": _check_llm,
     "grounded": _check_grounded,
+    "g_eval": _check_g_eval,
+    "answer_relevancy": _check_answer_relevancy,
+    "faithfulness": _check_faithfulness,
+    "context_precision": _check_context_precision,
+    "context_recall": _check_context_recall,
 }
 
 
@@ -252,6 +289,16 @@ def _validate_assertion_value(key: str, value: Any, where: str) -> None:
         _validate_str_or_mapping(key, value, ("criteria",), where)
     elif key == "grounded":
         _validate_str_or_mapping(key, value, ("source",), where)
+    elif key == "g_eval":
+        _validate_str_or_mapping(key, value, ("criteria",), where)
+    elif key == "answer_relevancy":
+        _validate_mapping_only(key, value, ("question",), where)
+    elif key == "faithfulness":
+        _validate_mapping_only(key, value, ("context",), where)
+    elif key == "context_precision":
+        _validate_mapping_only(key, value, ("question", "context"), where)
+    elif key == "context_recall":
+        _validate_mapping_only(key, value, ("ground_truth", "context"), where)
     elif key == "levenshtein":
         _validate_levenshtein(value, where)
     elif key == "rouge_l":

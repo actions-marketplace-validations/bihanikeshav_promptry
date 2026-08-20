@@ -605,6 +605,9 @@ def test_valid_assertion_keys_covers_documented_set():
         "contains", "not_contains", "regex", "exact", "semantic",
         "levenshtein", "rouge_l", "embedding_distance", "json_valid",
         "schema", "llm", "grounded",
+        # G-Eval + the named RAG metric suite
+        "g_eval", "answer_relevancy", "faithfulness",
+        "context_precision", "context_recall",
     }
     assert keys == expected
 
