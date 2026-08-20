@@ -8,7 +8,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write  # trusted publishing (no API token needed)
+      id-token: write   # trusted publishing (no API token) + keyless signing
+      contents: write   # attach SBOM + signatures to the GitHub release
     steps:
       - uses: actions/checkout@v4
 
@@ -17,10 +18,34 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build
+        run: pip install build cyclonedx-bom
 
       - name: Build package
         run: python -m build
 
+      # Provenance: PEP 740 attestations are generated and uploaded to PyPI by
+      # the publish action below (attestations: true), signed keyless via the
+      # id-token above — no stored secret.
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+
+      # Supply-chain artifacts on the GitHub release, produced only after a
+      # successful publish so the release mirrors exactly what shipped.
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          pip install .
+          cyclonedx-py environment --output-format JSON --outfile sbom.cdx.json
+
+      - name: Sign the distributions (Sigstore, keyless)
+        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        with:
+          inputs: ./dist/*.tar.gz ./dist/*.whl
+
+      - name: Attach SBOM and signatures to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sbom.cdx.json
+            dist/*.sigstore.json
