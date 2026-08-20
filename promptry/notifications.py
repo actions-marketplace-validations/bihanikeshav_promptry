@@ -21,46 +21,30 @@ import urllib.request
 import urllib.error
 from email.mime.text import MIMEText
 
-from promptry.config import get_config
 from promptry.models import SuiteResult
 
 log = logging.getLogger(__name__)
 
 
 def notify_regression(result: SuiteResult, details: str = ""):
-    """Send regression notifications if configured.
+    """Send a regression alert if any channel is configured.
 
-    Call this after a suite run that detected a regression.
-    Silently does nothing if no notification channels are configured.
+    Now routes through the shared alert fan-out (Slack/generic webhook,
+    PagerDuty, email), so scheduled monitoring reaches incident tooling too.
+    Silently does nothing when nothing is configured; never raises.
     """
-    config = get_config()
-    notif = config.notifications
-
-    if not notif.webhook_url and not notif.email:
-        return
-
-    subject = f"promptry regression: {result.suite_name}"
+    from promptry.alerts import send_alert
     body = _build_message(result, details)
-
-    if notif.webhook_url:
-        try:
-            _send_webhook(notif.webhook_url, subject, body)
-        except Exception:
-            log.exception("webhook notification failed")
-
-    if notif.email:
-        try:
-            _send_email(
-                to=notif.email,
-                subject=subject,
-                body=body,
-                smtp_host=notif.smtp_host,
-                smtp_port=notif.smtp_port,
-                smtp_user=notif.smtp_user,
-                smtp_password=notif.smtp_password,
-            )
-        except Exception:
-            log.exception("email notification failed")
+    severity = "critical" if not result.overall_pass else "warning"
+    send_alert(
+        "eval.regression",
+        f"regression: {result.suite_name}",
+        body,
+        severity=severity,
+        detail={"suite": result.suite_name,
+                "score": round(result.overall_score, 4),
+                "pass": result.overall_pass},
+    )
 
 
 def _build_message(result: SuiteResult, details: str) -> str:
