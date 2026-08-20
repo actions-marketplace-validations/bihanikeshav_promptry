@@ -4,11 +4,26 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from promptry.dashboard import auth as authlib
 
 router = APIRouter()
+
+
+# ---- Prometheus metrics ----
+
+@router.get("/api/metrics", response_class=PlainTextResponse)
+def metrics(_actor: authlib.Actor = Depends(authlib.require_role("viewer"))):
+    """Prometheus exposition of promptry metrics. Scrapers authenticate with the
+    dashboard bearer token (Authorization: Bearer <PROMPTRY_AUTH_TOKEN>)."""
+    from promptry import metrics as metrics_mod
+    from promptry.dashboard.server import get_storage
+    return PlainTextResponse(
+        metrics_mod.render_prometheus(get_storage()),
+        media_type="text/plain; version=0.0.4",
+    )
 
 
 # ---- Health ----
