@@ -80,6 +80,7 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
 from promptry.dashboard.routers import (  # noqa: E402 -- after app/get_storage are defined
     admin,
     auth_routes,
+    users,
     prompts,
     evals,
     cost,
@@ -89,6 +90,7 @@ from promptry.dashboard.routers import (  # noqa: E402 -- after app/get_storage 
 )
 
 app.include_router(auth_routes.router)
+app.include_router(users.router)
 app.include_router(admin.router)
 app.include_router(prompts.router)
 app.include_router(evals.router)
