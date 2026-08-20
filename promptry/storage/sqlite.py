@@ -6,6 +6,7 @@ the Storage interface instead of importing sqlite3 directly.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -13,6 +14,24 @@ from pathlib import Path
 from promptry.config import get_config
 from promptry.models import PromptRecord, EvalRunRecord, EvalResultRecord
 from promptry.storage.base import BaseStorage
+
+
+def _db_encryption_key() -> str | None:
+    """Encryption passphrase from PROMPTRY_DB_KEY, or None for a plain DB."""
+    key = (os.environ.get("PROMPTRY_DB_KEY") or "").strip()
+    return key or None
+
+
+def _sqlcipher_module():
+    """A sqlite3-compatible DBAPI module that supports SQLCipher encryption, or
+    None if no such driver is installed."""
+    for mod_name in ("sqlcipher3.dbapi2", "pysqlcipher3.dbapi2"):
+        try:
+            import importlib
+            return importlib.import_module(mod_name)
+        except ImportError:
+            continue
+    return None
 
 _SCHEMA_VERSION_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -271,7 +290,24 @@ class SQLiteStorage(BaseStorage):
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        # Encryption at rest (opt-in): when PROMPTRY_DB_KEY is set, connect via a
+        # SQLCipher driver and unlock with PRAGMA key before any other access.
+        # When unset (the default), use stdlib sqlite3 exactly as before — so
+        # the plain-DB path is completely unchanged.
+        key = _db_encryption_key()
+        if key:
+            driver = _sqlcipher_module()
+            if driver is None:
+                raise RuntimeError(
+                    "PROMPTRY_DB_KEY is set but no SQLCipher driver is installed. "
+                    "Install one with:  pip install 'promptry[encryption]'"
+                )
+            conn = driver.connect(str(self._db_path), check_same_thread=False)
+            conn.execute("PRAGMA key = ?", (key,))  # must precede all other I/O
+            row_type = driver.Row
+        else:
+            conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            row_type = sqlite3.Row
         # Set busy_timeout FIRST so any later pragma/statement that meets a
         # transient writer lock (WAL checkpoint, a second connection in
         # async/remote mode) waits and retries instead of failing outright
@@ -279,7 +315,7 @@ class SQLiteStorage(BaseStorage):
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = row_type
         return conn
 
     def _init_schema(self):

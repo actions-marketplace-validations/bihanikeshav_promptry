@@ -61,6 +61,11 @@ llm = [
 oidc = [
     "PyJWT[crypto]>=2.6.0",
 ]
+# Encryption at rest: a SQLCipher driver used only when PROMPTRY_DB_KEY is set.
+# The default plain-SQLite database needs none of this.
+encryption = [
+    "sqlcipher3-binary>=0.5.0",
+]
 # Everything -- restores the pre-0.10 "batteries included" install.
 full = [
     "sentence-transformers>=2.2.0",
