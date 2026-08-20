@@ -74,6 +74,11 @@ otel = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp-proto-http>=1.20.0",
 ]
+# Postgres scale-tier backend (ALPHA, opt-in). Only for storage.mode="postgres"
+# — the default single-file SQLite backend needs none of this.
+postgres = [
+    "psycopg[binary]>=3.1.0",
+]
 # Everything -- restores the pre-0.10 "batteries included" install.
 full = [
     "sentence-transformers>=2.2.0",

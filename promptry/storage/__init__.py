@@ -50,6 +50,10 @@ def get_storage() -> BaseStorage:
         elif config.storage.mode == "async":
             from promptry.writer import AsyncWriter
             storage = AsyncWriter(SQLiteStorage())
+        elif config.storage.mode == "postgres":
+            # Opt-in scale tier (alpha). The default path below is untouched.
+            from promptry.storage.postgres import PostgresStorage
+            storage = PostgresStorage(dsn=config.storage.endpoint or None)
         else:
             storage = SQLiteStorage()
 
