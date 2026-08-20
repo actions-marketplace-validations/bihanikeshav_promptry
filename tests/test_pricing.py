@@ -255,8 +255,10 @@ class TestRateIndexPerf:
         rates = {k: dict(v) for k, v in RATES.items()}
         reroutes = dict(REROUTES)
         yield
-        RATES.clear(); RATES.update(rates)
-        REROUTES.clear(); REROUTES.update(reroutes)
+        RATES.clear()
+        RATES.update(rates)
+        REROUTES.clear()
+        REROUTES.update(reroutes)
         pricing._recompute_rate_indexes()
 
     def test_precomputed_index_matches_live_dict_length(self):

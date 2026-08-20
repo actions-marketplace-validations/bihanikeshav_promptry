@@ -271,7 +271,7 @@ class TestNewSuitePython:
         import sys
         sys.path.insert(0, str(tmp_path))
         try:
-            from promptry.evaluator import get_suite, run_context
+            from promptry.evaluator import get_suite
             import importlib
             importlib.import_module("evals")
             assert get_suite("py-suite") is not None

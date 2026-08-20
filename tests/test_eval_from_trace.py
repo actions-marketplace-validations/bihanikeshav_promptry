@@ -102,7 +102,7 @@ class TestRunGoldenSetConcurrency:
         examples = [{"id": i, "input_text": f"q{i}", "reference_output": f"q{i}"} for i in range(8)]
         monkeypatch.setattr(eft, "_call_model", call)
         monkeypatch.setattr(eft, "_similarity", lambda a, b: (1.0 if a == b else 0.0, "exact"))
-        rep = eft.run_golden_set(_Stub(examples), "p", model="m", concurrency=4)
+        eft.run_golden_set(_Stub(examples), "p", model="m", concurrency=4)
         assert state["max"] > 1
         assert state["max"] <= 4
 
@@ -116,7 +116,7 @@ class TestRunGoldenSetConcurrency:
 
         monkeypatch.setattr(eft, "_call_model", call)
         monkeypatch.setattr(eft, "_similarity", lambda a, b: (1.0, "exact"))
-        rep = eft.run_golden_set(_Stub(examples), "p", model="m", concurrency=1)
+        eft.run_golden_set(_Stub(examples), "p", model="m", concurrency=1)
         assert calls == ["q0", "q1", "q2"]
 
 

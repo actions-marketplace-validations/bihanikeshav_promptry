@@ -1,8 +1,6 @@
 """Tests for model comparison."""
 import pytest
 
-from promptry.evaluator import suite, clear_suites, run_context
-from promptry.assertions import assert_contains
 from promptry.model_compare import (
     compare_models,
     format_model_compare,

@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from promptry.conversation import Conversation, Turn
+from promptry.conversation import Conversation
 from promptry.evaluator import run_context
 from promptry.assertions import (
     assert_conversation_length,

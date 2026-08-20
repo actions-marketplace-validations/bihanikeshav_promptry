@@ -8,8 +8,6 @@ import pytest
 from typer.testing import CliRunner
 
 from promptry.garak import (
-    GarakEval,
-    GarakRun,
     format_import_summary,
     import_report,
     parse_garak_jsonl,

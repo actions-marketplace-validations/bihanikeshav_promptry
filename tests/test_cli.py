@@ -238,7 +238,6 @@ class TestCostReport:
 
     def test_cost_report_with_data(self, tmp_path, monkeypatch):
         """cost-report should display token/cost aggregates when data exists."""
-        import json
         from promptry.storage import Storage
 
         db_path = tmp_path / "test_cost.db"
@@ -696,9 +695,12 @@ class TestPricesCLI:
         reroutes = dict(pricing.REROUTES)
         meta = dict(pricing.PRICES_META)
         yield
-        pricing.RATES.clear(); pricing.RATES.update(rates)
-        pricing.REROUTES.clear(); pricing.REROUTES.update(reroutes)
-        pricing.PRICES_META.clear(); pricing.PRICES_META.update(meta)
+        pricing.RATES.clear()
+        pricing.RATES.update(rates)
+        pricing.REROUTES.clear()
+        pricing.REROUTES.update(reroutes)
+        pricing.PRICES_META.clear()
+        pricing.PRICES_META.update(meta)
 
     def test_list_shows_known_models(self):
         # Pin a small deterministic catalog. The list view only renders a

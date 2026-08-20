@@ -1,20 +1,10 @@
 """Tests for promptry.config loading paths."""
-import os
-import sys
 
 import pytest
 
 from promptry.config import (
     Config,
     StorageConfig,
-    TrackingConfig,
-    CaptureConfig,
-    ModelConfig,
-    MonitorConfig,
-    NotificationsConfig,
-    DashboardConfig,
-    JudgeConfig,
-    SloConfig,
     load_config,
     get_config,
     reset_config,

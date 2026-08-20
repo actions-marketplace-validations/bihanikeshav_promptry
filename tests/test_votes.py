@@ -2,7 +2,7 @@
 import pytest
 
 from promptry.storage.sqlite import SQLiteStorage
-from promptry.registry import PromptRegistry, vote, reset_registry
+from promptry.registry import PromptRegistry, vote
 
 
 # ---- fixtures ----
@@ -161,7 +161,7 @@ class TestVoteFunction:
         old = reg._default_registry
         reg._default_registry = registry
         try:
-            vid = vote("qa", "some response", 1)
+            vote("qa", "some response", 1)
         finally:
             reg._default_registry = old
 
@@ -189,7 +189,7 @@ class TestVoteFunction:
         old = reg._default_registry
         reg._default_registry = registry
         try:
-            vid = vote("p", "resp", 1, metadata={"user_id": "u1"})
+            vote("p", "resp", 1, metadata={"user_id": "u1"})
         finally:
             reg._default_registry = old
 
@@ -253,7 +253,7 @@ class TestDashboardVoteEndpoints:
 
     @pytest.fixture
     def client(self, storage):
-        fastapi = pytest.importorskip("fastapi")
+        pytest.importorskip("fastapi")
         from fastapi.testclient import TestClient
         import promptry.dashboard.server as srv
 

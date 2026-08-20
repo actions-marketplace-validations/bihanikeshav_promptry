@@ -231,7 +231,7 @@ class TestPromptsList:
 
 class TestPromptVersions:
     def test_prompt_versions(self, client, storage):
-        records = _seed_prompt(storage, "summarizer", ["v1", "v2", "v3"])
+        _seed_prompt(storage, "summarizer", ["v1", "v2", "v3"])
         resp = client.get("/api/prompts/summarizer")
         assert resp.status_code == 200
         data = resp.json()

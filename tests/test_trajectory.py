@@ -5,7 +5,6 @@ import pytest
 
 from promptry.trajectory import (
     Trajectory,
-    TrajectoryStep,
     analyze_trajectory,
     diff_trajectories,
     format_trajectory_diff,

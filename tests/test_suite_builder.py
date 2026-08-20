@@ -8,7 +8,7 @@ from promptry.suite_builder import (
     write_yaml_suite,
     suite_candidates,
 )
-from promptry.yaml_suites import load_yaml_suites, YamlSuiteError
+from promptry.yaml_suites import load_yaml_suites
 
 
 @pytest.fixture

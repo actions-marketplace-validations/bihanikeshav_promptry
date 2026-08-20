@@ -200,7 +200,6 @@ class TestCostReportTools:
         assert "No prompts" in result
 
     def test_cost_report_with_data(self):
-        import json
         from promptry.mcp_server import cost_report
         from promptry.storage import get_storage
 

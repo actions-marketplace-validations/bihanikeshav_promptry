@@ -122,3 +122,11 @@ markers = [
 # are intentional, not dead (e.g. promptry/assertions/__init__.py after the
 # package split).
 "__init__.py" = ["F401"]
+# These tests gate an optional dependency with pytest.importorskip(), so the
+# real imports must sit BELOW that skip line — the whole point is to skip the
+# module cleanly when the dep is absent. E402 (import-not-at-top) is expected.
+"tests/test_dashboard_api.py" = ["E402"]
+"tests/test_dashboard_security.py" = ["E402"]
+"tests/test_mcp_server.py" = ["E402"]
+"tests/test_storage_conformance.py" = ["E402"]
+"tests/test_wire_contract.py" = ["E402"]

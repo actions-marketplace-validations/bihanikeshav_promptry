@@ -69,7 +69,7 @@ class TestLoadBaselineDict:
         storage.tag_prompt(record_v1.id, "prod")
         record_v2 = storage.save_prompt(name="p", content="v2", content_hash="h2")
 
-        tagged_run_id = storage.save_eval_run(
+        storage.save_eval_run(
             suite_name="s", prompt_name="p", prompt_version=record_v1.version,
             overall_pass=True, overall_score=0.6,
         )

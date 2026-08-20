@@ -230,7 +230,7 @@ class TestAssertJsonValid:
         assert results[0].details["parsed_type"] == "list"
 
     def test_trailing_commas(self):
-        with run_context() as results:
+        with run_context():
             score = assert_json_valid('{"a": 1, "b": 2,}')
         assert score == 1.0
 
@@ -412,7 +412,7 @@ class TestAssertExact:
         assert results[0].passed is True
 
     def test_empty_strings_match(self):
-        with run_context() as results:
+        with run_context():
             score = assert_exact("", "")
         assert score == 1.0
 
@@ -432,7 +432,7 @@ class TestAssertLevenshtein:
     def test_max_distance_boundary_pass(self):
         # "kitten" -> "sitting" is edit distance 3
         with run_context() as results:
-            score = assert_levenshtein("kitten", "sitting", max_distance=3)
+            assert_levenshtein("kitten", "sitting", max_distance=3)
         assert results[0].details["distance"] == 3
         assert results[0].passed is True
 
@@ -469,7 +469,7 @@ class TestAssertLevenshtein:
 
     def test_empty_vs_nonempty(self):
         with run_context() as results:
-            score = assert_levenshtein("", "abc", max_distance=3)
+            assert_levenshtein("", "abc", max_distance=3)
         assert results[0].details["distance"] == 3
         assert results[0].passed is True
 
@@ -512,11 +512,11 @@ class TestAssertRougeL:
     def test_expected_empty_actual_nonempty(self):
         with run_context() as results:
             with pytest.raises(AssertionError):
-                score = assert_rouge_l("some actual text", "", min_score=0.1)
+                assert_rouge_l("some actual text", "", min_score=0.1)
         assert results[0].score == 0.0
 
     def test_whitespace_only_treated_as_empty(self):
-        with run_context() as results:
+        with run_context():
             score = assert_rouge_l("   ", "   ", min_score=1.0)
         assert score == 1.0
 

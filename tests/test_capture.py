@@ -9,9 +9,7 @@ import pytest
 from promptry.capture import (
     Capture,
     CaptureRecorder,
-    ReplayResult,
     default_recorder,
-    get_recorder,
     iter_captures,
     load_captures,
     redact_sensitive,
