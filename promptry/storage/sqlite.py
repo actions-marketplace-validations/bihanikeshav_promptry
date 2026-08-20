@@ -189,6 +189,45 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "CREATE INDEX IF NOT EXISTS idx_invocations_model_created ON invocations(model, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_invocations_created_cost ON invocations(created_at, cost)",
     ]),
+    (9, "multi-user identity (users + oidc identities) and audit log", [
+        # Local users. password_hash is NULL for OIDC-only accounts. email is
+        # stored already-lowercased so the UNIQUE constraint is case-folded.
+        """CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            name TEXT,
+            password_hash TEXT,
+            role TEXT NOT NULL DEFAULT 'viewer',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_login_at TEXT
+        )""",
+        # External identities (OIDC). One user may link several providers.
+        """CREATE TABLE IF NOT EXISTS user_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(provider, subject)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(user_id)",
+        # Append-only audit trail. Never updated or deleted by app code.
+        """CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL DEFAULT (datetime('now')),
+            actor TEXT,
+            actor_id INTEGER,
+            action TEXT NOT NULL,
+            target TEXT,
+            ip TEXT,
+            result TEXT NOT NULL DEFAULT 'ok',
+            detail TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action)",
+    ]),
 ]
 
 
@@ -1701,3 +1740,159 @@ class SQLiteStorage(BaseStorage):
             details=details,
             latency_ms=row["latency_ms"],
         )
+
+    # ---- users / multi-user identity ----
+
+    def count_users(self) -> int:
+        with self._lock:
+            return int(self._conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+
+    def create_user(self, email, *, password_hash=None, name=None,
+                    role="viewer", is_active=True) -> dict:
+        email = (email or "").strip().lower()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO users (email, name, password_hash, role, is_active) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (email, name, password_hash, role, 1 if is_active else 0),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM users WHERE id = ?", (cur.lastrowid,)
+            ).fetchone()
+            return dict(row)
+
+    def get_user_by_email(self, email) -> dict | None:
+        email = (email or "").strip().lower()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM users WHERE email = ?", (email,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_user_by_id(self, user_id) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_users(self) -> list[dict]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id, email, name, role, is_active, created_at, last_login_at "
+                "FROM users ORDER BY id"
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def update_user(self, user_id, *, role=None, is_active=None,
+                    name=None, password_hash=None) -> bool:
+        sets, params = [], []
+        if role is not None:
+            sets.append("role = ?")
+            params.append(role)
+        if is_active is not None:
+            sets.append("is_active = ?")
+            params.append(1 if is_active else 0)
+        if name is not None:
+            sets.append("name = ?")
+            params.append(name)
+        if password_hash is not None:
+            sets.append("password_hash = ?")
+            params.append(password_hash)
+        if not sets:
+            return False
+        params.append(user_id)
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE users SET {', '.join(sets)} WHERE id = ?", params
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def touch_user_login(self, user_id) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET last_login_at = datetime('now') WHERE id = ?",
+                (user_id,),
+            )
+            self._conn.commit()
+
+    def delete_user(self, user_id) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def link_identity(self, user_id, provider, subject) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO user_identities (user_id, provider, subject) "
+                "VALUES (?, ?, ?)",
+                (user_id, provider, subject),
+            )
+            self._conn.commit()
+
+    def get_user_by_identity(self, provider, subject) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT u.* FROM users u "
+                "JOIN user_identities i ON i.user_id = u.id "
+                "WHERE i.provider = ? AND i.subject = ?",
+                (provider, subject),
+            ).fetchone()
+            return dict(row) if row else None
+
+    # ---- audit log (append-only) ----
+
+    def record_audit(self, action, *, actor=None, actor_id=None, target=None,
+                     ip=None, result="ok", detail=None) -> int:
+        detail_json = json.dumps(detail, default=str) if detail is not None else None
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO audit_log (actor, actor_id, action, target, ip, result, detail) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (actor, actor_id, action, target, ip, result, detail_json),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def _audit_filter(self, action, actor, since):
+        clauses, params = [], []
+        if action:
+            clauses.append("action = ?")
+            params.append(action)
+        if actor:
+            clauses.append("actor = ?")
+            params.append(actor)
+        if since:
+            clauses.append("ts >= ?")
+            params.append(since)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return where, params
+
+    def list_audit(self, *, limit=100, offset=0, action=None, actor=None, since=None) -> list[dict]:
+        where, params = self._audit_filter(action, actor, since)
+        params = [*params, int(limit), int(offset)]
+        with self._lock:
+            cur = self._conn.execute(
+                f"SELECT * FROM audit_log{where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                params,
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            if r.get("detail"):
+                try:
+                    r["detail"] = json.loads(r["detail"])
+                except (ValueError, TypeError):
+                    pass
+        return rows
+
+    def count_audit(self, *, action=None, actor=None, since=None) -> int:
+        where, params = self._audit_filter(action, actor, since)
+        with self._lock:
+            return int(
+                self._conn.execute(
+                    f"SELECT COUNT(*) FROM audit_log{where}", params
+                ).fetchone()[0]
+            )

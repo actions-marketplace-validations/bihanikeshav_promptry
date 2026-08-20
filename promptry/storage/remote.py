@@ -432,6 +432,63 @@ class RemoteStorage(BaseStorage):
     def delete_golden_example(self, example_id) -> bool:
         return self._local.delete_golden_example(example_id)
 
+    # ---- users / identity / audit (local-only; never shipped as telemetry) ----
+    # User accounts and the audit trail are deployment-local by design, so these
+    # proxy straight to the local SQLite store without emitting remote events.
+
+    def count_users(self) -> int:
+        return self._local.count_users()
+
+    def create_user(self, email, *, password_hash=None, name=None,
+                    role="viewer", is_active=True) -> dict:
+        return self._local.create_user(
+            email, password_hash=password_hash, name=name,
+            role=role, is_active=is_active,
+        )
+
+    def get_user_by_email(self, email):
+        return self._local.get_user_by_email(email)
+
+    def get_user_by_id(self, user_id):
+        return self._local.get_user_by_id(user_id)
+
+    def list_users(self) -> list:
+        return self._local.list_users()
+
+    def update_user(self, user_id, *, role=None, is_active=None,
+                    name=None, password_hash=None) -> bool:
+        return self._local.update_user(
+            user_id, role=role, is_active=is_active,
+            name=name, password_hash=password_hash,
+        )
+
+    def touch_user_login(self, user_id) -> None:
+        self._local.touch_user_login(user_id)
+
+    def delete_user(self, user_id) -> bool:
+        return self._local.delete_user(user_id)
+
+    def link_identity(self, user_id, provider, subject) -> None:
+        self._local.link_identity(user_id, provider, subject)
+
+    def get_user_by_identity(self, provider, subject):
+        return self._local.get_user_by_identity(provider, subject)
+
+    def record_audit(self, action, *, actor=None, actor_id=None, target=None,
+                     ip=None, result="ok", detail=None) -> int:
+        return self._local.record_audit(
+            action, actor=actor, actor_id=actor_id, target=target,
+            ip=ip, result=result, detail=detail,
+        )
+
+    def list_audit(self, *, limit=100, offset=0, action=None, actor=None, since=None) -> list:
+        return self._local.list_audit(
+            limit=limit, offset=offset, action=action, actor=actor, since=since,
+        )
+
+    def count_audit(self, *, action=None, actor=None, since=None) -> int:
+        return self._local.count_audit(action=action, actor=actor, since=since)
+
     def close(self):
         self._running = False
         if self._thread.is_alive():

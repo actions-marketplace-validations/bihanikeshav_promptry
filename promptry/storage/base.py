@@ -331,3 +331,69 @@ class BaseStorage(ABC):
     def delete_golden_example(self, example_id: int) -> bool:
         """Delete a golden example by id. Optional."""
         raise NotImplementedError
+
+    # ---- users / multi-user identity (optional capability) ----
+
+    def count_users(self) -> int:
+        """Number of local user accounts (0 = single-token/open mode). Optional."""
+        raise NotImplementedError
+
+    def create_user(self, email: str, *, password_hash: str | None = None,
+                    name: str | None = None, role: str = "viewer",
+                    is_active: bool = True) -> dict:
+        """Create a local user; password_hash is None for OIDC-only. Optional."""
+        raise NotImplementedError
+
+    def get_user_by_email(self, email: str) -> dict | None:
+        """Look up a user by (case-folded) email. Optional."""
+        raise NotImplementedError
+
+    def get_user_by_id(self, user_id: int) -> dict | None:
+        """Look up a user by id. Optional."""
+        raise NotImplementedError
+
+    def list_users(self) -> list[dict]:
+        """All users (no password hashes). Optional."""
+        raise NotImplementedError
+
+    def update_user(self, user_id: int, *, role: str | None = None,
+                    is_active: bool | None = None, name: str | None = None,
+                    password_hash: str | None = None) -> bool:
+        """Patch mutable user fields. Optional."""
+        raise NotImplementedError
+
+    def touch_user_login(self, user_id: int) -> None:
+        """Stamp last_login_at = now. Optional."""
+        raise NotImplementedError
+
+    def delete_user(self, user_id: int) -> bool:
+        """Delete a user (cascades linked identities). Optional."""
+        raise NotImplementedError
+
+    def link_identity(self, user_id: int, provider: str, subject: str) -> None:
+        """Bind an external (OIDC) identity to a user. Optional."""
+        raise NotImplementedError
+
+    def get_user_by_identity(self, provider: str, subject: str) -> dict | None:
+        """Resolve a user from an external identity. Optional."""
+        raise NotImplementedError
+
+    # ---- audit log (optional capability, append-only) ----
+
+    def record_audit(self, action: str, *, actor: str | None = None,
+                     actor_id: int | None = None, target: str | None = None,
+                     ip: str | None = None, result: str = "ok",
+                     detail: dict | None = None) -> int:
+        """Append one immutable audit entry. Optional."""
+        raise NotImplementedError
+
+    def list_audit(self, *, limit: int = 100, offset: int = 0,
+                   action: str | None = None, actor: str | None = None,
+                   since: str | None = None) -> list[dict]:
+        """Audit entries, newest first, optionally filtered. Optional."""
+        raise NotImplementedError
+
+    def count_audit(self, *, action: str | None = None, actor: str | None = None,
+                    since: str | None = None) -> int:
+        """Count audit entries matching the filter. Optional."""
+        raise NotImplementedError
