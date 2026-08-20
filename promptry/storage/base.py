@@ -397,3 +397,18 @@ class BaseStorage(ABC):
                     since: str | None = None) -> int:
         """Count audit entries matching the filter. Optional."""
         raise NotImplementedError
+
+    # ---- data retention (optional capability) ----
+
+    def redact_old_capture_text(self, days: int) -> int:
+        """NULL out captured input/output text on invocations older than `days`,
+        keeping the row and its metrics. Returns rows affected. Optional."""
+        raise NotImplementedError
+
+    def purge_old_invocations(self, days: int) -> int:
+        """Delete invocation rows older than `days`. Returns rows deleted. Optional."""
+        raise NotImplementedError
+
+    def purge_old_audit(self, days: int) -> int:
+        """Delete audit entries older than `days`. Returns rows deleted. Optional."""
+        raise NotImplementedError

@@ -489,6 +489,15 @@ class RemoteStorage(BaseStorage):
     def count_audit(self, *, action=None, actor=None, since=None) -> int:
         return self._local.count_audit(action=action, actor=actor, since=since)
 
+    def redact_old_capture_text(self, days) -> int:
+        return self._local.redact_old_capture_text(days)
+
+    def purge_old_invocations(self, days) -> int:
+        return self._local.purge_old_invocations(days)
+
+    def purge_old_audit(self, days) -> int:
+        return self._local.purge_old_audit(days)
+
     def close(self):
         self._running = False
         if self._thread.is_alive():

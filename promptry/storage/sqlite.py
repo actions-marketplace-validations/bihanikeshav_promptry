@@ -1896,3 +1896,37 @@ class SQLiteStorage(BaseStorage):
                     f"SELECT COUNT(*) FROM audit_log{where}", params
                 ).fetchone()[0]
             )
+
+    # ---- data retention ----
+
+    def redact_old_capture_text(self, days: int) -> int:
+        cutoff = f"-{int(days)} days"
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE invocations SET input_text = NULL, output_text = NULL "
+                "WHERE created_at < datetime('now', ?) "
+                "AND (input_text IS NOT NULL OR output_text IS NOT NULL)",
+                (cutoff,),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    def purge_old_invocations(self, days: int) -> int:
+        cutoff = f"-{int(days)} days"
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM invocations WHERE created_at < datetime('now', ?)",
+                (cutoff,),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    def purge_old_audit(self, days: int) -> int:
+        cutoff = f"-{int(days)} days"
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM audit_log WHERE ts < datetime('now', ?)",
+                (cutoff,),
+            )
+            self._conn.commit()
+            return cur.rowcount
