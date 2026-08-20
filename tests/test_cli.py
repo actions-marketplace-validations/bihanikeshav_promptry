@@ -689,6 +689,16 @@ class TestPricesCLI:
         pricing.PRICES_META.clear(); pricing.PRICES_META.update(meta)
 
     def test_list_shows_known_models(self):
+        # Pin a small deterministic catalog. The list view only renders a
+        # sample (first 60) once the catalog exceeds 80 models, so asserting a
+        # specific model against the full bundled feed is brittle as it grows.
+        # The autouse _isolate_prices fixture restores the real RATES after.
+        from promptry import pricing
+        pricing.RATES.clear()
+        pricing.RATES.update({
+            "gpt-4o": {"in": 2.5, "cached": 1.25, "out": 10.0},
+            "claude-3-5-sonnet-20241022": {"in": 3.0, "cached": 0.3, "out": 15.0},
+        })
         result = runner.invoke(app, ["prices"])
         assert result.exit_code == 0
         assert "gpt-4o" in result.output

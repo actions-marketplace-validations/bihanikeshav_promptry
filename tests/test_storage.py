@@ -349,7 +349,18 @@ def _seed_mixed(storage):
 
 class TestSqlAggregationEquivalence:
 
-    def test_get_cost_data_all(self, storage):
+    def test_get_cost_data_all(self, storage, monkeypatch):
+        # Pin cache rates for the two seeded models so cache_savings is
+        # deterministic; the bundled price feed drifts over time (and now
+        # prices claude-3-5-sonnet's cache reads, which it did not originally).
+        # gpt-4o: 200 cached * (2.50-1.25)/1M = 0.00025
+        # claude-3-5-sonnet: 100 cached * (3.00-0.30)/1M = 0.00027
+        import promptry.pricing as _pricing
+        _pinned = {
+            "gpt-4o": {"in": 2.5, "cached": 1.25, "cache_write": 2.5, "out": 10.0},
+            "claude-3-5-sonnet-20241022": {"in": 3.0, "cached": 0.3, "cache_write": 3.75, "out": 15.0},
+        }
+        monkeypatch.setattr(_pricing, "_lookup_rates", lambda m: _pinned.get(m))
         _seed_mixed(storage)
         r = storage.get_cost_data(days=7)
         s = r["summary"]
@@ -360,8 +371,8 @@ class TestSqlAggregationEquivalence:
         assert s["total_cached_tokens"] == 300
         assert s["total_cache_write_tokens"] == 10
         assert s["cache_hit_rate"] == pytest.approx(0.12244897959183673)
-        assert s["cache_savings"] == pytest.approx(0.00025)
-        assert s["uncached_cost"] == pytest.approx(0.04225)
+        assert s["cache_savings"] == pytest.approx(0.00052)
+        assert s["uncached_cost"] == pytest.approx(0.04252)
         assert s["avg_cost"] == pytest.approx(0.0084)
 
         by_name = {e["name"]: e for e in r["by_name"]}
@@ -376,7 +387,7 @@ class TestSqlAggregationEquivalence:
         assert a["models"] == ["gpt-4o"]
         b = by_name["mod.b"]
         assert b["models"] == ["claude-3-5-sonnet-20241022", "gpt-4o"]
-        assert b["cache_savings"] == pytest.approx(0.0)
+        assert b["cache_savings"] == pytest.approx(0.00027)
 
         assert len(r["by_date"]) == 1
         d = r["by_date"][0]
