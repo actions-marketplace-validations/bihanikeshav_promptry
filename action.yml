@@ -16,6 +16,10 @@ inputs:
     description: "Baseline to compare against (e.g. prod)"
     required: false
     default: ""
+  min-score:
+    description: "Fail the build if the overall eval score is below this (0-1). Empty disables the threshold gate."
+    required: false
+    default: ""
   python-version:
     description: "Python version to use"
     required: false
@@ -78,6 +82,7 @@ runs:
         SUITE: ${{ inputs.suite }}
         MODULE: ${{ inputs.module }}
         COMPARE: ${{ inputs.compare }}
+        MIN_SCORE: ${{ inputs.min-score }}
         PR_COMMENT: ${{ inputs.pr-comment }}
         EVENT_NAME: ${{ github.event_name }}
       run: |
@@ -88,6 +93,7 @@ runs:
         # quoted argument (no word-splitting, no injection).
         args=(run "$SUITE" --module "$MODULE")
         if [ -n "$COMPARE" ]; then args+=(--compare "$COMPARE"); fi
+        if [ -n "$MIN_SCORE" ]; then args+=(--min-score "$MIN_SCORE"); fi
 
         # Run the suite. On PRs we also generate a Markdown summary and
         # HTML report so the follow-up step can post a comment. We never

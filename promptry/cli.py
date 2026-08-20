@@ -465,8 +465,10 @@ def run_cmd(
     markdown: Optional[Path] = typer.Option(None, "--markdown", help="Write Markdown summary to file (for PR comments)."),
     explain: bool = typer.Option(False, "--explain", help="Generate an LLM explanation for regressions (requires judge configured via set_judge)."),
     format: str = typer.Option("table", "--format", help="Output format: table|json|junit."),
+    min_score: Optional[float] = typer.Option(None, "--min-score", help="Fail (exit 1) if the overall score is below this threshold (0-1). A baseline-free CI gate."),
 ):
-    """Run an eval suite. Exit code 1 on regression."""
+    """Run an eval suite. Exit code 1 on regression, failure, SLO breach, or
+    below --min-score."""
     fmt, out = _format_and_out(format)
 
     _discover_suites(module, err=out)
@@ -506,6 +508,15 @@ def run_cmd(
         f"Overall: {'[green]PASS[/green]' if result.overall_pass else '[red]FAIL[/red]'}"
         f"  score: {result.overall_score:.3f}"
     )
+
+    # Score-threshold gate: a baseline-free CI check (fail if the run scored
+    # below --min-score even when every assertion technically passed).
+    score_gate_failed = min_score is not None and result.overall_score < min_score
+    if score_gate_failed:
+        out.print(
+            f"[red]Score {result.overall_score:.3f} is below --min-score "
+            f"{min_score:.3f}[/red]"
+        )
 
     # Latency SLO gates — performance budgets from .promptry/config.toml [slo],
     # checked independently of the score so a "passing" suite can still fail CI
@@ -594,7 +605,7 @@ def run_cmd(
         markdown.write_text(md_content, encoding="utf-8")
         out.print(f"[green]Markdown summary written to[/green] {markdown}")
 
-    if compare_regressed or not result.overall_pass or slo_breaches:
+    if compare_regressed or not result.overall_pass or slo_breaches or score_gate_failed:
         raise typer.Exit(1)
 
 
