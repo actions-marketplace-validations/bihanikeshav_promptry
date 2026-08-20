@@ -15,6 +15,8 @@ import Playground from "./pages/Playground";
 import Duplicates from "./pages/Duplicates";
 import SuiteCreate from "./pages/SuiteCreate";
 import Settings from "./pages/Settings";
+import Users from "./pages/Users";
+import Audit from "./pages/Audit";
 
 export default function App() {
   return (
@@ -35,6 +37,8 @@ export default function App() {
         <Route path="/feedback" element={<Feedback />} />
         <Route path="/playground" element={<Playground />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/users" element={<Users />} />
+        <Route path="/audit" element={<Audit />} />
       </Route>
     </Routes>
   );

@@ -1,8 +1,16 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   AUTH_REQUIRED_EVENT,
   getAuthStatus,
   login,
+  loginUser,
   type AuthStatus,
 } from "../api/client";
 
@@ -11,10 +19,25 @@ import {
  * browser has no valid session cookie, render a login form instead of the app.
  * When auth is disabled (local default), children render immediately.
  */
+const inputStyle: CSSProperties = {
+  width: "100%",
+  boxSizing: "border-box",
+  background: "var(--bg-elev)",
+  border: "1px solid var(--border-strong)",
+  borderRadius: "var(--r-md)",
+  padding: "10px 12px",
+  color: "var(--text)",
+  fontSize: 13,
+  outline: "none",
+  marginBottom: 12,
+};
+
 export default function AuthGate({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(() => {
@@ -35,14 +58,22 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, onNeed);
   }, []);
 
+  const multiuser = status?.posture === "multiuser";
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const res = await login(token.trim());
-      setStatus({ required: res.required, authenticated: res.authenticated });
+      if (multiuser) {
+        await loginUser(email.trim(), password);
+      } else {
+        await login(token.trim());
+      }
+      // Re-read status so posture/role/email reflect the new session.
+      await refresh();
       setToken("");
+      setPassword("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "login failed");
     } finally {
@@ -80,34 +111,53 @@ export default function AuthGate({ children }: { children: ReactNode }) {
             Sign in
           </h1>
           <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--secondary)", lineHeight: 1.45 }}>
-            This dashboard is locked. Enter the shared secret from{" "}
-            <span className="mono" style={{ color: "var(--text-dim)" }}>PROMPTRY_AUTH_TOKEN</span>.
+            {multiuser
+              ? "Sign in with your promptry account."
+              : "This dashboard is locked. Enter the shared secret from PROMPTRY_AUTH_TOKEN."}
           </p>
 
-          <label style={{ display: "block", fontSize: 12, color: "var(--secondary)", marginBottom: 6 }}>
-            Access token
-          </label>
-          <input
-            type="password"
-            autoFocus
-            autoComplete="current-password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="paste token…"
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              background: "var(--bg-elev)",
-              border: "1px solid var(--border-strong)",
-              borderRadius: "var(--r-md)",
-              padding: "10px 12px",
-              color: "var(--text)",
-              fontSize: 13,
-              fontFamily: "var(--font-mono)",
-              outline: "none",
-              marginBottom: 12,
-            }}
-          />
+          {multiuser ? (
+            <>
+              <label style={{ display: "block", fontSize: 12, color: "var(--secondary)", marginBottom: 6 }}>
+                Email
+              </label>
+              <input
+                type="email"
+                autoFocus
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@company.com"
+                style={inputStyle}
+              />
+              <label style={{ display: "block", fontSize: 12, color: "var(--secondary)", marginBottom: 6 }}>
+                Password
+              </label>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                style={inputStyle}
+              />
+            </>
+          ) : (
+            <>
+              <label style={{ display: "block", fontSize: 12, color: "var(--secondary)", marginBottom: 6 }}>
+                Access token
+              </label>
+              <input
+                type="password"
+                autoFocus
+                autoComplete="current-password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="paste token…"
+                style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+              />
+            </>
+          )}
 
           {error && (
             <div
@@ -126,7 +176,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
 
           <button
             type="submit"
-            disabled={busy || !token.trim()}
+            disabled={busy || (multiuser ? !email.trim() || !password : !token.trim())}
             className="btn"
             style={{
               width: "100%",
@@ -136,16 +186,17 @@ export default function AuthGate({ children }: { children: ReactNode }) {
               border: "1px solid var(--accent-line)",
               color: "var(--accent-bright)",
               fontWeight: 600,
-              opacity: busy || !token.trim() ? 0.55 : 1,
-              cursor: busy || !token.trim() ? "not-allowed" : "pointer",
+              opacity: busy || (multiuser ? !email.trim() || !password : !token.trim()) ? 0.55 : 1,
+              cursor: busy ? "not-allowed" : "pointer",
             }}
           >
-            {busy ? "Signing in…" : "Unlock dashboard"}
+            {busy ? "Signing in…" : multiuser ? "Sign in" : "Unlock dashboard"}
           </button>
 
           <p style={{ margin: "16px 0 0", fontSize: 11.5, color: "var(--muted)", lineHeight: 1.45 }}>
-            Machine clients can send{" "}
-            <span className="mono">Authorization: Bearer $PROMPTRY_AUTH_TOKEN</span> instead of logging in.
+            {multiuser
+              ? "Contact an admin if you don't have an account yet."
+              : "Machine clients can send Authorization: Bearer $PROMPTRY_AUTH_TOKEN instead of logging in."}
           </p>
         </form>
       </div>

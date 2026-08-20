@@ -1,8 +1,39 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { Wordmark } from "./ui";
-import { backendHost, getAuthStatus, getCostData, logout } from "../api/client";
+import { backendHost, getAuthStatus, getCostData, getMe, logout, type Me } from "../api/client";
 import type { CostResponse } from "../api/types";
+
+const ADMIN_ITEMS: NavItem[] = [
+  {
+    to: "/users",
+    label: "Users",
+    icon: (
+      <path
+        d="M6 8a2.2 2.2 0 100-4.4A2.2 2.2 0 006 8zm5 0a2 2 0 100-4 2 2 0 000 4zM2 13c0-2 1.8-3 4-3s4 1 4 3M10.5 13c0-1.6 1-2.6 2.5-2.6"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+  {
+    to: "/audit",
+    label: "Audit log",
+    icon: (
+      <path
+        d="M8 1.5l5 2v4c0 3-2.2 5.3-5 6.5-2.8-1.2-5-3.5-5-6.5v-4l5-2zM5.7 7.7L7.3 9.3l3-3.3"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+];
 
 function fmtTok(n: number): string {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -242,11 +273,19 @@ export function SideNav({
 }) {
   const location = useLocation();
   const version = useVersion();
-  const items: NavItem[] = BASE_ITEMS.map((it) =>
+  const [me, setMe] = useState<Me | null>(null);
+  useEffect(() => {
+    getMe().then(setMe).catch(() => setMe(null));
+  }, []);
+  const baseItems: NavItem[] = BASE_ITEMS.map((it) =>
     it.to === "/" && counters.regressions
       ? { ...it, badge: { n: counters.regressions, tone: "error" as const } }
       : it
   );
+  // Admin-only tools appear once the caller is an admin (multi-user mode) or in
+  // open/token mode where the local operator resolves to admin.
+  const items: NavItem[] =
+    me?.role === "admin" ? [...baseItems, ...ADMIN_ITEMS] : baseItems;
 
   return (
     <aside
@@ -375,6 +414,41 @@ export function SideNav({
           </NavLink>
         );
       })}
+
+      {me?.kind === "user" && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: "8px 8px 4px",
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div
+              className="mono"
+              style={{ fontSize: 11, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              title={me.email || ""}
+            >
+              {me.email}
+            </div>
+            <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              {me.role}
+            </div>
+          </div>
+          <button
+            className="btn"
+            onClick={() => logout().then(() => window.location.reload())}
+            style={{ fontSize: 10.5, padding: "4px 8px" }}
+            title="Sign out"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
 
       <WorkspaceStats counters={counters} />
       <ConnectionStatus />

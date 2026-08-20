@@ -95,6 +95,9 @@ export class AuthError extends Error {
 export type AuthStatus = {
   required: boolean;
   authenticated: boolean;
+  posture?: "open" | "token" | "multiuser";
+  role?: string | null;
+  email?: string | null;
 };
 
 /** Fired when any API call gets 401 so the auth gate can show the login form. */
@@ -164,6 +167,107 @@ export async function login(token: string): Promise<AuthStatus & { ok: boolean }
 
 export async function logout(): Promise<AuthStatus & { ok: boolean }> {
   return fetchJsonMutate("/api/auth/logout", { method: "POST" });
+}
+
+/** Multi-user login with email + password (posture === "multiuser"). */
+export async function loginUser(
+  email: string,
+  password: string
+): Promise<{ ok: boolean; authenticated: boolean; role?: string; email?: string }> {
+  const res = await fetch(`${BASE}/api/auth/login`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { detail?: string }).detail || `login failed (${res.status})`);
+  }
+  return data as { ok: boolean; authenticated: boolean; role?: string; email?: string };
+}
+
+export type Me = {
+  kind: string;
+  email: string | null;
+  role: string;
+  user_id: number | null;
+};
+
+/** The current caller's identity + role (for nav/route gating). */
+export function getMe(): Promise<Me> {
+  return fetch(`${BASE}/api/auth/me`, { credentials: "include" }).then(async (res) => {
+    if (!res.ok) throw new Error(`API error ${res.status}`);
+    return res.json();
+  });
+}
+
+// ---- Users (admin) ----
+
+export type User = {
+  id: number;
+  email: string;
+  name: string | null;
+  role: string;
+  is_active: number;
+  created_at: string;
+  last_login_at: string | null;
+};
+
+export function listUsers(): Promise<{ users: User[] }> {
+  return fetchJson("/api/users");
+}
+
+export function createUser(body: {
+  email: string;
+  password?: string;
+  name?: string;
+  role: string;
+}): Promise<{ user: User; bootstrap: boolean }> {
+  return fetchJsonMutate("/api/users", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateUser(
+  id: number,
+  body: { role?: string; is_active?: boolean; name?: string }
+): Promise<{ user: User }> {
+  return fetchJsonMutate(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function deleteUser(id: number): Promise<{ ok: boolean }> {
+  return fetchJsonMutate(`/api/users/${id}`, { method: "DELETE" });
+}
+
+export function setUserPassword(id: number, password: string): Promise<{ ok: boolean }> {
+  return fetchJsonMutate(`/api/users/${id}/password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
+// ---- Audit log (admin) ----
+
+export type AuditEntry = {
+  id: number;
+  ts: string;
+  actor: string | null;
+  actor_id: number | null;
+  action: string;
+  target: string | null;
+  ip: string | null;
+  result: string;
+  detail: Record<string, unknown> | null;
+};
+
+export function listAudit(
+  params: { limit?: number; offset?: number; action?: string } = {}
+): Promise<{ entries: AuditEntry[]; total: number; limit: number; offset: number }> {
+  const q = new URLSearchParams();
+  if (params.limit) q.set("limit", String(params.limit));
+  if (params.offset) q.set("offset", String(params.offset));
+  if (params.action) q.set("action", params.action);
+  const qs = q.toString();
+  return fetchJson(`/api/audit${qs ? "?" + qs : ""}`);
 }
 
 // ---- Onboarding ----
