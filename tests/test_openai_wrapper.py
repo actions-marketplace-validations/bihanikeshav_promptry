@@ -87,6 +87,26 @@ class TestRecording:
         assert tc.some_real_attr == "proxied"
 
 
+class TestResponseIdDedup:
+    """A provider response id dedups the same call seen by two capture layers."""
+
+    def test_duplicate_response_id_is_ignored(self, storage):
+        a = storage.record_invocation("p", metadata={"cost": 0.01, "model": "gpt-4o"},
+                                      response_id="chatcmpl-1")
+        b = storage.record_invocation("p", metadata={"cost": 0.01, "model": "gpt-4o"},
+                                      response_id="chatcmpl-1")  # same call, other layer
+        assert a > 0 and b == 0
+        assert storage.count_invocations() == 1
+
+    def test_distinct_ids_and_null_ids_both_land(self, storage):
+        storage.record_invocation("p", metadata={"model": "gpt-4o"}, response_id="a")
+        storage.record_invocation("p", metadata={"model": "gpt-4o"}, response_id="b")
+        # null response_id is never deduped (most calls have no id)
+        storage.record_invocation("p", metadata={"model": "gpt-4o"})
+        storage.record_invocation("p", metadata={"model": "gpt-4o"})
+        assert storage.count_invocations() == 4
+
+
 class TestDropIn:
     def test_constructs_and_wraps_and_proxies(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-xxx")

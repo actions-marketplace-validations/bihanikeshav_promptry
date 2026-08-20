@@ -247,6 +247,16 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor)",
         "CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action)",
     ]),
+    (10, "response_id on invocations for cross-layer capture dedup", [
+        # The provider's response id (e.g. chatcmpl-...). When several capture
+        # layers see the same call (the LiteLLM callback AND an instrumented
+        # OpenAI client), they carry the same id, so a partial UNIQUE index +
+        # INSERT OR IGNORE keeps exactly one row. Partial (WHERE NOT NULL) so the
+        # many rows without a captured id don't collide.
+        "ALTER TABLE invocations ADD COLUMN response_id TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_invocations_response_uq "
+        "ON invocations(response_id) WHERE response_id IS NOT NULL",
+    ]),
 ]
 
 
@@ -1585,12 +1595,16 @@ class SQLiteStorage(BaseStorage):
 
     def record_invocation(self, prompt_name: str, metadata: dict | None = None, prompt_version: int | None = None,
                           input_text: str | None = None, output_text: str | None = None,
-                          request_id: str | None = None) -> int:
+                          request_id: str | None = None, response_id: str | None = None) -> int:
         """Append one row to the invocations ledger.
 
         Unlike save_prompt(), there is no dedup by content/hash — every
         call lands as its own row. This is the right shape for cost and
         latency dashboards where each LLM invocation is a discrete event.
+
+        The one exception is response_id (the provider's call id): when set, a
+        UNIQUE index + INSERT OR IGNORE dedups the same call seen by two capture
+        layers. Returns 0 for such an ignored duplicate.
 
         input_text/output_text are optional captured request/response text
         (the caller decides whether/how often to capture and redacts first).
@@ -1599,15 +1613,15 @@ class SQLiteStorage(BaseStorage):
             meta_json = json.dumps(metadata) if metadata else None
             cost, tokens_in, tokens_out, model, latency_ms = _metric_columns_from_metadata(metadata)
             cur = self._conn.execute(
-                """INSERT INTO invocations
+                """INSERT OR IGNORE INTO invocations
                    (prompt_name, prompt_version, metadata, input_text, output_text, request_id,
-                    cost, tokens_in, tokens_out, model, latency_ms)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    response_id, cost, tokens_in, tokens_out, model, latency_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (prompt_name, prompt_version, meta_json, input_text, output_text, request_id,
-                 cost, tokens_in, tokens_out, model, latency_ms),
+                 response_id, cost, tokens_in, tokens_out, model, latency_ms),
             )
             self._conn.commit()
-            return cur.lastrowid
+            return cur.lastrowid if cur.rowcount else 0
 
     # ---- votes ----
 
