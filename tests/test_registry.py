@@ -153,6 +153,26 @@ class TestCaptureTruncation:
         rec = self._captured(storage, "cap.full")
         assert len(rec["input_text"]) == 5000
 
+    def test_pii_redacted_when_enabled(self, storage, monkeypatch):
+        monkeypatch.setenv("PROMPTRY_CAPTURE_REDACT_PII", "1")
+        self._patch_registry(monkeypatch, storage)
+        track_invocation("cap.pii", capture=True,
+                         input_text="email me at alice@example.com",
+                         output_text="key sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX")
+        rec = self._captured(storage, "cap.pii")
+        assert "alice@example.com" not in rec["input_text"]
+        assert "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX" not in rec["output_text"]
+        assert rec["metadata"].get("pii_redacted") is True
+
+    def test_pii_not_redacted_by_default(self, storage, monkeypatch):
+        monkeypatch.delenv("PROMPTRY_CAPTURE_REDACT_PII", raising=False)
+        self._patch_registry(monkeypatch, storage)
+        track_invocation("cap.raw", capture=True,
+                         input_text="email me at alice@example.com")
+        rec = self._captured(storage, "cap.raw")
+        assert "alice@example.com" in rec["input_text"]
+        assert "pii_redacted" not in rec["metadata"]
+
 
 class TestTrackContext:
 
