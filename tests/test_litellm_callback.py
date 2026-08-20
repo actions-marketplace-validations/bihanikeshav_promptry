@@ -129,18 +129,13 @@ class TestDedup:
 
 
 class TestEnable:
-    def test_enable_is_idempotent(self):
+    def test_enable_is_idempotent(self, monkeypatch):
         import litellm
-        before = list(litellm.callbacks or [])
-        # Control the precondition: litellm.callbacks is a process-global other
-        # tests may have touched, so start from a known-clean enable state.
-        cb._enabled_instance = None
-        try:
-            a = cb.enable_litellm()
-            b = cb.enable_litellm()
-            assert a is b and a is not None
-            # the fresh instance we registered appears exactly once
-            assert sum(1 for c in (litellm.callbacks or []) if c is a) == 1
-        finally:
-            cb._enabled_instance = None
-            litellm.callbacks = before
+        # Fully isolate the process-global state (both auto-restored) so no other
+        # test's litellm.callbacks pollution can reach this assertion.
+        monkeypatch.setattr(litellm, "callbacks", [], raising=False)
+        monkeypatch.setattr(cb, "_enabled_instance", None, raising=False)
+        a = cb.enable_litellm()
+        b = cb.enable_litellm()          # second call is a no-op
+        assert a is not None and a is b
+        assert list(litellm.callbacks).count(a) == 1   # registered exactly once
