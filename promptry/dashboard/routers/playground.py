@@ -140,17 +140,26 @@ async def playground_eval(request: Request):
             elif atype == "matches":
                 pattern = value or ""
                 fullmatch = options.get("fullmatch", True)
-                try:
-                    compiled = _re.compile(pattern, _re.DOTALL)
-                    text_stripped = response_text.strip()
-                    match = compiled.fullmatch(text_stripped) if fullmatch else compiled.search(text_stripped)
-                    passed = match is not None
-                    details = {"pattern": pattern, "fullmatch": fullmatch}
-                    if match:
-                        details["matched"] = match.group()[:200]
-                    result.update(passed=passed, score=1.0 if passed else 0.0, details=details)
-                except _re.error as e:
-                    result.update(passed=False, score=0.0, details={"error": f"Invalid regex: {e}"})
+                # Python's `re` has no backtracking limit; a catastrophic
+                # pattern against long input can hang the worker. Bound both so
+                # this endpoint can't be turned into a CPU DoS.
+                if len(pattern) > 1000 or len(response_text) > 100_000:
+                    result.update(
+                        passed=False, score=0.0,
+                        details={"error": "pattern or input too large to match safely"},
+                    )
+                else:
+                    try:
+                        compiled = _re.compile(pattern, _re.DOTALL)
+                        text_stripped = response_text.strip()
+                        match = compiled.fullmatch(text_stripped) if fullmatch else compiled.search(text_stripped)
+                        passed = match is not None
+                        details = {"pattern": pattern, "fullmatch": fullmatch}
+                        if match:
+                            details["matched"] = match.group()[:200]
+                        result.update(passed=passed, score=1.0 if passed else 0.0, details=details)
+                    except _re.error as e:
+                        result.update(passed=False, score=0.0, details={"error": f"Invalid regex: {e}"})
 
             else:
                 result.update(
