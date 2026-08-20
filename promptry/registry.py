@@ -267,6 +267,15 @@ def track_invocation(
             if output_text is not None:
                 cap_out = _cap(output_text)
             meta["captured"] = True
+            # Scrub secrets/PII out of captured text before it is stored, when
+            # enabled — so an API key or customer email in a prompt never lands
+            # in the SQLite file or renders in the dashboard.
+            from promptry.capture import redact_captured_pii
+            if redact_captured_pii():
+                from promptry.pii import redact_text
+                cap_in = redact_text(cap_in)
+                cap_out = redact_text(cap_out)
+                meta["pii_redacted"] = True
 
     # Auto-cost: same logic as track(), inlined to avoid coupling the
     # two paths so changes to one don't silently break the other.

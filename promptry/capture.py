@@ -421,6 +421,20 @@ def capture_enabled() -> bool:
     return bool(os.environ.get("PROMPTRY_CAPTURE", "").strip())
 
 
+def redact_captured_pii() -> bool:
+    """Whether captured request/response text should have secrets and PII masked
+    before it is stored. Off by default (raw capture, historical behaviour).
+    Enable with PROMPTRY_CAPTURE_REDACT_PII=1 or [capture] redact_pii in config."""
+    v = os.environ.get("PROMPTRY_CAPTURE_REDACT_PII")
+    if v is not None:
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    try:
+        from promptry.config import get_config
+        return bool(getattr(get_config().capture, "redact_pii", False))
+    except Exception:
+        return False
+
+
 def default_recorder(task: str) -> CaptureRecorder | None:
     """Return a process-wide recorder for `task` only if PROMPTRY_CAPTURE is set.
 
