@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import difflib
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -11,6 +12,15 @@ from promptry.registry import PromptRegistry
 from promptry.dashboard import auth as authlib
 
 router = APIRouter()
+
+
+def _protected_envs() -> set[str]:
+    """Environments whose promotion requires admin sign-off. Default {'prod'};
+    override with PROMPTRY_PROTECTED_ENVS (comma-separated, empty = none)."""
+    raw = os.environ.get("PROMPTRY_PROTECTED_ENVS")
+    if raw is None:
+        return {"prod"}
+    return {e.strip() for e in raw.split(",") if e.strip()}
 
 _CMS_DISABLED_MSG = (
     "The prompt CMS is off. Editing or promoting prompts from the dashboard only "
@@ -379,14 +389,28 @@ class _PromoteReq(BaseModel):
 
 @router.post("/api/prompts/{name}/promote")
 def promote_prompt(name: str, body: _PromoteReq, request: Request,
-                   _actor: authlib.Actor = Depends(authlib.require_role("editor"))):
+                   actor: authlib.Actor = Depends(authlib.require_role("editor"))):
     """Point an environment tag (dev/staging/prod) at a specific version so
-    render_prompt(env=...) serves it — a gate between editing and going live."""
+    render_prompt(env=...) serves it — a gate between editing and going live.
+
+    Promoting to a protected env (default 'prod') requires admin sign-off; an
+    editor can move dev/staging freely. Every promotion is recorded in the
+    audit trail (see GET /api/prompts/{name}/promotions)."""
     from promptry.dashboard.server import get_storage
     from promptry.projectconfig import cms_enabled
 
     if not cms_enabled():
         raise HTTPException(status_code=403, detail=_CMS_DISABLED_MSG)
+    # Change control: only admins may promote to a protected environment.
+    if body.env in _protected_envs() and not authlib.role_at_least(actor, "admin"):
+        authlib.audit_event(request, "prompt.promote", target=name,
+                            result="denied",
+                            detail={"version": body.version, "env": body.env,
+                                    "reason": "protected env requires admin"})
+        raise HTTPException(
+            status_code=403,
+            detail=f"promoting to protected env '{body.env}' requires admin role",
+        )
     storage = get_storage()
     if not storage.supports("set_prompt_env"):
         raise HTTPException(status_code=501, detail="promotion not supported by this backend")
@@ -396,6 +420,24 @@ def promote_prompt(name: str, body: _PromoteReq, request: Request,
     authlib.audit_event(request, "prompt.promote", target=name,
                         detail={"version": body.version, "env": body.env})
     return {"ok": True, "name": name, "version": body.version, "env": body.env}
+
+
+@router.get("/api/prompts/{name}/promotions")
+def prompt_promotions(name: str, limit: int = Query(default=50, ge=1, le=200)):
+    """Promotion history for a prompt (who promoted which version to which env,
+    when) — the change-control record, sourced from the audit trail."""
+    from promptry.dashboard.server import get_storage
+    storage = get_storage()
+    if not storage.supports("list_audit"):
+        return {"promotions": []}
+    rows = storage.list_audit(action="prompt.promote", limit=500)
+    promotions = [
+        {"ts": r["ts"], "actor": r["actor"], "result": r["result"],
+         "version": (r.get("detail") or {}).get("version"),
+         "env": (r.get("detail") or {}).get("env")}
+        for r in rows if r["target"] == name
+    ][:limit]
+    return {"promotions": promotions}
 
 
 @router.post("/api/prompts/{name}/prune")
