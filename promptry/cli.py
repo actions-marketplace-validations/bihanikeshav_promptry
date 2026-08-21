@@ -86,26 +86,101 @@ def _yaml_suite_path(module: str) -> Optional[Path]:
     return None
 
 
-def _discover_suites(module: str, err: Optional[Console] = None) -> None:
-    """Register eval suites from either a Python module or a YAML file.
-
-    Unifies suite discovery for run/suites/watch/drift: a ``.yaml``/``.yml``
-    --module (or an auto-discovered evals.yaml/promptry.yaml) loads declarative
-    suites; anything else is imported as a dotted Python module. ``err`` routes
-    failure messages (see ``_import_module``).
-    """
-    yaml_path = _yaml_suite_path(module)
-    if yaml_path is None:
-        _import_module(module, err=err)
-        return
-
+def _load_yaml_suite(path: Path, err: Optional[Console] = None) -> None:
     from promptry.yaml_suites import load_yaml_suites, YamlSuiteError
 
     try:
-        load_yaml_suites(yaml_path)
+        load_yaml_suites(path)
     except YamlSuiteError as e:
         (err or console).print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
+
+
+def _load_suite_dir(directory: Path, err: Optional[Console] = None) -> None:
+    """Register every suite file in a directory (sorted, deterministic).
+
+    ``*.py`` files are imported by path (so an ``evals/`` folder needs no
+    ``__init__.py``); ``*.yaml``/``*.yml`` files are loaded declaratively.
+    Dunder/private files (``_*.py``) are skipped so shared helpers don't run
+    as suites.
+    """
+    import importlib.util
+
+    files = sorted(
+        p for p in directory.iterdir()
+        if p.is_file() and (
+            (p.suffix == ".py" and not p.name.startswith("_"))
+            or p.suffix in (".yaml", ".yml")
+        )
+    )
+    if not files:
+        (err or console).print(
+            f"[red]Error:[/red] '{directory.name}/' contains no suite files "
+            f"(*.py, *.yaml)."
+        )
+        raise typer.Exit(1)
+
+    for f in files:
+        if f.suffix in (".yaml", ".yml"):
+            _load_yaml_suite(f, err=err)
+            continue
+        mod_name = f"promptry._evals_dir.{f.stem}"
+        spec = importlib.util.spec_from_file_location(mod_name, f)
+        if spec is None or spec.loader is None:  # pragma: no cover - defensive
+            continue
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as e:  # a broken suite file shouldn't crash cryptically
+            (err or console).print(
+                f"[red]Error:[/red] Failed to load {f.name}: {e}")
+            raise typer.Exit(1)
+
+
+def _discover_suites(module: str, err: Optional[Console] = None) -> None:
+    """Register eval suites from a Python module, a YAML file, or an ``evals/``
+    directory.
+
+    Unifies suite discovery for run/suites/watch/drift. Resolution order when
+    ``--module`` is left at the default ``evals``:
+
+    1. ``evals.py``                                  (imported as a module)
+    2. ``evals.yaml`` / ``promptry.yaml`` (+ ``.yml``) (declarative)
+    3. ``evals/`` directory of ``*.py``/``*.yaml``    (all files registered)
+    4. otherwise a friendly "how to create a suite" message (not a raw
+       ``ModuleNotFoundError`` — the #1 first-run stumble)
+
+    An explicit ``--module`` (a dotted path or a ``.yaml`` file) always takes
+    that literal path. ``err`` routes failure messages (see ``_import_module``).
+    """
+    yaml_path = _yaml_suite_path(module)
+    if yaml_path is not None:
+        _load_yaml_suite(yaml_path, err=err)
+        return
+
+    # Default module with no evals.py file: try an evals/ directory, else still
+    # attempt to import 'evals' (it may be an installed/importable module), and
+    # only fall back to actionable guidance when it's genuinely absent — a
+    # cryptic ModuleNotFoundError is the #1 first-run stumble.
+    if module == "evals" and not (Path.cwd() / "evals.py").is_file():
+        evals_dir = Path.cwd() / "evals"
+        if evals_dir.is_dir():
+            _load_suite_dir(evals_dir, err=err)
+            return
+        import importlib
+        try:
+            importlib.import_module("evals")
+        except ModuleNotFoundError:
+            (err or console).print(
+                "[red]No eval suites found.[/red] Create one with "
+                "[cyan]promptry new suite[/cyan], add an [cyan]evals.py[/cyan] / "
+                "[cyan]evals.yaml[/cyan] / [cyan]evals/[/cyan] directory in this "
+                "folder, or point [cyan]--module[/cyan] at your suite file."
+            )
+            raise typer.Exit(1)
+        return
+
+    _import_module(module, err=err)
 
 
 def _format_and_out(format: str) -> tuple[str, Console]:

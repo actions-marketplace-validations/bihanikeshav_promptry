@@ -571,6 +571,62 @@ suites:
         assert result.exit_code == 0, result.output
         assert "PASS" in result.output
 
+    def test_run_autodiscovers_evals_dir_python(self, tmp_path, monkeypatch):
+        from promptry.cli import app
+        monkeypatch.setenv("PROMPTRY_DB", str(tmp_path / "t.db"))
+        monkeypatch.chdir(tmp_path)
+        evals = tmp_path / "evals"
+        evals.mkdir()
+        # A shared helper (leading underscore) must be skipped, not run as a suite.
+        (evals / "_helpers.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (evals / "smoke.py").write_text(
+            "from promptry import suite\n\n"
+            "@suite('dir-py')\n"
+            "def _s():\n"
+            "    assert True\n",
+            encoding="utf-8",
+        )
+        result = self._runner().invoke(app, ["run", "dir-py"])
+        assert result.exit_code == 0, result.output
+        assert "PASS" in result.output
+
+    def test_run_autodiscovers_evals_dir_yaml(self, tmp_path, monkeypatch):
+        from promptry.cli import app
+        monkeypatch.setenv("PROMPTRY_DB", str(tmp_path / "t.db"))
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "stubdir.py").write_text(
+            "def pipe(x):\n    return 'contains the token'\n", encoding="utf-8",
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        evals = tmp_path / "evals"
+        evals.mkdir()
+        (evals / "a.yaml").write_text("""
+suites:
+  - name: dir-yaml
+    pipeline: stubdir:pipe
+    cases:
+      - input: "x"
+        expect:
+          - contains: "token"
+""", encoding="utf-8")
+        result = self._runner().invoke(app, ["run", "dir-yaml"])
+        assert result.exit_code == 0, result.output
+        assert "PASS" in result.output
+
+    def test_run_no_suites_gives_friendly_guidance(self, tmp_path, monkeypatch):
+        import sys
+        from promptry.cli import app
+        monkeypatch.setenv("PROMPTRY_DB", str(tmp_path / "t.db"))
+        monkeypatch.chdir(tmp_path)
+        # Another test may have leaked an importable 'evals' into sys.modules;
+        # ensure a genuinely-absent module for this first-run scenario.
+        monkeypatch.delitem(sys.modules, "evals", raising=False)
+        # Nothing to discover: no evals.py / evals.yaml / evals/ dir.
+        result = self._runner().invoke(app, ["run", "whatever"])
+        assert result.exit_code == 1
+        assert "No eval suites found" in result.output
+        assert "promptry new suite" in result.output
+
     def test_unknown_assertion_surfaces_as_cli_error(self, tmp_path, monkeypatch):
         from promptry.cli import app
         monkeypatch.setenv("PROMPTRY_DB", str(tmp_path / "t.db"))
