@@ -111,20 +111,16 @@
 </nav>
 
 <!-- ==================== HERO ==================== -->
-<section class="page-head" style="padding-bottom: 0;">
-  <div class="shell">
-    <h1 style="font-size: clamp(23px, 3vw, 30px); margin: 0 0 6px;">LLM price calculator</h1>
-    <p class="pc-note" style="margin: 0; font-size: 13px;">
-      List prices for <b id="pc-model-count">4,600+</b> models from the
-      <a href="https://github.com/BerriAI/litellm" target="_blank" rel="noopener">LiteLLM</a> catalog<span id="pc-updated"></span> — the snapshot promptry bills against.
-      <a href="/docs.html#openai">Track what you actually spend →</a>
-    </p>
-  </div>
-</section>
-
 <!-- ==================== CALCULATOR + OUTPUT ==================== -->
-<section class="section">
+<section class="section" style="padding-top: 54px;">
   <div class="shell">
+    <header style="max-width: 660px; margin: 0 0 30px;">
+      <h1 style="font-size: clamp(24px, 3.2vw, 32px); margin: 0 0 9px; letter-spacing: -0.01em;">LLM price calculator</h1>
+      <p style="margin: 0; color: var(--ink-3); font: 400 14.5px var(--f-sans); line-height: 1.55;">
+        List prices for <b id="pc-model-count" style="color: var(--ink);">4,600+</b> models from the
+        <a href="https://github.com/BerriAI/litellm" target="_blank" rel="noopener">LiteLLM</a> catalog — the snapshot promptry bills against.<span id="pc-updated" style="color: var(--ink-4);"></span>
+      </p>
+    </header>
     <div class="pc-wrap">
       <!-- inputs -->
       <div class="pc-card">
