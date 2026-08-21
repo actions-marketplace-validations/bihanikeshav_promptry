@@ -71,6 +71,22 @@ class TestStorageOps:
         assert storage.purge_old_audit(365) == 1
         assert storage.count_audit() == 1
 
+    def test_purge_old_audit_exempts_security_events(self, storage):
+        # Routine op (prunable) + security events (must be kept forever): auth.*,
+        # user.*, and any non-'ok' outcome are compliance evidence.
+        storage.record_audit("golden.add")                       # routine -> prunable
+        storage.record_audit("auth.login")                       # security -> keep
+        storage.record_audit("user.password_change")             # security -> keep
+        storage.record_audit("auth.login", result="denied")      # failure -> keep
+        storage._conn.execute("UPDATE audit_log SET ts = datetime('now', '-400 days')")
+        storage._conn.commit()
+        assert storage.purge_old_audit(365) == 1                 # only golden.add
+        kept = {e["action"] + ":" + e["result"] for e in storage.list_audit(limit=50)}
+        assert "auth.login:ok" in kept
+        assert "user.password_change:ok" in kept
+        assert "auth.login:denied" in kept
+        assert not any(a.startswith("golden.add") for a in kept)
+
 
 class TestApply:
     def test_apply_runs_configured_steps(self, storage, monkeypatch):

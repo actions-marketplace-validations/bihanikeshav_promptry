@@ -290,32 +290,49 @@ def server_secret() -> str:
         return secrets.token_hex(32)
 
 
-def mint_user_session(user_id: int, *, ttl: int = SESSION_TTL_S) -> str:
-    """Signed value ``u1.<uid>.<exp>.<sig>``. Only the id is embedded; role and
-    active status are resolved live from storage so changes take effect at once."""
+def mint_user_session(user_id: int, token_version: int = 0, *,
+                      ttl: int = SESSION_TTL_S) -> str:
+    """Signed value ``u2.<uid>.<tv>.<exp>.<sig>``. Only id + token_version are
+    embedded; role and active status are resolved live from storage so changes
+    take effect at once. ``token_version`` must match the user's current value
+    at resolve time, so a password change (which bumps it) invalidates every
+    previously-minted cookie."""
     exp = int(time.time()) + int(ttl)
-    payload = f"u1.{int(user_id)}.{exp}"
+    payload = f"u2.{int(user_id)}.{int(token_version)}.{exp}"
     return f"{payload}.{_sign(payload, server_secret())}"
 
 
-def parse_user_session(value: str) -> Optional[int]:
-    """Return the user id from a valid, unexpired session, else None."""
+def _parse_session(value: str) -> Optional[tuple[int, int]]:
+    """Return (user_id, token_version) from a valid, unexpired session, else
+    None. Accepts the legacy ``u1.<uid>.<exp>.<sig>`` format (token_version 0)
+    so cookies minted before this change keep working until they expire or the
+    user's password changes."""
     if not value:
         return None
     parts = value.split(".")
-    if len(parts) != 4 or parts[0] != "u1":
-        return None
     try:
-        uid = int(parts[1])
-        exp = int(parts[2])
+        if parts[0] == "u1" and len(parts) == 4:
+            uid, exp, sig = int(parts[1]), int(parts[2]), parts[3]
+            tv, payload = 0, f"u1.{parts[1]}.{parts[2]}"
+        elif parts[0] == "u2" and len(parts) == 5:
+            uid, tv, exp, sig = int(parts[1]), int(parts[2]), int(parts[3]), parts[4]
+            payload = f"u2.{parts[1]}.{parts[2]}.{parts[3]}"
+        else:
+            return None
     except ValueError:
         return None
     if exp < int(time.time()):
         return None
-    payload = f"u1.{parts[1]}.{parts[2]}"
-    if not hmac.compare_digest(parts[3], _sign(payload, server_secret())):
+    if not hmac.compare_digest(sig, _sign(payload, server_secret())):
         return None
-    return uid
+    return uid, tv
+
+
+def parse_user_session(value: str) -> Optional[int]:
+    """Return the user id from a valid, unexpired session, else None. (Does not
+    check token_version — resolve_actor does that against live storage.)"""
+    parsed = _parse_session(value)
+    return parsed[0] if parsed else None
 
 
 def _get_storage():
@@ -357,13 +374,16 @@ def resolve_actor(request: Request) -> Actor:
     # 1) A signed user-session cookie (multi-user) — role/active resolved live.
     cookie = request.cookies.get(USER_COOKIE_NAME)
     if cookie and storage is not None:
-        uid = parse_user_session(cookie)
-        if uid is not None:
+        parsed = _parse_session(cookie)
+        if parsed is not None:
+            uid, tv = parsed
             try:
                 u = storage.get_user_by_id(uid)
             except (NotImplementedError, Exception):
                 u = None
-            if u and u.get("is_active", 1):
+            # Reject a cookie whose token_version is behind the account's — i.e.
+            # one minted before the user's last password change.
+            if u and u.get("is_active", 1) and tv == int(u.get("token_version", 0)):
                 return Actor("user", role=u.get("role", "viewer"),
                              user_id=u["id"], email=u.get("email"))
 

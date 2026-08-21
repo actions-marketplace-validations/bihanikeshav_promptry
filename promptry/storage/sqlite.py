@@ -277,6 +277,12 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "CREATE INDEX IF NOT EXISTS idx_feedback_created "
         "ON feedback(created_at)",
     ]),
+    (13, "users.token_version for password-change session invalidation", [
+        # Bumped whenever a user's password changes; a session cookie carries the
+        # version it was minted at, so old cookies stop validating after a
+        # password reset even though the signing key is unchanged.
+        "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0",
+    ]),
 ]
 
 
@@ -1912,6 +1918,9 @@ class SQLiteStorage(BaseStorage):
         if password_hash is not None:
             sets.append("password_hash = ?")
             params.append(password_hash)
+            # Invalidate every existing session for this user: any cookie minted
+            # at the old version stops validating (see auth.mint_user_session).
+            sets.append("token_version = token_version + 1")
         if not sets:
             return False
         params.append(user_id)
@@ -2036,8 +2045,16 @@ class SQLiteStorage(BaseStorage):
     def purge_old_audit(self, days: int) -> int:
         cutoff = f"-{int(days)} days"
         with self._lock:
+            # Security/compliance events are never aged out, even under a
+            # retention policy: authentication (auth.*), account management
+            # (user.*), and any non-'ok' outcome (denied/failed attempts) are
+            # the trail an investigation needs long after routine ops rows
+            # (feedback, golden, prices) can be pruned.
             cur = self._conn.execute(
-                "DELETE FROM audit_log WHERE ts < datetime('now', ?)",
+                "DELETE FROM audit_log WHERE ts < datetime('now', ?) "
+                "AND result = 'ok' "
+                "AND action NOT LIKE 'auth.%' "
+                "AND action NOT LIKE 'user.%'",
                 (cutoff,),
             )
             self._conn.commit()

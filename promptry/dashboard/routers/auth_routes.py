@@ -103,7 +103,7 @@ def login(body: LoginBody, request: Request, response: Response):
             return JSONResponse(status_code=401,
                                 content={"ok": False, "detail": "invalid credentials"})
         authlib.login_throttle.reset(throttle_key)
-        session = authlib.mint_user_session(user["id"])
+        session = authlib.mint_user_session(user["id"], user.get("token_version", 0))
         response.set_cookie(value=session,
                             **authlib.session_cookie_kwargs(request,
                                                             key=authlib.USER_COOKIE_NAME))
@@ -185,7 +185,7 @@ def oidc_callback(request: Request, code: str = "", state: str = ""):
 
     storage = get_storage()
     user = oidc.provision_user(storage, cfg, claims)
-    session = authlib.mint_user_session(user["id"])
+    session = authlib.mint_user_session(user["id"], user.get("token_version", 0))
     resp = RedirectResponse(st["next"], status_code=302)
     resp.set_cookie(value=session,
                     **authlib.session_cookie_kwargs(request,

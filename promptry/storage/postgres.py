@@ -83,7 +83,7 @@ _SCHEMA = [
         id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT,
         password_hash TEXT, role TEXT NOT NULL DEFAULT 'viewer',
         is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (%s),
-        last_login_at TEXT)""" % _TS_DEFAULT,
+        last_login_at TEXT, token_version INTEGER NOT NULL DEFAULT 0)""" % _TS_DEFAULT,
     """CREATE TABLE IF NOT EXISTS user_identities (
         id BIGSERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

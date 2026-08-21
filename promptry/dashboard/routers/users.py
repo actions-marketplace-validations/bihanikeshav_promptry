@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
 
 from promptry.dashboard import auth as authlib
@@ -66,6 +66,9 @@ class UpdateUser(BaseModel):
 
 class SetPassword(BaseModel):
     password: str = Field(..., min_length=8)
+    # Required when changing your OWN password (proves possession, not just a
+    # hijacked session). Ignored for an admin resetting someone else's account.
+    current_password: Optional[str] = None
 
 
 def _require_admin_or_bootstrap(request: Request) -> authlib.Actor:
@@ -143,16 +146,41 @@ def update_user(user_id: int, body: UpdateUser, request: Request,
 
 
 @router.post("/api/users/{user_id}/password")
-def set_password(user_id: int, body: SetPassword, request: Request):
+def set_password(user_id: int, body: SetPassword, request: Request,
+                 response: Response):
     storage = _storage()
     actor = authlib.current_actor(request)
     # Admins may reset anyone; a user may change their own password.
     if not (authlib.role_at_least(actor, "admin") or actor.user_id == user_id):
         raise HTTPException(403, detail="not permitted")
-    if not storage.get_user_by_id(user_id):
+    target = storage.get_user_by_id(user_id)
+    if not target:
         raise HTTPException(404, detail="user not found")
+
+    # Self-service change (changing your OWN password) must prove possession of
+    # the current one — an admin resetting someone else's account does not.
+    is_self = actor.user_id == user_id
+    if is_self and target.get("password_hash"):
+        if not body.current_password:
+            raise HTTPException(422, detail="current_password required")
+        if not authlib.verify_password(body.current_password,
+                                       target.get("password_hash")):
+            _audit(request, actor, "user.password_change", target=user_id,
+                   result="denied")
+            raise HTTPException(403, detail="current password is incorrect")
+
     storage.update_user(user_id, password_hash=authlib.hash_password(body.password))
     _audit(request, actor, "user.password_change", target=user_id)
+
+    # The password bump invalidates every session for this user (see
+    # update_user). Re-mint the caller's own cookie at the new version so a
+    # self-service change doesn't log them out of the session they're using,
+    # while all their other sessions still die.
+    if is_self:
+        fresh = storage.get_user_by_id(user_id)
+        session = authlib.mint_user_session(user_id, fresh.get("token_version", 0))
+        response.set_cookie(value=session, **authlib.session_cookie_kwargs(
+            request, key=authlib.USER_COOKIE_NAME))
     return {"ok": True}
 
 

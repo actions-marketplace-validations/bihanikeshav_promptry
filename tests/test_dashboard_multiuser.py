@@ -145,11 +145,44 @@ class TestRBAC:
     def test_user_can_change_own_password_not_others(self, client):
         self._admin_then_viewer(client)  # logged in as viewer (id 2)
         me = client.get("/api/auth/me").json()
+        # A self-service change must supply the correct current password.
         assert client.post(f"/api/users/{me['user_id']}/password",
-                           json={"password": "new-viewer-pass"}).status_code == 200
+                           json={"password": "new-viewer-pass"}).status_code == 422
+        assert client.post(f"/api/users/{me['user_id']}/password",
+                           json={"password": "new-viewer-pass",
+                                 "current_password": "wrong"}).status_code == 403
+        assert client.post(f"/api/users/{me['user_id']}/password",
+                           json={"password": "new-viewer-pass",
+                                 "current_password": "viewer-pass-1"}).status_code == 200
         # cannot change the admin's (id 1) password
         assert client.post("/api/users/1/password",
                            json={"password": "hijacked1"}).status_code == 403
+
+    def test_password_change_invalidates_other_sessions(self, client):
+        from starlette.testclient import TestClient
+        email, pw = _bootstrap_admin(client)
+        _login(client, email, pw)
+        client.post("/api/users", json={"email": "s@b.com",
+                                        "password": "sess-pass-1", "role": "viewer"})
+        # Two independent sessions (clients) for the same user.
+        c1 = TestClient(client.app)
+        c2 = TestClient(client.app)
+        _login(c1, "s@b.com", "sess-pass-1")
+        _login(c2, "s@b.com", "sess-pass-1")
+        assert c1.get("/api/auth/me").json()["email"] == "s@b.com"
+        assert c2.get("/api/auth/me").json()["email"] == "s@b.com"
+        # c1 changes the password; c2's older cookie must stop authenticating,
+        # while c1 stays logged in via a re-minted cookie.
+        me = c1.get("/api/auth/me").json()
+        assert c1.post(f"/api/users/{me['user_id']}/password",
+                       json={"password": "sess-pass-2",
+                             "current_password": "sess-pass-1"}).status_code == 200
+        # c1's cookie was re-minted at the new version -> still the same user.
+        assert c1.get("/api/auth/me").json()["user_id"] == me["user_id"]
+        # c2's stale cookie no longer resolves to the user (invalidated), so a
+        # gated endpoint rejects it and /me resolves to anonymous.
+        assert c2.get("/api/auth/me").json()["user_id"] is None
+        assert c2.get("/api/users").status_code == 401
 
 
 class TestLastAdminProtection:
