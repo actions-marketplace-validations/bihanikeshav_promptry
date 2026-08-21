@@ -18,6 +18,7 @@ on:
     paths:
       - "docs/**"
       - "dashboard-ui/**"
+      - "prices.json"
       - ".github/workflows/deploy-pages.yml"
   release:
     types: [published]
@@ -51,6 +52,11 @@ jobs:
         run: |
           npm ci
           npm run build:demo   # DEMO=1 -> base /demo/, outputs to ../docs/demo
+
+      - name: Refresh the public price feed into the site
+        # Keep /prices.json (what the pricing page + calculator fetch) in sync
+        # with the canonical feed that update-prices.yml commits at the repo root.
+        run: cp prices.json docs/prices.json
 
       - name: Upload the docs/ site as the Pages artifact
         uses: actions/upload-pages-artifact@v3

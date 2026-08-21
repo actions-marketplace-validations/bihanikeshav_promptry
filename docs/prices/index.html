@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>promptry · LLM price calculator</title>
+<meta name="description" content="Live pricing for 4,600+ LLMs and a quick cost calculator — input/output/cached tokens per call and per month, across OpenAI, Anthropic, Gemini, and more. Then track what you actually spend with promptry." />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Fraunces:ital,opsz,wght@0,9..144,400;1,9..144,400;1,9..144,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+<script defer src="/site-meta.js"></script>
+<script>
+  (function () {
+    var html = document.documentElement;
+    function reveal() { html.classList.add('fonts-ready'); }
+    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(reveal); setTimeout(reveal, 1000); }
+    else { reveal(); }
+  })();
+</script>
+<style>
+  /* ---- prices page, built on the site's theme tokens ---- */
+  .pc-wrap { display: grid; grid-template-columns: 1.05fr 1fr; gap: 28px; align-items: start; }
+  @media (max-width: 900px) { .pc-wrap { grid-template-columns: 1fr; } }
+  .pc-card {
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--bg-1);
+    padding: 24px;
+  }
+  .pc-card h3 { font: 600 15px var(--f-mono); color: var(--ink-3); margin: 0 0 18px; letter-spacing: .04em; }
+  .pc-field { margin-bottom: 16px; position: relative; }
+  .pc-field label { display: block; font: 500 12px var(--f-mono); color: var(--ink-3); margin-bottom: 6px; }
+  .pc-input, .pc-combo input {
+    width: 100%; box-sizing: border-box;
+    background: var(--bg-2); color: var(--ink);
+    border: 1px solid var(--line-2); border-radius: var(--r-sm);
+    padding: 10px 12px; font: 500 14px var(--f-mono);
+  }
+  .pc-input:focus, .pc-combo input:focus { outline: none; border-color: var(--accent); }
+  .pc-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  /* combobox dropdown */
+  .pc-combo { position: relative; }
+  .pc-menu {
+    position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px);
+    max-height: 260px; overflow-y: auto;
+    background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-sm);
+    box-shadow: 0 12px 32px rgba(0,0,0,.28); display: none;
+  }
+  .pc-menu.open { display: block; }
+  .pc-opt { padding: 8px 12px; font: 500 13px var(--f-mono); color: var(--ink-2); cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
+  .pc-opt:hover, .pc-opt.active { background: color-mix(in oklab, var(--accent) 14%, var(--bg-2)); color: var(--ink); }
+  .pc-opt .pc-opt-price { color: var(--ink-4); }
+  /* results */
+  .pc-out { display: grid; gap: 10px; }
+  .pc-out-row { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-2); }
+  .pc-out-row .k { font: 500 12.5px var(--f-mono); color: var(--ink-3); }
+  .pc-out-row .v { font: 600 18px var(--f-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .pc-out-row.big { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 10%, var(--bg-2)); }
+  .pc-out-row.big .v { color: var(--accent); font-size: 22px; }
+  .pc-breakdown { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 4px; font: 500 12px var(--f-mono); color: var(--ink-4); }
+  .pc-breakdown b { color: var(--ink-3); font-weight: 600; }
+  /* table */
+  .pc-tablewrap { border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; margin-top: 40px; }
+  .pc-tabletop { display: flex; gap: 12px; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .pc-tabletop .pc-input { max-width: 340px; }
+  .pc-count { font: 500 12px var(--f-mono); color: var(--ink-4); margin-left: auto; }
+  .pc-scroll { max-height: 520px; overflow: auto; }
+  table.pc-table { width: 100%; border-collapse: collapse; font: 500 13px var(--f-mono); }
+  table.pc-table th, table.pc-table td { text-align: right; padding: 9px 16px; border-bottom: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  table.pc-table th { position: sticky; top: 0; background: var(--bg-1); color: var(--ink-3); font-weight: 600; font-size: 11.5px; z-index: 1; }
+  table.pc-table td:first-child, table.pc-table th:first-child { text-align: left; color: var(--ink); }
+  table.pc-table tr:hover td { background: var(--bg-2); }
+  .pc-note { font: 500 12px var(--f-mono); color: var(--ink-4); margin-top: 12px; }
+  /* CTA */
+  .pc-cta { margin-top: 44px; border: 1px solid var(--accent); border-radius: var(--r-lg);
+    background: radial-gradient(circle at 12% 0%, color-mix(in oklab, var(--accent) 12%, transparent), transparent 55%), var(--bg-1);
+    padding: 32px; display: grid; grid-template-columns: 1.2fr 1fr; gap: 28px; align-items: center; }
+  @media (max-width: 820px) { .pc-cta { grid-template-columns: 1fr; } }
+  .pc-cta h2 { font-family: var(--f-serif); font-weight: 400; font-size: clamp(24px, 3vw, 32px); margin: 0 0 12px; }
+  .pc-cta p { color: var(--ink-2); margin: 0 0 20px; max-width: 46ch; }
+  .pc-code { background: var(--bg-3); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 16px; font: 500 13px var(--f-mono); color: var(--ink-2); overflow-x: auto; white-space: pre; line-height: 1.6; }
+  .pc-code .c1 { color: var(--ink-4); }
+  .pc-code .c2 { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- ==================== NAV ==================== -->
+<nav class="nav">
+  <div class="shell nav-inner">
+    <a class="brand" href="/">
+      <span class="brand-mark"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1a1a1e"/><text x="0" y="27" class="logo-p">p</text><text x="15" y="27" class="logo-r">r</text></svg></span>
+      <span class="brand-name"><b>prompt<span class="ry">ry</span></b></span>
+      <span class="ver">v1.1.0</span>
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="/#features">Features</a>
+      <a href="/prices/" class="active">Pricing</a>
+      <a href="/docs.html">Docs</a>
+      <a href="/architecture.html">Architecture</a>
+    </div>
+    <div class="nav-meta">
+      <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
+        <svg class="sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" /></svg>
+        <svg class="moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
+      </button>
+      <a class="nav-cta" href="https://github.com/promptry/promptry" data-gh="">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ==================== HERO ==================== -->
+<section class="page-head">
+  <div class="shell">
+    <div class="sec-kicker">~/pricing</div>
+    <h1 class="h1" style="font-size: clamp(34px, 5vw, 52px); margin: 14px 0 14px; max-width: 20ch;">
+      What does a single call <em>actually</em> cost?
+    </h1>
+    <p class="hero-sub" style="max-width: 60ch;">
+      Live list prices for <b id="pc-model-count">4,600+</b> models, straight from the
+      <a href="https://github.com/BerriAI/litellm" target="_blank" rel="noopener">LiteLLM</a> catalog — the same snapshot promptry bills against. Punch in your tokens below.
+      <span id="pc-updated" class="mono" style="color: var(--ink-4);"></span>
+    </p>
+  </div>
+</section>
+
+<!-- ==================== CALCULATOR + OUTPUT ==================== -->
+<section class="section">
+  <div class="shell">
+    <div class="pc-wrap">
+      <!-- inputs -->
+      <div class="pc-card">
+        <h3># estimate a workload</h3>
+        <div class="pc-field">
+          <label for="pc-model">Model</label>
+          <div class="pc-combo">
+            <input id="pc-model" type="text" autocomplete="off" placeholder="Search 4,600+ models…" value="gpt-4o" />
+            <div class="pc-menu" id="pc-menu"></div>
+          </div>
+        </div>
+        <div class="pc-row">
+          <div class="pc-field">
+            <label for="pc-in">Input tokens / call</label>
+            <input id="pc-in" class="pc-input" type="number" min="0" step="50" value="1000" />
+          </div>
+          <div class="pc-field">
+            <label for="pc-out">Output tokens / call</label>
+            <input id="pc-out" class="pc-input" type="number" min="0" step="50" value="300" />
+          </div>
+        </div>
+        <div class="pc-row">
+          <div class="pc-field">
+            <label for="pc-calls">Calls / month</label>
+            <input id="pc-calls" class="pc-input" type="number" min="0" step="1000" value="100000" />
+          </div>
+          <div class="pc-field">
+            <label for="pc-cache">Input from cache (%)</label>
+            <input id="pc-cache" class="pc-input" type="number" min="0" max="100" step="5" value="0" />
+          </div>
+        </div>
+      </div>
+
+      <!-- outputs -->
+      <div class="pc-card">
+        <h3># cost <span id="pc-model-echo" style="color: var(--accent);"></span></h3>
+        <div class="pc-out">
+          <div class="pc-out-row"><span class="k">Per call</span><span class="v" id="pc-cost-call">—</span></div>
+          <div class="pc-out-row"><span class="k">Per 1,000 calls</span><span class="v" id="pc-cost-1k">—</span></div>
+          <div class="pc-out-row big"><span class="k">Per month</span><span class="v" id="pc-cost-month">—</span></div>
+        </div>
+        <div class="pc-breakdown">
+          <span>input <b id="pc-b-in">—</b></span>
+          <span>output <b id="pc-b-out">—</b></span>
+          <span>rate <b id="pc-b-rate">—</b></span>
+        </div>
+        <p class="pc-note" style="margin-top: 18px;">
+          These are provider <b>list</b> prices. Real bills swing with prompt-cache hits, retries, and tool loops —
+          <a href="/docs.html#openai">promptry records the number you're actually charged →</a>
+        </p>
+      </div>
+    </div>
+
+    <!-- price table -->
+    <div class="pc-tablewrap">
+      <div class="pc-tabletop">
+        <input id="pc-search" class="pc-input" type="search" placeholder="Filter models — e.g. claude, gpt-4o, gemini…" />
+        <span class="pc-count" id="pc-tablecount"></span>
+      </div>
+      <div class="pc-scroll">
+        <table class="pc-table">
+          <thead>
+            <tr><th>Model</th><th>Input $/1M</th><th>Cached $/1M</th><th>Output $/1M</th></tr>
+          </thead>
+          <tbody id="pc-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <p class="pc-note">Prices in USD per 1,000,000 tokens. Cached = input served from the provider's prompt cache. A blank cell means the provider doesn't publish that rate.</p>
+
+    <!-- CTA -->
+    <div class="pc-cta">
+      <div>
+        <h2>Stop estimating. Start measuring.</h2>
+        <p>A calculator guesses. promptry logs every real call — cost, tokens, the cached-token split, and which prompt spent it — from a one-line import. One SQLite file, no account.</p>
+        <div class="cta-row">
+          <a class="btn primary" href="/docs.html#openai">The 30-second setup
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+          </a>
+          <a class="btn" href="/">What is promptry?</a>
+        </div>
+      </div>
+      <div class="pc-code"><span class="c1"># every call priced automatically</span>
+<span class="c2">from</span> promptry.openai <span class="c2">import</span> OpenAI
+client = OpenAI()
+client.chat.completions.create(…)</div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="shell">
+    <div class="foot-bottom">
+      <span>MIT License · © 2026 Keshav · prices via LiteLLM (MIT)</span>
+      <span class="ver">v1.1.0</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // ---- theme + nav (same behavior as the other pages) ----
+  (function () {
+    var root = document.documentElement;
+    var saved = null;
+    try { saved = localStorage.getItem('promptry-theme'); } catch (e) {}
+    if (saved) root.setAttribute('data-theme', saved);
+    function syncIcons() {
+      var dark = root.getAttribute('data-theme') !== 'light';
+      var s = document.querySelector('.theme-toggle .sun'), m = document.querySelector('.theme-toggle .moon');
+      if (s) s.style.display = dark ? '' : 'none';
+      if (m) m.style.display = dark ? 'none' : '';
+    }
+    syncIcons();
+    var t = document.getElementById('theme-toggle');
+    if (t) t.addEventListener('click', function () {
+      var next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('promptry-theme', next); } catch (e) {}
+      syncIcons();
+    });
+  })();
+
+  // ---- prices calculator ----
+  (function () {
+    var RATES = {}, NAMES = [];
+    var fmtUSD = function (n) {
+      if (n === 0) return '$0';
+      if (n < 0.01) return '$' + n.toFixed(5);
+      if (n < 1) return '$' + n.toFixed(4);
+      if (n < 1000) return '$' + n.toFixed(2);
+      return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    };
+    var rate1M = function (n) { return (n === undefined || n === null) ? '' : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 4 }); };
+
+    var el = function (id) { return document.getElementById(id); };
+    var modelInput = el('pc-model'), menu = el('pc-menu');
+    var selected = 'gpt-4o';
+
+    function currentRate() { return RATES[selected] || RATES[modelInput.value] || null; }
+
+    function compute() {
+      var r = currentRate();
+      var echo = el('pc-model-echo'); echo.textContent = r ? '· ' + selected : '';
+      if (!r) {
+        el('pc-cost-call').textContent = el('pc-cost-1k').textContent = el('pc-cost-month').textContent = '—';
+        el('pc-b-in').textContent = el('pc-b-out').textContent = el('pc-b-rate').textContent = '—';
+        return;
+      }
+      var ti = Math.max(0, +el('pc-in').value || 0);
+      var to = Math.max(0, +el('pc-out').value || 0);
+      var calls = Math.max(0, +el('pc-calls').value || 0);
+      var cf = Math.min(100, Math.max(0, +el('pc-cache').value || 0)) / 100;
+      var inRate = r.in || 0, cachedRate = (r.cached !== undefined ? r.cached : r.in) || 0, outRate = r.out || 0;
+      var inCost = (ti * (1 - cf) / 1e6) * inRate + (ti * cf / 1e6) * cachedRate;
+      var outCost = (to / 1e6) * outRate;
+      var perCall = inCost + outCost;
+      el('pc-cost-call').textContent = fmtUSD(perCall);
+      el('pc-cost-1k').textContent = fmtUSD(perCall * 1000);
+      el('pc-cost-month').textContent = fmtUSD(perCall * calls);
+      el('pc-b-in').textContent = fmtUSD(inCost * calls) + '/mo';
+      el('pc-b-out').textContent = fmtUSD(outCost * calls) + '/mo';
+      el('pc-b-rate').textContent = rate1M(inRate) + ' in · ' + rate1M(outRate) + ' out /1M';
+    }
+
+    // combobox
+    var activeIdx = -1, shown = [];
+    function renderMenu(q) {
+      q = (q || '').toLowerCase().trim();
+      shown = (q ? NAMES.filter(function (n) { return n.toLowerCase().indexOf(q) !== -1; }) : NAMES).slice(0, 40);
+      menu.innerHTML = shown.map(function (n, i) {
+        var r = RATES[n];
+        return '<div class="pc-opt" data-i="' + i + '"><span>' + n + '</span><span class="pc-opt-price">' + rate1M(r.in) + ' / ' + rate1M(r.out) + '</span></div>';
+      }).join('');
+      activeIdx = -1;
+      menu.classList.toggle('open', shown.length > 0);
+    }
+    function choose(n) { selected = n; modelInput.value = n; menu.classList.remove('open'); compute(); }
+
+    modelInput.addEventListener('input', function () { renderMenu(modelInput.value); });
+    modelInput.addEventListener('focus', function () { renderMenu(modelInput.value); });
+    modelInput.addEventListener('keydown', function (e) {
+      if (!menu.classList.contains('open')) return;
+      if (e.key === 'ArrowDown') { activeIdx = Math.min(shown.length - 1, activeIdx + 1); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') { activeIdx = Math.max(0, activeIdx - 1); e.preventDefault(); }
+      else if (e.key === 'Enter') { if (activeIdx >= 0) { choose(shown[activeIdx]); e.preventDefault(); } }
+      else if (e.key === 'Escape') { menu.classList.remove('open'); return; }
+      [].forEach.call(menu.children, function (c, i) { c.classList.toggle('active', i === activeIdx); });
+    });
+    menu.addEventListener('mousedown', function (e) {
+      var opt = e.target.closest('.pc-opt'); if (opt) { choose(shown[+opt.getAttribute('data-i')]); }
+    });
+    document.addEventListener('click', function (e) { if (!e.target.closest('.pc-combo')) menu.classList.remove('open'); });
+    ['pc-in', 'pc-out', 'pc-calls', 'pc-cache'].forEach(function (id) { el(id).addEventListener('input', compute); });
+
+    // table
+    var tbody = el('pc-tbody'), search = el('pc-search'), count = el('pc-tablecount');
+    var CAP = 150;
+    function renderTable(q) {
+      q = (q || '').toLowerCase().trim();
+      var matches = q ? NAMES.filter(function (n) { return n.toLowerCase().indexOf(q) !== -1; }) : NAMES;
+      var rows = matches.slice(0, CAP).map(function (n) {
+        var r = RATES[n];
+        return '<tr><td>' + n + '</td><td>' + rate1M(r.in) + '</td><td>' + rate1M(r.cached) + '</td><td>' + rate1M(r.out) + '</td></tr>';
+      }).join('');
+      tbody.innerHTML = rows || '<tr><td colspan="4" style="color:var(--ink-4)">no models match “' + q + '”</td></tr>';
+      count.textContent = 'showing ' + Math.min(matches.length, CAP) + ' of ' + matches.length.toLocaleString('en-US') + (matches.length > CAP ? ' (refine to see more)' : '');
+    }
+    search.addEventListener('input', function () { renderTable(search.value); });
+
+    // load the feed
+    fetch('/prices.json').then(function (r) { return r.json(); }).then(function (d) {
+      RATES = d.rates || {};
+      NAMES = Object.keys(RATES).sort();
+      el('pc-model-count').textContent = NAMES.length.toLocaleString('en-US');
+      if (d.updated) el('pc-updated').textContent = ' Updated ' + d.updated.slice(0, 10) + '.';
+      compute();
+      renderTable('');
+    }).catch(function () {
+      el('pc-cost-month').textContent = 'feed unavailable';
+      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--ink-4)">Could not load the price feed. Try again shortly.</td></tr>';
+    });
+  })();
+</script>
+</body>
+</html>
