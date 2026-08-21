@@ -15,7 +15,7 @@ Two public entry points:
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Optional
 
 import yaml
@@ -72,7 +72,11 @@ def safe_suite_path(user_path, root, default_name: str = "evals.yaml") -> Path:
     if not user_path:
         return root / default_name
     p = Path(user_path)
-    if p.is_absolute():
+    # Reject absolute paths under BOTH path flavours, not just the host's: on
+    # POSIX, Path("C:\\Windows\\x") is a (bizarre) relative name and slips the
+    # native is_absolute() check, so a drive-letter or UNC path would otherwise
+    # be accepted on a Linux server. PureWindowsPath catches both.
+    if p.is_absolute() or PureWindowsPath(user_path).is_absolute():
         raise SuiteInputError("output path must be relative to the project directory")
     if any(part.startswith(".") for part in p.parts):
         raise SuiteInputError(
