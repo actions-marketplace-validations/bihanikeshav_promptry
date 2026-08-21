@@ -87,6 +87,8 @@ def test_safe_path_accepts_within_tree(tmp_path):
 def test_mcp_rejects_pipeline_and_writes_nothing(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PROMPTRY_ALLOW_API_PIPELINE", raising=False)
+    pytest.importorskip("mcp.server.fastmcp",
+                        reason="mcp with FastMCP (>=1.2) not installed")
     from promptry.mcp_server import create_eval_suite
 
     res = create_eval_suite(
@@ -99,6 +101,8 @@ def test_mcp_rejects_pipeline_and_writes_nothing(tmp_path, monkeypatch):
 
 def test_mcp_rejects_path_escape(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    pytest.importorskip("mcp.server.fastmcp",
+                        reason="mcp with FastMCP (>=1.2) not installed")
     from promptry.mcp_server import create_eval_suite
 
     res = create_eval_suite(
@@ -111,6 +115,8 @@ def test_mcp_rejects_path_escape(tmp_path, monkeypatch):
 
 def test_mcp_normal_suite_still_works(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    pytest.importorskip("mcp.server.fastmcp",
+                        reason="mcp with FastMCP (>=1.2) not installed")
     from promptry.mcp_server import create_eval_suite
 
     res = create_eval_suite(

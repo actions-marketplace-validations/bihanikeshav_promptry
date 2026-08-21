@@ -119,10 +119,27 @@ def _top_package(module_name: str) -> str:
     return (module_name or "").split(".", 1)[0]
 
 
-def _qualname(code) -> str:
-    # co_qualname (3.11+) already encodes class/closure nesting; fall back to
-    # co_name on older interpreters.
-    return getattr(code, "co_qualname", None) or code.co_name
+def _qualname(code, frame=None) -> str:
+    # co_qualname (3.11+) already encodes class/closure nesting. On 3.10 it does
+    # not exist, so reconstruct "Class.method" from the frame when the code is a
+    # bound/class method (first arg self/cls) — otherwise the inferred name would
+    # silently drop the class on our lowest supported interpreter, forking a
+    # prompt's identity between 3.10 and 3.11+. Plain functions keep their bare
+    # co_name (co_qualname would too, sans nesting we can't recover here).
+    q = getattr(code, "co_qualname", None)
+    if q:
+        return q
+    name = code.co_name
+    if frame is not None and code.co_varnames:
+        first = code.co_varnames[0]
+        if first in ("self", "cls"):
+            obj = frame.f_locals.get(first)
+            if obj is not None:
+                klass = obj if first == "cls" else type(obj)
+                klass_name = getattr(klass, "__name__", None)
+                if klass_name:
+                    return f"{klass_name}.{name}"
+    return name
 
 
 def _is_repl(filename: str) -> bool:
@@ -168,7 +185,7 @@ def _infer_from_stack() -> str:
         cached = _cache_get(code)
         if cached is not None:
             return cached
-        name = f"{module}:{_qualname(code)}" if module else _qualname(code)
+        name = f"{module}:{_qualname(code, frame)}" if module else _qualname(code, frame)
         _cache_set(code, name)
         return name
     return "unnamed"

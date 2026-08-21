@@ -5,7 +5,9 @@ they return the expected plain-text results.
 """
 import pytest
 
-mcp_mod = pytest.importorskip("mcp", reason="mcp package not installed")
+mcp_mod = pytest.importorskip(
+    "mcp.server.fastmcp",
+    reason="mcp with FastMCP (>=1.2) not installed")
 
 from promptry.config import reset_config
 from promptry.storage import reset_storage
