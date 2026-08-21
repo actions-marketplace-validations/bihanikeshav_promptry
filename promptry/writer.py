@@ -24,6 +24,22 @@ from promptry.storage.base import BaseStorage
 log = logging.getLogger(__name__)
 
 
+def _retryable_errors() -> tuple[type[BaseException], ...]:
+    """Transient DB errors worth retrying — SQLite's OperationalError always,
+    plus psycopg's when it's installed (the AsyncWriter can wrap the Postgres
+    backend, whose transient errors would otherwise be dropped with no retry)."""
+    errs: list[type[BaseException]] = [sqlite3.OperationalError]
+    try:
+        import psycopg
+        errs.append(psycopg.OperationalError)
+    except Exception:
+        pass
+    return tuple(errs)
+
+
+_RETRYABLE_ERRORS = _retryable_errors()
+
+
 @dataclass
 class WriteOp:
     """A queued write operation."""
@@ -95,17 +111,17 @@ class AsyncWriter(BaseStorage):
                 self._queue.task_done()
 
     def _run_with_retry(self, op: "WriteOp", attempts: int = 3):
-        """Run one queued write, retrying only a transient 'database is locked'.
-
-        Retrying an IntegrityError (or any logic error) just delays the drain,
-        so only sqlite3.OperationalError is retried.
+        """Run one queued write, retrying only transient DB errors (SQLite
+        'database is locked', or a Postgres OperationalError when the AsyncWriter
+        wraps the Postgres backend). Retrying an IntegrityError (or any logic
+        error) just delays the drain, so only OperationalError is retried.
         """
         method = getattr(self._storage, op.method)
         for i in range(attempts):
             try:
                 method(*op.args, **op.kwargs)
                 return
-            except sqlite3.OperationalError:
+            except _RETRYABLE_ERRORS:
                 if i == attempts - 1:
                     raise
                 time.sleep(0.05 * (i + 1))

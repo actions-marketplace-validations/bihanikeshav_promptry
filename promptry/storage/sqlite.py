@@ -265,6 +265,18 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "ON invocations(json_extract(metadata, '$.trace_id')) "
         "WHERE json_valid(metadata)",
     ]),
+    (12, "composite indexes for the hot dashboard read paths", [
+        # Per-prompt cost/latency drill-down filters by (prompt_name, created_at)
+        # together; a composite index avoids a single-column scan + filter.
+        "CREATE INDEX IF NOT EXISTS idx_invocations_name_created "
+        "ON invocations(prompt_name, created_at)",
+        # Suite history / drift / bisect scan a suite's runs newest-first.
+        "CREATE INDEX IF NOT EXISTS idx_eval_runs_suite_time "
+        "ON eval_runs(suite_name, timestamp)",
+        # Feedback stats aggregate by date; there was no index on created_at.
+        "CREATE INDEX IF NOT EXISTS idx_feedback_created "
+        "ON feedback(created_at)",
+    ]),
 ]
 
 
@@ -333,6 +345,12 @@ class SQLiteStorage(BaseStorage):
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
+        # synchronous=NORMAL is safe under WAL (a crash can lose the last commit
+        # but never corrupt the DB) and removes an fsync per write — a large
+        # throughput win for a capture-heavy, multi-writer workload. A 64MB page
+        # cache keeps hot indexes resident for the dashboard's read queries.
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-64000")
         conn.row_factory = row_type
         return conn
 

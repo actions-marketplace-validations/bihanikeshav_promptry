@@ -24,6 +24,7 @@ semantics across both backends.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import threading
@@ -105,6 +106,9 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_datasets_name ON datasets(name)",
     "CREATE INDEX IF NOT EXISTS idx_invocations_name ON invocations(prompt_name)",
     "CREATE INDEX IF NOT EXISTS idx_invocations_created ON invocations(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_invocations_name_created ON invocations(prompt_name, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_eval_runs_suite_time ON eval_runs(suite_name, timestamp)",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_invocations_request ON invocations(request_id)",
     "CREATE INDEX IF NOT EXISTS idx_invocations_model_created ON invocations(model, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_invocations_created_cost ON invocations(created_at, cost)",
@@ -283,3 +287,33 @@ class PostgresStorage(SQLiteStorage):
                 self._conn.raw(
                     "INSERT INTO schema_version (version, description) VALUES (%s, %s) "
                     "ON CONFLICT DO NOTHING", (latest, "postgres initial schema"))
+
+    def save_eval_run_atomic(
+        self, *, results, suite_name, prompt_name=None, prompt_version=None,
+        model_version=None, overall_pass=True, overall_score=None,
+    ) -> int:
+        """Postgres override for atomicity. The shared connection runs in
+        autocommit mode (so reads don't leave idle-in-transaction snapshots),
+        which makes the inherited commit()/rollback() no-ops — a mid-write
+        failure would leave a committed run row with partial/no results. Run
+        both inserts inside one explicit psycopg transaction instead, so the
+        run and all its result rows land together or not at all."""
+        with self._lock:
+            raw = self._conn._conn  # underlying psycopg connection
+            with raw.transaction():
+                cur = self._conn.execute(
+                    "INSERT INTO eval_runs (suite_name, prompt_name, prompt_version, "
+                    "model_version, overall_pass, overall_score) VALUES (?, ?, ?, ?, ?, ?)",
+                    (suite_name, prompt_name, prompt_version, model_version,
+                     int(overall_pass), overall_score),
+                )
+                run_id = cur.lastrowid
+                for r in results:
+                    details_json = json.dumps(r["details"]) if r.get("details") else None
+                    self._conn.execute(
+                        "INSERT INTO eval_results (run_id, test_name, assertion_type, "
+                        "passed, score, details, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (run_id, r["test_name"], r["assertion_type"], int(r["passed"]),
+                         r.get("score"), details_json, r.get("latency_ms")),
+                    )
+            return run_id

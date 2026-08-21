@@ -171,8 +171,10 @@ class RemoteStorage(BaseStorage):
 
     # ---- write methods (dual-write: local + remote) ----
 
-    def save_prompt(self, name, content, content_hash, metadata=None) -> PromptRecord:
-        record = self._local.save_prompt(name, content, content_hash, metadata)
+    def save_prompt(self, name, content, content_hash, metadata=None, force=False) -> PromptRecord:
+        # `force` is used by the dashboard prompt-edit endpoint to re-promote an
+        # older body; dropping it here raised TypeError on every remote-mode edit.
+        record = self._local.save_prompt(name, content, content_hash, metadata, force=force)
         self._emit("prompt_save", {
             "name": record.name,
             "version": record.version,
