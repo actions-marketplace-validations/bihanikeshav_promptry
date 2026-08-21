@@ -21,7 +21,7 @@ const realFetch: typeof fetch =
 let _versionPromise: Promise<string> | null = null;
 function liveVersion(): Promise<string> {
   if (!_versionPromise) {
-    _versionPromise = realFetch("https://api.github.com/repos/bihanikeshav/promptry/releases/latest")
+    _versionPromise = realFetch("https://api.github.com/repos/promptry/promptry/releases/latest")
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((j) => String(j.tag_name || "").replace(/^v/, ""))
       .catch(() => ""); // offline / rate-limited: show no version rather than a wrong one

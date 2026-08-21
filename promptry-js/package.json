@@ -49,11 +49,11 @@
   "author": "Keshav Bihani",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bihanikeshav/promptry.git",
+    "url": "git+https://github.com/promptry/promptry.git",
     "directory": "promptry-js"
   },
-  "homepage": "https://github.com/bihanikeshav/promptry/tree/main/promptry-js#readme",
+  "homepage": "https://github.com/promptry/promptry/tree/main/promptry-js#readme",
   "bugs": {
-    "url": "https://github.com/bihanikeshav/promptry/issues"
+    "url": "https://github.com/promptry/promptry/issues"
   }
 }

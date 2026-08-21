@@ -32,7 +32,7 @@
 # Prices (dashboard auto-pulls published prices.json every 24h by default):
 #   PROMPTRY_PRICES_AUTO_REFRESH=0     # stay offline
 #   PROMPTRY_PRICES_REFRESH_HOURS=24
-#   PROMPTRY_PRICES_FEED_URL=https://raw.githubusercontent.com/bihanikeshav/promptry/main/prices.json
+#   PROMPTRY_PRICES_FEED_URL=https://raw.githubusercontent.com/promptry/promptry/main/prices.json
 
 [judge]
 # model = "gpt-4o-mini"       # LLM-judge model id for llm_judge assertions

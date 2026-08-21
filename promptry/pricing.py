@@ -362,7 +362,7 @@ def refresh_rates_from_litellm(*, replace: bool = True) -> int:
 PRICES_META: dict = {"version": None, "source": "none", "updated": None}
 
 # Conventional location of the maintainer-published feed. Override with --url.
-DEFAULT_FEED_URL = "https://raw.githubusercontent.com/bihanikeshav/promptry/main/prices.json"
+DEFAULT_FEED_URL = "https://raw.githubusercontent.com/promptry/promptry/main/prices.json"
 
 
 def prices_file_path():

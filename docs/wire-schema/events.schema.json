@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/bihanikeshav/promptry/docs/wire-schema/events.schema.json",
+  "$id": "https://github.com/promptry/promptry/docs/wire-schema/events.schema.json",
   "title": "promptry telemetry wire contract",
   "description": "The single source of truth for the batch payload POSTed to a self-hosted promptry ingest endpoint. Both the Python RemoteStorage backend (promptry/storage/remote.py) and the JS/TS client (promptry-js) emit this exact shape. Never a hosted/cloud default endpoint - the endpoint is always the user's own server.",
   "type": "object",

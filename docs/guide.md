@@ -990,7 +990,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - uses: bihanikeshav/promptry@v1
+      - uses: promptry/promptry@v1
         with:
           suite: rag-regression
           module: evals
@@ -1534,7 +1534,7 @@ date into `calculate_cost`. Skeptical? Ignore them — cost by the logged model 
 ```bash
 export PROMPTRY_PRICES_AUTO_REFRESH=0
 export PROMPTRY_PRICES_REFRESH_HOURS=12
-export PROMPTRY_PRICES_FEED_URL=https://raw.githubusercontent.com/bihanikeshav/promptry/main/prices.json
+export PROMPTRY_PRICES_FEED_URL=https://raw.githubusercontent.com/promptry/promptry/main/prices.json
 ```
 
 **CLI:**
