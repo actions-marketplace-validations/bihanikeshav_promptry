@@ -306,6 +306,89 @@ export function SideNav({
   const showAdmin = me?.role === "admin" && me?.kind !== "anonymous";
   const items: NavItem[] = showAdmin ? [...baseItems, ...ADMIN_ITEMS] : baseItems;
 
+  // Group the nav into a few categories so the guided tour can explain them a
+  // group at a time (and so the sidebar reads as sections, not one long list).
+  const groupOf = (to: string): string =>
+    to === "/"
+      ? "home"
+      : ["/evals", "/prompts", "/cache"].includes(to)
+        ? "build"
+        : ["/models", "/cost", "/traces"].includes(to)
+          ? "measure"
+          : ["/feedback", "/playground"].includes(to)
+            ? "signals"
+            : "setup";
+  const GROUP_ORDER = ["home", "build", "measure", "signals", "setup"];
+
+  const renderNavItem = (item: NavItem) => {
+    const active =
+      location.pathname === item.to ||
+      (item.to !== "/" && location.pathname.startsWith(item.to)) ||
+      // Suite creator/editor and suite-detail pages live under the Evals tab.
+      (item.to === "/evals" &&
+        (location.pathname.startsWith("/suites") || location.pathname.startsWith("/suite/")));
+    return (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        end={item.to === "/"}
+        data-tour={"nav-" + item.to}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "8px 10px",
+          borderRadius: 6,
+          fontSize: 13,
+          fontWeight: active ? 600 : 500,
+          color: active ? "var(--text)" : "var(--secondary)",
+          background: active ? "var(--surface)" : "transparent",
+          border: "1px solid " + (active ? "var(--border)" : "transparent"),
+          position: "relative",
+          textDecoration: "none",
+        }}
+      >
+        {active && (
+          <span
+            style={{
+              position: "absolute",
+              left: -12,
+              top: 8,
+              bottom: 8,
+              width: 2,
+              background: "var(--accent)",
+              borderRadius: 2,
+            }}
+          />
+        )}
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          style={{ color: active ? "var(--accent)" : "var(--secondary)", flexShrink: 0 }}
+        >
+          {item.icon}
+        </svg>
+        <span style={{ flex: 1 }}>{item.label}</span>
+        {item.badge && (
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              padding: "1px 6px",
+              borderRadius: 999,
+              background: "var(--error-soft)",
+              color: "var(--error)",
+              fontWeight: 600,
+            }}
+          >
+            {item.badge.n}
+          </span>
+        )}
+      </NavLink>
+    );
+  };
+
   return (
     <aside
       style={{
@@ -368,76 +451,19 @@ export function SideNav({
         Workspace
       </div>
 
-      <div data-tour="nav" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      {items.map((item) => {
-        const active =
-          location.pathname === item.to ||
-          (item.to !== "/" && location.pathname.startsWith(item.to)) ||
-          // Suite creator/editor and suite-detail pages live under the Evals tab.
-          (item.to === "/evals" &&
-            (location.pathname.startsWith("/suites") || location.pathname.startsWith("/suite/")));
+      {GROUP_ORDER.map((g) => {
+        const groupItems = items.filter((it) => groupOf(it.to) === g);
+        if (!groupItems.length) return null;
         return (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/"}
-            data-tour={"nav-" + item.to}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "8px 10px",
-              borderRadius: 6,
-              fontSize: 13,
-              fontWeight: active ? 600 : 500,
-              color: active ? "var(--text)" : "var(--secondary)",
-              background: active ? "var(--surface)" : "transparent",
-              border: "1px solid " + (active ? "var(--border)" : "transparent"),
-              position: "relative",
-              textDecoration: "none",
-            }}
+          <div
+            key={g}
+            data-tour={"grp-" + g}
+            style={{ display: "flex", flexDirection: "column", gap: 4 }}
           >
-            {active && (
-              <span
-                style={{
-                  position: "absolute",
-                  left: -12,
-                  top: 8,
-                  bottom: 8,
-                  width: 2,
-                  background: "var(--accent)",
-                  borderRadius: 2,
-                }}
-              />
-            )}
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              style={{ color: active ? "var(--accent)" : "var(--secondary)", flexShrink: 0 }}
-            >
-              {item.icon}
-            </svg>
-            <span style={{ flex: 1 }}>{item.label}</span>
-            {item.badge && (
-              <span
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  padding: "1px 6px",
-                  borderRadius: 999,
-                  background: "var(--error-soft)",
-                  color: "var(--error)",
-                  fontWeight: 600,
-                }}
-              >
-                {item.badge.n}
-              </span>
-            )}
-          </NavLink>
+            {groupItems.map(renderNavItem)}
+          </div>
         );
       })}
-      </div>
 
       <button
         type="button"

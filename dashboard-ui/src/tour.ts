@@ -1,85 +1,109 @@
-// A light, friendly walkthrough of the dashboard, built on driver.js.
+// A short, friendly walkthrough of the dashboard, built on driver.js.
 //
 // - Demo build: runs on every page load, so any visitor sees it.
 // - Real dashboard: runs once per browser (first sign-in), then stays quiet.
-// Either way it's replayable from the sidebar "Take a tour" button.
+// Replayable anytime from the sidebar "Take a tour" button.
 //
-// Steps target [data-tour="…"] anchors and are filtered to whatever's actually
-// on the page, so admin-only items (Users, Audit) simply drop out when absent.
+// Eight steps, grouped by area rather than one-per-menu. Anchored to [data-tour]
+// elements and filtered to what's on the page, so it's safe on any route / role.
 import { driver, type DriveStep } from "driver.js";
 import "driver.js/dist/driver.css";
 
-const SEEN_KEY = "promptry-tour-v2";
+const SEEN_KEY = "promptry-tour-v3";
 const DEMO = import.meta.env.VITE_DEMO === "1";
 
-// Only auto-run once per page load (so moving around the demo doesn't relaunch it).
+// Auto-run at most once per page load (so moving around doesn't relaunch it).
 let autoStarted = false;
-
-function navStep(to: string, title: string, description: string): DriveStep {
-  return {
-    element: `[data-tour="nav-${to}"]`,
-    popover: { title, description, side: "right", align: "start" },
-  };
-}
 
 function buildSteps(): DriveStep[] {
   const steps: DriveStep[] = [
     {
+      element: '[data-tour="brand"]',
       popover: {
         title: "Welcome 👋",
         description:
-          "This is your promptry dashboard — where your prompts, costs, and results all show up. Here's a quick look around (about 20 seconds).",
+          "This is <b>promptry</b> — your dashboard for prompts, cost, and results. Here's a quick look around (about 20 seconds).",
+        side: "right",
+        align: "start",
       },
     },
     {
       element: '[data-tour="search"]',
       popover: {
         title: "Find anything fast",
-        description:
-          "Press <span class=\"pt-kbd\">⌘K</span> any time to jump straight to a suite, a prompt, or a page.",
+        description: "Press <span class=\"pt-kbd\">⌘K</span> any time to jump to a suite, a prompt, or a page.",
         side: "right",
         align: "start",
       },
     },
-    navStep("/", "Overview", "Your home base — a quick read on how your prompts are doing."),
-    navStep("/evals", "Evals", "Your tests. See what's passing and what slipped, run to run."),
-    navStep("/prompts", "Prompts", "Every prompt you've used, kept with its full history."),
-    navStep("/cache", "Cache optimization", "Spots near-duplicate prompts and easy ways to save tokens."),
-    navStep("/models", "Models", "Compare how different models do on the same tests."),
-    navStep("/cost", "Cost", "What you're spending, broken down by prompt and model."),
-    navStep("/traces", "Call traces", "Follow a multi-step run and see what each step costs."),
-    navStep("/feedback", "Feedback", "Thumbs-up and thumbs-down from your users, in one place."),
-    navStep("/playground", "Playground", "Try a prompt against a live model right here."),
-    navStep("/settings", "Settings", "Budgets, alerts, and the rest of your setup."),
-    navStep("/users", "Users", "Invite teammates and set who can do what."),
-    navStep("/audit", "Audit log", "A record of who changed what, and when."),
     {
-      element: '[data-tour="stats"]',
+      element: '[data-tour="grp-home"]',
       popover: {
-        title: "Today, at a glance",
-        description: "A running tally of today's spend, calls, and tokens.",
+        title: "Overview",
+        description: "Your home base — a quick read on how your prompts are doing.",
         side: "right",
-        align: "end",
+        align: "start",
+      },
+    },
+    {
+      element: '[data-tour="grp-build"]',
+      popover: {
+        title: "Build",
+        description: "Version your prompts, test them for regressions, and trim near-duplicates.",
+        side: "right",
+        align: "start",
+      },
+    },
+    {
+      element: '[data-tour="grp-measure"]',
+      popover: {
+        title: "Measure",
+        description:
+          "What you're spending, how models compare, and where each step of a run goes.",
+        side: "right",
+        align: "start",
+      },
+    },
+    {
+      element: '[data-tour="grp-signals"]',
+      popover: {
+        title: "Signals",
+        description: "Hear from your users, and try prompts out against a live model.",
+        side: "right",
+        align: "start",
+      },
+    },
+    {
+      element: '[data-tour="grp-setup"]',
+      popover: {
+        title: "Setup",
+        description: "Budgets, alerts, and — on a team — users and an audit log.",
+        side: "right",
+        align: "start",
       },
     },
     {
       popover: {
         title: "That's the tour!",
         description:
-          "Add one line to your app — <code>from promptry.openai import OpenAI</code> — and everything here fills in on its own. You can replay this anytime with <b>Take a tour</b> in the sidebar.",
+          "Add one line to your app — <code>from promptry.openai import OpenAI</code> — and everything here fills in on its own. Replay anytime with <b>Take a tour</b> in the sidebar.",
       },
     },
   ];
-  // Keep only steps whose anchor is on the page (the element-less welcome/wrap
-  // steps always stay), so the tour never points at something that isn't there.
+  // Keep only steps whose anchor is on the page (the element-less wrap step
+  // always stays), so the tour never points at something that isn't there.
   return steps.filter((s) => !s.element || document.querySelector(s.element as string));
 }
 
 /** Start the tour immediately. */
 export function startTour(): void {
-  driver({
+  const obj = driver({
     showProgress: true,
-    allowClose: true,
+    allowClose: true, // Esc still exits
+    // Click anywhere on the backdrop to move forward; the spotlighted item stays
+    // non-interactive so a stray click can't navigate mid-tour.
+    overlayClickBehavior: "nextStep",
+    disableActiveInteraction: true,
     overlayColor: "rgba(0,0,0,0.55)",
     stagePadding: 6,
     stageRadius: 8,
@@ -88,20 +112,32 @@ export function startTour(): void {
     prevBtnText: "Back",
     doneBtnText: "Got it",
     steps: buildSteps(),
+    onPopoverRender: (popover) => {
+      // Add a plain "Skip" control on the left of the footer (once per render).
+      const footer = popover.footerButtons.parentElement;
+      if (!footer || footer.querySelector(".pt-skip")) return;
+      const skip = document.createElement("button");
+      skip.type = "button";
+      skip.textContent = "Skip";
+      skip.className = "pt-skip";
+      skip.addEventListener("click", () => obj.destroy());
+      footer.insertBefore(skip, footer.firstChild);
+    },
     onDestroyed: markSeen,
-  }).drive();
+  });
+  obj.drive();
 }
 
 /**
- * Auto-run the tour for a newcomer. Demo: every page load. Real dashboard: once
- * per browser. Call it once the landing route has mounted so anchors exist.
+ * Auto-run for a newcomer. Demo: every page load. Real dashboard: once per
+ * browser. Call once the landing route has mounted so anchors exist.
  */
 export function maybeAutoTour(): void {
   if (autoStarted) return;
   if (!DEMO && hasSeen()) return;
   autoStarted = true;
   window.setTimeout(() => {
-    if (document.querySelector('[data-tour="search"]')) startTour();
+    if (document.querySelector('[data-tour="brand"]')) startTour();
   }, DEMO ? 450 : 650);
 }
 

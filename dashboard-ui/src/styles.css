@@ -455,21 +455,26 @@ textarea.inp {
   border-color: transparent !important;
   font-weight: 600 !important;
 }
+/* No close x — Skip (below) and clicking the backdrop both move on / exit. */
 .driver-popover.promptry-tour .driver-popover-close-btn {
-  color: var(--muted);
+  display: none !important;
+}
+.driver-popover.promptry-tour .pt-skip {
+  margin-right: auto;
   background: transparent;
   border: 0;
-  width: 22px;
-  height: 22px;
-  line-height: 22px;
-  font-size: 17px;
-  top: 12px;
-  right: 12px;
+  outline: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 6px 2px;
+  cursor: pointer;
+  text-shadow: none;
   transition: color 0.12s;
 }
-.driver-popover.promptry-tour .driver-popover-close-btn:hover {
-  color: var(--text);
-  background: transparent;
+.driver-popover.promptry-tour .pt-skip:hover,
+.driver-popover.promptry-tour .pt-skip:focus-visible {
+  color: var(--text-dim);
+  text-decoration: underline;
 }
 .driver-popover.promptry-tour .driver-popover-arrow-side-left { border-left-color: var(--surface); }
 .driver-popover.promptry-tour .driver-popover-arrow-side-right { border-right-color: var(--surface); }
