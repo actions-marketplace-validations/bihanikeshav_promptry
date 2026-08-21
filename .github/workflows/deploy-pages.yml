@@ -1,0 +1,72 @@
+name: Deploy site to Pages
+
+# Keeps promptry.meownikov.xyz in sync with the repo automatically: the demo is
+# rebuilt from the current dashboard-ui source on every deploy (so it never goes
+# stale against committed code), and the landing/docs/architecture pages pick up
+# the freshly published version + release date at runtime via docs/site-meta.js.
+#
+# Runs when the site or the dashboard source changes on main, on every published
+# release (so a new tag redeploys), and on demand.
+#
+# NOTE: for this to serve the site, the repo's Pages source must be set to
+# "GitHub Actions" (Settings -> Pages -> Build and deployment -> Source).
+# Until that toggle is flipped it stays classic "deploy from branch /docs".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "dashboard-ui/**"
+      - ".github/workflows/deploy-pages.yml"
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+# One live deployment at a time; a newer push supersedes an in-flight run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard-ui/package-lock.json
+
+      - name: Build the static demo from source
+        working-directory: dashboard-ui
+        env:
+          DEMO: "1"
+        run: |
+          npm ci
+          npm run build:demo   # DEMO=1 -> base /demo/, outputs to ../docs/demo
+
+      - name: Upload the docs/ site as the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write            # publish to Pages
+      id-token: write         # OIDC verification for the deploy
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
