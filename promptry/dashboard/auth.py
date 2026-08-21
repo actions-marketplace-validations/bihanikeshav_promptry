@@ -182,11 +182,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
 
-def generate_token() -> str:
-    """Helper for operators / docs: 32-byte hex secret."""
-    return secrets.token_hex(32)
-
-
 # ---------------------------------------------------------------------------
 # Multi-user identity (optional, layered on top of the single-token mode above)
 #

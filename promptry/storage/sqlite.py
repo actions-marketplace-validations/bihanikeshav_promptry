@@ -1253,6 +1253,31 @@ class SQLiteStorage(BaseStorage):
             )
             return [(row[0], row[1]) for row in cur.fetchall()]
 
+    def get_score_history_batch(self, suite_names: list[str],
+                                limit_per_suite: int = 30) -> dict[str, list[tuple[str, float]]]:
+        """Score history for many suites in one query (avoids the N+1 that a
+        per-suite ``get_score_history`` loop incurs on the dashboard's suite
+        list). Each value is newest-first, same shape as ``get_score_history``."""
+        if not suite_names:
+            return {}
+        with self._lock:
+            placeholders = ",".join("?" for _ in suite_names)
+            cur = self._conn.execute(
+                f"""SELECT suite_name, timestamp, overall_score FROM (
+                        SELECT suite_name, timestamp, overall_score, ROW_NUMBER() OVER (
+                            PARTITION BY suite_name ORDER BY id DESC
+                        ) AS rn
+                        FROM eval_runs
+                        WHERE suite_name IN ({placeholders})
+                          AND overall_score IS NOT NULL
+                    ) WHERE rn <= ?""",
+                list(suite_names) + [limit_per_suite],
+            )
+            result: dict[str, list[tuple[str, float]]] = {name: [] for name in suite_names}
+            for row in cur.fetchall():
+                result[row[0]].append((row[1], row[2]))
+            return result
+
     def list_suite_names(self) -> list[str]:
         with self._lock:
             cur = self._conn.execute(

@@ -127,28 +127,37 @@ class TestSuites:
         # sparkline should be oldest-first
         assert len(s["sparkline_scores"]) == 3
 
-    def test_suites_fetches_score_history_once_per_suite(self, client, storage):
-        """perf: /api/suites must fetch get_score_history once per suite and
-        hand it to DriftMonitor.check(), not fetch it again internally."""
+    def test_suites_fetches_score_history_in_one_batch(self, client, storage):
+        """perf: /api/suites must fetch score history for ALL suites in a single
+        batched query and hand it to DriftMonitor.check() — never once per suite
+        (the old N+1), and never re-fetched internally by the drift monitor."""
         _seed_suite(storage, "qa-suite", [0.8, 0.85, 0.9])
         _seed_suite(storage, "other-suite", [0.5, 0.6])
 
-        calls = {"n": 0}
-        real = storage.get_score_history
+        calls = {"batch": 0, "single": 0}
+        real_batch = storage.get_score_history_batch
+        real_single = storage.get_score_history
 
-        def counting(*a, **kw):
-            calls["n"] += 1
-            return real(*a, **kw)
+        def counting_batch(*a, **kw):
+            calls["batch"] += 1
+            return real_batch(*a, **kw)
 
-        storage.get_score_history = counting
+        def counting_single(*a, **kw):
+            calls["single"] += 1
+            return real_single(*a, **kw)
+
+        storage.get_score_history_batch = counting_batch
+        storage.get_score_history = counting_single
         try:
             resp = client.get("/api/suites")
         finally:
-            storage.get_score_history = real
+            storage.get_score_history_batch = real_batch
+            storage.get_score_history = real_single
 
         assert resp.status_code == 200
         assert len(resp.json()) == 2
-        assert calls["n"] == 2  # one per suite, not two per suite
+        assert calls["batch"] == 1   # one query for all suites, not per-suite
+        assert calls["single"] == 0  # no per-suite fetch, no internal re-fetch
 
 
 # ---- Suite Runs ----

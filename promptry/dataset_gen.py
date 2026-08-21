@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -54,14 +53,8 @@ def load_spec(path: Path) -> DatasetSpec:
             ) from e
         data = yaml.safe_load(raw) or {}
     elif suffix == ".toml":
-        if sys.version_info >= (3, 11):
-            import tomllib as _tomllib
-        else:
-            try:
-                import tomllib as _tomllib  # type: ignore[no-redef]
-            except ImportError:
-                import tomli as _tomllib  # type: ignore[no-redef]
-        data = _tomllib.loads(raw)
+        from promptry._toml import loads as _toml_loads
+        data = _toml_loads(raw)
     else:
         raise ValueError(
             f"Unsupported spec extension '{suffix}'. Use .yaml, .yml, or .toml."

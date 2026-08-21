@@ -2218,15 +2218,9 @@ def doctor_cmd():
         _ok("Config file", str(config_file))
         # Validate TOML syntax
         try:
-            if sys.version_info >= (3, 11):
-                import tomllib as _tomllib
-            else:
-                try:
-                    import tomllib as _tomllib
-                except ImportError:
-                    import tomli as _tomllib  # type: ignore[no-redef]
+            from promptry._toml import load as _toml_load
             with open(config_file, "rb") as _f:
-                _tomllib.load(_f)
+                _toml_load(_f)
             _ok("Config valid", "TOML parsed successfully")
         except Exception as e:
             _fail("Config valid", f"parse error: {e}")

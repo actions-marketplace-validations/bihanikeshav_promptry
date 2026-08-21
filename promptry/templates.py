@@ -17,7 +17,6 @@ Usage:
 """
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from importlib import resources
 
@@ -33,15 +32,8 @@ class SafetyTemplate:
 
 
 def _load_tomllib():
-    if sys.version_info >= (3, 11):
-        import tomllib
-        return tomllib
-    try:
-        import tomllib
-        return tomllib
-    except ImportError:
-        import tomli as tomllib  # type: ignore[no-redef]
-        return tomllib
+    from promptry._toml import tomllib
+    return tomllib
 
 
 def _load_builtin_templates() -> list[SafetyTemplate]:

@@ -46,13 +46,9 @@ from __future__ import annotations
 
 import copy
 import os
-import sys
 from pathlib import Path
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover
-    import tomli as tomllib  # type: ignore
+from promptry._toml import tomllib
 
 # provider -> the env var that holds its key (for status display only).
 PROVIDER_ENV = {

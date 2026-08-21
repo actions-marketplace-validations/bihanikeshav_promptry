@@ -316,6 +316,9 @@ class RemoteStorage(BaseStorage):
     def get_score_history(self, suite_name, limit=30):
         return self._local.get_score_history(suite_name, limit)
 
+    def get_score_history_batch(self, suite_names, limit_per_suite=30):
+        return self._local.get_score_history_batch(suite_names, limit_per_suite)
+
     def get_runs_by_model(self, suite_name, model_version, limit=200):
         return self._local.get_runs_by_model(suite_name, model_version, limit)
 

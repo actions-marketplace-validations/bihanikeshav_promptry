@@ -35,12 +35,15 @@ def list_suites():
     drift_window = get_config().monitor.window
     history_limit = max(10, drift_window)
 
+    # Batch-fetch score history per suite too (1 query instead of N).
+    history_by_suite = storage.get_score_history_batch(names, limit_per_suite=history_limit)
+
     result = []
     for name in names:
         suite_runs = runs_by_suite.get(name, [])
         latest = suite_runs[0] if suite_runs else None
 
-        history = storage.get_score_history(name, limit=history_limit)
+        history = history_by_suite.get(name, [])
         sparkline = [score for _, score in reversed(history[:10])]
 
         drift_report = drift_monitor.check(name, history=history[:drift_window])

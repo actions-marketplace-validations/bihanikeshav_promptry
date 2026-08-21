@@ -180,9 +180,3 @@ def render_prompt(name: str, default_content: str, *, ttl: float = DEFAULT_TTL,
     except Exception:
         logger.warning("render_prompt substitution failed for %s; using default", name, exc_info=True)
         return _substitute(default_content, variables)
-
-
-def clear_cache() -> None:
-    """Drop the in-process template cache (e.g. for tests)."""
-    with _lock:
-        _cache.clear()

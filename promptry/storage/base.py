@@ -137,6 +137,14 @@ class BaseStorage(ABC):
     def get_score_history(self, suite_name, limit=30) -> list[tuple[str, float]]:
         ...
 
+    def get_score_history_batch(self, suite_names: list[str],
+                                limit_per_suite: int = 30) -> dict[str, list[tuple[str, float]]]:
+        """Score history for many suites at once. Default loops
+        ``get_score_history``; SQLite overrides it with a single windowed query.
+        Backends that can batch should override for the dashboard's suite list."""
+        return {name: self.get_score_history(name, limit=limit_per_suite)
+                for name in suite_names}
+
     @abstractmethod
     def get_runs_by_model(self, suite_name, model_version, limit=200) -> list[EvalRunRecord]:
         ...
