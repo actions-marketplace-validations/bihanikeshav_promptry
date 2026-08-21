@@ -20,7 +20,16 @@ import hashlib
 import threading
 from collections import OrderedDict
 
-import numpy as np
+# numpy is only needed for the semantic/embedding assertions, which also need
+# the sentence-transformers model — both ship in the `semantic`/`full` extra,
+# not in core. Import it lazily so a base install can import promptry.assertions
+# (and run non-semantic evals like contains/regex) without numpy present. The
+# annotations below are strings (`from __future__ import annotations`), so a
+# None here is fine until a semantic path actually runs.
+try:
+    import numpy as np
+except ModuleNotFoundError:  # pragma: no cover - exercised only in minimal envs
+    np = None  # type: ignore[assignment]
 
 # lazy-loaded embedding model -- only pay the cost if something actually
 # needs embeddings. first call downloads ~80MB, subsequent calls instant.
