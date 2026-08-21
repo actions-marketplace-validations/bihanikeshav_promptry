@@ -94,7 +94,20 @@ def _usage_meta(response_obj, model) -> dict:
             meta["tokens_out"] = pout
         details = getattr(usage, "prompt_tokens_details", None)
         cached = getattr(details, "cached_tokens", 0) if details is not None else 0
-        meta["cached_tokens"] = int(cached or 0)
+        cached = int(cached or 0)
+        meta["cached_tokens"] = cached
+        # Cache-*write* (Anthropic prompt-cache creation) is priced higher than
+        # base input; litellm exposes it on the details or the usage object.
+        # Without it, those tokens fold into uncached input and get under-billed.
+        cw = getattr(details, "cache_creation_tokens", None) if details is not None else None
+        if cw is None:
+            cw = getattr(usage, "_cache_creation_input_tokens", None)
+        cw = int(cw or 0)
+        # Only record when prompt_tokens genuinely includes it, so pricing's
+        # `uncached = tokens_in - cached - cache_write` can't go negative if a
+        # given litellm mapping reports input tokens exclusive of cache writes.
+        if cw and pin is not None and pin >= cached + cw:
+            meta["cache_write_tokens"] = cw
     return meta
 
 

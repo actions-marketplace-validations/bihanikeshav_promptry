@@ -70,7 +70,27 @@ def _chat_adapter(chunk: Any) -> core.StreamDelta | None:
         text = None
         if choices:
             delta = getattr(choices[0], "delta", None)
-            text = getattr(delta, "content", None) if delta is not None else None
+            if delta is not None:
+                text = getattr(delta, "content", None)
+                # When the model streams a tool/function call there is no
+                # `content` — accumulate the call name + argument fragments as
+                # text so streamed agent calls aren't recorded as empty output
+                # (mirrors _output_text's non-stream tool-call rendering).
+                if not text:
+                    tool_calls = getattr(delta, "tool_calls", None) or []
+                    frags = []
+                    for tc in tool_calls:
+                        fn = getattr(tc, "function", None)
+                        if fn is None:
+                            continue
+                        name = getattr(fn, "name", None)
+                        if name:
+                            frags.append(f"{name}(")
+                        args = getattr(fn, "arguments", None)
+                        if args:
+                            frags.append(args)
+                    if frags:
+                        text = "".join(frags)
         d = core.StreamDelta(text=text, response_id=getattr(chunk, "id", None),
                              model=getattr(chunk, "model", None))
         usage = getattr(chunk, "usage", None)
@@ -383,7 +403,14 @@ class _Responses:
     def create(self, *args, **kwargs):
         if kwargs.get("stream") and not naming.is_suppressed():
             rec = _responses_stream_recorder(kwargs, self._opts)
-            real = self._real.create(*args, **kwargs)
+            try:
+                real = self._real.create(*args, **kwargs)
+            except Exception as exc:
+                # Record the failure the same way the non-stream and chat paths
+                # do — the un-wrapped create() used to drop error telemetry for
+                # exactly the streaming case.
+                _record_responses(kwargs, None, self._opts, exc)
+                raise
             return core.TrackedStream(real, rec)
         try:
             resp = self._real.create(*args, **kwargs)
@@ -403,7 +430,11 @@ class _AsyncResponses(_Responses):
     async def create(self, *args, **kwargs):
         if kwargs.get("stream") and not naming.is_suppressed():
             rec = _responses_stream_recorder(kwargs, self._opts)
-            real = await self._real.create(*args, **kwargs)
+            try:
+                real = await self._real.create(*args, **kwargs)
+            except Exception as exc:
+                _record_responses(kwargs, None, self._opts, exc)
+                raise
             return core.AsyncTrackedStream(real, rec)
         try:
             resp = await self._real.create(*args, **kwargs)
