@@ -459,8 +459,11 @@ textarea.inp {
 .driver-popover.promptry-tour .driver-popover-close-btn {
   display: none !important;
 }
+/* Space the footer so Skip, the "N of M" progress, and the buttons don't touch. */
+.driver-popover.promptry-tour .driver-popover-footer {
+  gap: 14px;
+}
 .driver-popover.promptry-tour .pt-skip {
-  margin-right: auto;
   background: transparent;
   border: 0;
   outline: none;
