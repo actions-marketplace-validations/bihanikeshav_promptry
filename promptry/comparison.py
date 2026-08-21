@@ -63,7 +63,14 @@ def compare_with_baseline(
     baseline_results = storage.get_eval_results(baseline_run.id)
     current_results = storage.get_eval_results(current.run_id) if current.run_id else []
 
-    for atype in ("semantic", "schema", "llm"):
+    # Compare every assertion type actually present in either run — not a fixed
+    # legacy trio — so a regression on newer checks (g_eval, faithfulness,
+    # grounded, tool-use, contains, …) is caught, not silently ignored.
+    atypes = sorted(
+        {r.assertion_type for r in baseline_results}
+        | {r.assertion_type for r in current_results}
+    )
+    for atype in atypes:
         b_results = [r for r in baseline_results if r.assertion_type == atype]
         c_results = [r for r in current_results if r.assertion_type == atype]
 

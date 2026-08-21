@@ -900,9 +900,13 @@ class SQLiteStorage(BaseStorage):
         }
 
     def bisect_regression(self, suite_name: str) -> dict:
-        """Find the first eval run where the suite went from passing to
-        failing (a `git bisect` for evals), with the prompt/model deltas at
-        that boundary. Returns {found, run, previous} or {found: False}."""
+        """Bisect the *current* regression: if the suite is failing now, find
+        the run where the current failing streak began (the pass→failing
+        boundary), with the prompt/model deltas there. A suite that regressed
+        once, was fixed, and is passing again reports no active regression —
+        rather than the stale first-ever transition. Returns
+        {found, suite, first_bad, last_good, prompt_changed, model_changed}
+        or {found: False, reason}."""
         with self._lock:
             cur = self._conn.execute(
                 """SELECT id, prompt_version, model_version, timestamp,
@@ -911,28 +915,35 @@ class SQLiteStorage(BaseStorage):
                 (suite_name,),
             )
             runs = cur.fetchall()
-        prev = None
-        for r in runs:
-            if prev is not None and prev["overall_pass"] and not r["overall_pass"]:
-                return {
-                    "found": True,
-                    "suite": suite_name,
-                    "first_bad": {
-                        "run_id": r["id"], "prompt_version": r["prompt_version"],
-                        "model_version": r["model_version"], "timestamp": r["timestamp"],
-                        "score": r["overall_score"],
-                    },
-                    "last_good": {
-                        "run_id": prev["id"], "prompt_version": prev["prompt_version"],
-                        "model_version": prev["model_version"], "timestamp": prev["timestamp"],
-                        "score": prev["overall_score"],
-                    },
-                    "prompt_changed": prev["prompt_version"] != r["prompt_version"],
-                    "model_changed": prev["model_version"] != r["model_version"],
-                }
-            prev = r
-        return {"found": False, "suite": suite_name,
-                "reason": "No passing→failing transition found." if runs else "No runs."}
+        if not runs:
+            return {"found": False, "suite": suite_name, "reason": "No runs."}
+        if runs[-1]["overall_pass"]:
+            return {"found": False, "suite": suite_name,
+                    "reason": "Suite is currently passing — no active regression."}
+        # Walk back from the latest run to the start of the current failing streak.
+        i = len(runs) - 1
+        while i > 0 and not runs[i - 1]["overall_pass"]:
+            i -= 1
+        if i == 0:
+            return {"found": False, "suite": suite_name,
+                    "reason": "No passing run precedes the current failures."}
+        r, prev = runs[i], runs[i - 1]
+        return {
+            "found": True,
+            "suite": suite_name,
+            "first_bad": {
+                "run_id": r["id"], "prompt_version": r["prompt_version"],
+                "model_version": r["model_version"], "timestamp": r["timestamp"],
+                "score": r["overall_score"],
+            },
+            "last_good": {
+                "run_id": prev["id"], "prompt_version": prev["prompt_version"],
+                "model_version": prev["model_version"], "timestamp": prev["timestamp"],
+                "score": prev["overall_score"],
+            },
+            "prompt_changed": prev["prompt_version"] != r["prompt_version"],
+            "model_changed": prev["model_version"] != r["model_version"],
+        }
 
     # ---- budgets ----
 

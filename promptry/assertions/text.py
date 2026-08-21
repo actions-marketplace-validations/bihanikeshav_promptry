@@ -123,6 +123,15 @@ def assert_levenshtein(
             "assert_levenshtein requires exactly one of max_distance or min_ratio"
         )
 
+    # The DP is O(len(actual)*len(expected)); an un-truncated multi-KB LLM output
+    # would turn into a billion-cell matrix that hangs the whole suite. Cap each
+    # side (Levenshtein is meant for short reference strings anyway) and flag it.
+    _MAX_LEV_LEN = 4000
+    truncated = len(actual) > _MAX_LEV_LEN or len(expected) > _MAX_LEV_LEN
+    if truncated:
+        actual = actual[:_MAX_LEV_LEN]
+        expected = expected[:_MAX_LEV_LEN]
+
     distance = _levenshtein_distance(actual, expected)
     longest = max(len(actual), len(expected))
     ratio = 1.0 if longest == 0 else 1.0 - (distance / longest)
@@ -145,6 +154,7 @@ def assert_levenshtein(
             "min_ratio": min_ratio,
             "actual_preview": actual[:200],
             "expected_preview": expected[:200],
+            "truncated": truncated,
         },
     ))
 
@@ -327,6 +337,12 @@ def assert_matches(text: str, pattern: str, fullmatch: bool = True) -> float:
         assert_matches(response, r"[\\w.+-]+@[\\w-]+\\.[\\w.]+", fullmatch=False)
     """
     text_stripped = text.strip()
+    # Bound the subject length: the pattern is author-supplied but the text is
+    # untrusted model output, and Python's `re` has no timeout — a long
+    # non-matching string against a backtracking-prone pattern could hang the
+    # run. 20k chars is plenty for a regex assertion.
+    if len(text_stripped) > 20000:
+        text_stripped = text_stripped[:20000]
 
     try:
         compiled = re.compile(pattern, re.DOTALL)

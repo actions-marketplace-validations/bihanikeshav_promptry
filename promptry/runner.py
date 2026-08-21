@@ -33,8 +33,12 @@ def run_suite(
     test_result = _execute_test(suite_def.fn, suite_def.name)
 
     scores = [a.score for a in test_result.assertions if a.score is not None]
-    overall_score = sum(scores) / len(scores) if scores else 0.0
     overall_pass = test_result.passed
+    # With no scored assertions (e.g. a smoke test that only calls the pipeline
+    # and asserts nothing), fall back to the pass verdict rather than a spurious
+    # 0.0 — a fake 0.0 on an otherwise-passing run would read as a huge drop in
+    # the drift time series.
+    overall_score = sum(scores) / len(scores) if scores else (1.0 if overall_pass else 0.0)
 
     # Persist the run row and all its assertion results atomically, so a
     # failure can never leave a visible "passing" run with missing detail.

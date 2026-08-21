@@ -96,6 +96,11 @@ def _parse_judge_output(raw: str) -> tuple[float, str]:
     Handles common LLM quirks: markdown code fences, extra text
     around the JSON, etc.
     """
+    # A judge that refuses/filters can return None or a non-string
+    # (message.content is None); coerce so we raise a clean parse error the
+    # callers already handle, not an AttributeError that skips the result row.
+    if not isinstance(raw, str):
+        raw = "" if raw is None else str(raw)
     # strip markdown code fences if present
     cleaned = raw.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
