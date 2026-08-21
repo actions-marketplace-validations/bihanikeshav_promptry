@@ -10,21 +10,49 @@
 
 **[Try the live demo →](https://promptry.meownikov.xyz/demo/)** · [Integration guide](docs/INTEGRATION.md) · [Docs](https://promptry.meownikov.xyz/docs.html)
 
+```bash
+pip install promptry
+```
+
+## Quick start
+
+**1. See what every call costs — change one import.**
+
 ```python
-from promptry import track, suite, assert_semantic
+from promptry.openai import OpenAI   # was: from openai import OpenAI
 
-# track() content-hashes your prompt and stores a new version if it changed
-prompt = track(system_prompt, "rag-qa")
-response = llm.chat(system=prompt, ...)
+client = OpenAI()
+client.chat.completions.create(model="gpt-4o-mini", messages=[...])
+# ^ recorded: cost, tokens, cached-token split, latency, model, call-site name.
+# Streaming, failures, embeddings, and the Responses API are captured too.
+```
 
-# suites are regular Python functions. run them via CLI or in CI.
-@suite("rag-regression")
+```bash
+promptry dashboard          # cost, drift, and per-call traces at 127.0.0.1:8420
+```
+
+Not on the OpenAI SDK? `track_invocation(name, metadata=...)` records the same
+row from any provider's response. On the frontend, `wrapOpenAI(new OpenAI())`
+from [`promptry-js`](promptry-js/) ships the same events to the same store.
+
+**2. Catch regressions before they ship — write an eval.**
+
+```python
+from promptry import suite, assert_semantic
+
+@suite("rag-regression")           # a plain function; runs via CLI or in CI
 def test_quality():
     response = my_pipeline("What is photosynthesis?")
     assert_semantic(response, "Converts light into chemical energy")
 ```
 
-When a suite regresses against its baseline, promptry reports **what** changed:
+```bash
+promptry init                            # scaffold project + a starter eval
+promptry run rag-regression --module evals
+```
+
+When a suite regresses against its baseline, promptry reports **what** changed —
+not just that it broke:
 
 ```
 Overall score: 0.910 -> 0.720  REGRESSION
@@ -33,11 +61,10 @@ Probable cause:
   -> Prompt changed (v3 -> v4)
 ```
 
-## Install
+Prefer no code? `promptry new suite --yaml` scaffolds a declarative `evals.yaml`
+from `--case` flags. Both paths run through the same CLI.
 
-```bash
-pip install promptry
-```
+## Install extras
 
 Core stays small on purpose — CLI, prompt registry, deterministic assertions
 (exact / text / schema / JSON / rouge / levenshtein), drift, cost tracking from
@@ -47,36 +74,13 @@ extra only when you need it:
 ```bash
 pip install 'promptry[semantic]'   # assert_semantic, embedding distance, RAG context, clustering (sentence-transformers + chromadb)
 pip install 'promptry[llm]'        # run real model completions / assert_llm judging / live price refresh (litellm + openai + anthropic)
+pip install 'promptry[postgres]'   # point the store at a shared PostgreSQL server (alpha) instead of the default SQLite file
 pip install 'promptry[full]'       # everything
 ```
 
 If you call a feature whose extra isn't installed, promptry raises a clear error
 telling you the exact `pip install` to run — it never fails with a bare
 `ModuleNotFoundError`.
-
-## Quick start
-
-```bash
-promptry init                              # scaffold project + starter eval
-promptry run smoke-test --module evals     # run it
-```
-
-```
-PASS test_basic_quality (142ms)
-  semantic (0.891) ok
-
-Overall: PASS  score: 0.891
-```
-
-Prefer YAML, or don't want to hand-write a suite? `promptry new suite` scaffolds
-one for you, YAML or Python:
-
-```bash
-promptry new suite --name my-suite --yaml \
-  --model gpt-4o-mini --prompt "Answer: {input}" \
-  --case "What is 2+2?::contains::4"
-promptry run my-suite --module evals.yaml  # run it
-```
 
 ## Features
 
@@ -99,8 +103,9 @@ promptry run my-suite --module evals.yaml  # run it
 | **Model comparison** | Statistical comparison against the historical baseline, not snapshot-to-snapshot. |
 | **Invocations ledger** | Every call recorded: tokens, cost, latency, model. Opt-in sampled request/response trace capture; per-call ratings/feedback via `POST /api/feedback`. |
 | **Cost tracking** | Per-model pricing with module → prompt → call drill-down, per-call template-vs-payload split, and a coverage check that flags un-priced models. Cache-aware, across OpenAI, Anthropic, Gemini, Grok. |
+| **Call traces** | Wrap an agent run in `with promptry.trace("agent"):` (or `trace()` in JS) and the dashboard shows a per-step cost waterfall — which step of a multi-call agent burned the tokens. Metadata on invocations, not distributed tracing; still one SQLite file. |
 | **Price feed** | **[LiteLLM](https://github.com/BerriAI/litellm) `model_cost`** is the catalog (MIT) — we snapshot and serve it, we do not curate our own list. CI publishes `prices.json`; package ships a snapshot; dashboard auto-pulls every 24h. |
-| **Budgets** | Daily and monthly spend caps with breach alerts. |
+| **Budgets & alerts** | Daily and monthly spend caps with breach alerts, fanned out to Slack/webhook, PagerDuty, or email. Configure and fire a test alert from the dashboard's Settings page. |
 | **PII / secret scanning** | Captured request/response text is scanned for API keys, private keys, JWTs, emails, SSNs, and card numbers; the dashboard warns with masked findings. |
 | **Safety suite** | 25 jailbreak / injection / PII / encoding templates across 6 categories. Extensible via `templates.toml`. |
 | **MCP server** | First-class: your LLM agent drives the whole test runner — and can *create* eval suites from real logged traffic (`list_suite_candidates` → `create_eval_suite` → `run_eval`), with everything landing on the dashboard. Native, not a plugin. |
@@ -265,7 +270,8 @@ usable but still moving. Honest status per component:
 | Cache optimization (reorder / shorten) | **Stable** | analysis only, advisory |
 | Cache optimization (consolidate Apply) | **Beta** | writes a prompt version, gated behind `[dashboard] cms` |
 | MCP server | **Beta** | create + run evals from an LLM agent |
-| JS client (`promptry-js`) | **Beta** | HTTP telemetry only, no local SQLite |
+| JS client (`promptry-js`) | **Beta** | OpenAI drop-in + call traces, at parity with Python capture; HTTP telemetry, no local SQLite |
+| Postgres scale-tier (`[postgres]`) | **Alpha** | shared PG backend, opt-in; SQLite stays the tested default |
 | VS Code extension | **Experimental** | thin wrapper over the CLI |
 | Semantic assertions / RAG (`[semantic]`) | **Beta** | optional, needs the extra |
 | Agent trajectory analysis, LLM root-cause | **Experimental** | on the roadmap |

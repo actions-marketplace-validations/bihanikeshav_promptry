@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0 (2026-08-21)
+
+- **OpenAI drop-in capture (Python + JS at parity):** `from promptry.openai
+  import OpenAI` records every chat/responses/embeddings call — cost, tokens,
+  cached-token split, latency, and a call-site-inferred name — with streaming
+  and failures handled. JS ships the same via `wrapOpenAI()` (`promptry-js/openai`).
+- **Cost-attributed call traces:** `with promptry.trace("agent"):` (and `trace()`
+  in JS) groups a run's LLM calls; the dashboard's new **Traces** page shows a
+  per-step token/$ waterfall. Invocation metadata only — not distributed tracing.
+- **Alerting config UI:** dashboard Settings shows configured channels
+  (Slack/webhook, PagerDuty, email, OTel export) and can fire a test alert;
+  new `GET /api/alerts/status` and `POST /api/alerts/test` endpoints.
+- **Postgres scale-tier backend (alpha, opt-in):** `[storage] mode = "postgres"`
+  (or `$PROMPTRY_POSTGRES_DSN`) points the whole store at a shared PostgreSQL
+  server via `promptry[postgres]`. SQLite on one file stays the tested default.
+- **Internals:** shared `tomllib`/`tomli` shim; batched suite-list score history
+  (kills an N+1 on `/api/suites`); ruff ruleset pinned for CI/local parity;
+  `co_qualname` polyfill so call-site naming matches on Python 3.10.
+
 ## 1.0.8 (2026-07-31)
 
 - **Prod tags by default:** `seed_prompt` tags v1 (or latest if untagged) as

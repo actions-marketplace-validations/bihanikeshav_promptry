@@ -1109,6 +1109,7 @@ mode = "async"    # writes go to a background thread, no latency hit
 - **sync**: default, writes inline. Fine for dev and testing.
 - **async**: background thread handles writes. `track()` returns immediately.
 - **remote**: dual-write to local SQLite + batched HTTP POST to a remote endpoint. Use this to centralize telemetry from multiple services.
+- **postgres**: point the whole store at a shared PostgreSQL server (alpha, opt-in) — for when several instances need one backend. See below.
 - **off**: no writes at all. Use this if you only manage prompts through the CLI.
 
 ### Remote mode
@@ -1124,6 +1125,36 @@ api_key = "pk_..."
 ```
 
 Both Python and JS clients use the same event format and endpoint, so all telemetry lands in the same place. Python handles evals, drift detection, and comparison against the collected data.
+
+### Postgres (scale tier — alpha, opt-in)
+
+SQLite on one file is the tested default and is enough for a laptop, CI, and most
+single-host deployments. When several processes or machines need to share one
+backend, point promptry at PostgreSQL instead — same schema, same API, same
+dashboard, no code changes:
+
+```bash
+pip install 'promptry[postgres]'   # psycopg 3
+```
+
+```toml
+# promptry.toml
+[storage]
+mode = "postgres"
+# The DSN can live here as `endpoint`, or in $PROMPTRY_POSTGRES_DSN (preferred,
+# so the connection string stays out of a committed file):
+# endpoint = "postgresql://user:pass@host:5432/promptry"
+```
+
+```bash
+export PROMPTRY_POSTGRES_DSN="postgresql://user:pass@host:5432/promptry"
+promptry dashboard        # tables auto-create on first connect
+```
+
+The Postgres backend is a thin dialect translation over the same storage layer
+SQLite uses — every eval, prompt, invocation, cost, and trace query behaves
+identically. It is **alpha**: the default single-file SQLite path remains the
+one we recommend unless you specifically need a shared server.
 
 ## JavaScript / TypeScript client
 
@@ -1162,6 +1193,31 @@ trackContext(chunks, "rag-qa")  track_context(chunks, "rag-qa")
                     │
               promptry (Python) runs evals against the collected data
 ```
+
+### OpenAI drop-in and call traces (JS)
+
+The JS client mirrors the Python capture surface. Wrap an OpenAI client and every
+call is recorded — model, tokens, cached-token split, latency, and a name
+inferred from the call site — with streaming and failures handled:
+
+```typescript
+import { init, trace } from 'promptry-js';
+import { wrapOpenAI } from 'promptry-js/openai';
+import OpenAI from 'openai';
+
+init({ endpoint: 'https://your-server.com/ingest' });
+const client = wrapOpenAI(new OpenAI());
+
+await trace('checkout_agent', async () => {
+  await client.chat.completions.create({ /* step 1 */ });
+  await client.chat.completions.create({ /* step 2 */ });
+});
+// the two calls land under one cost-attributed trace, same as Python's
+// `with promptry.trace(...)`, and show on the dashboard's Traces waterfall.
+```
+
+`wrapOpenAI` is also exported from the `promptry-js/openai` subpath. Use `task()`
+to name a block of calls explicitly when the call site is a generic helper.
 
 See the [JS client README](../promptry-js/README.md) for full API docs.
 

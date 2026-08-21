@@ -35,6 +35,40 @@ Pick ONE representative LLM call to instrument first. Get it working end to end
 
 ## 1. Track invocations — the cost & telemetry ledger
 
+### Fastest path: the OpenAI drop-in (zero config)
+
+If you call OpenAI, swap the import and every `chat.completions` /
+`responses` / `embeddings` call is recorded automatically — cost, tokens,
+cached-token split, latency, model, and a name inferred from the call site. No
+wrapper code, no metadata to assemble:
+
+```python
+from promptry.openai import OpenAI   # was: from openai import OpenAI
+
+client = OpenAI()                     # same constructor, same methods
+resp = client.chat.completions.create(model="gpt-4o-mini", messages=[...])
+# ^ recorded. Streaming and failures are captured too.
+```
+
+`AsyncOpenAI` works the same way. Pass `promptry_task="rag.answer"` to name the
+call explicitly, `promptry_capture=True` to store request/response text, or
+`promptry_sample_rate=0.1` to sample that text. **JS/TS:** the same idea ships as
+`wrapOpenAI(new OpenAI())` from `promptry-js/openai`.
+
+Group a multi-step agent's calls into one cost-attributed **call trace** — the
+dashboard's Traces page shows a per-step token/$ waterfall ("which step burned
+the tokens"):
+
+```python
+import promptry
+with promptry.trace("checkout_agent"):
+    client.chat.completions.create(...)   # step 1
+    client.chat.completions.create(...)   # step 2
+```
+
+### Full control: `track_invocation()`
+
+When you're not on the OpenAI SDK (or want to shape the row yourself),
 `track_invocation()` records one row per LLM call: cost, tokens, latency, the
 model, and (optionally) the request/response text. It returns `None` and never
 raises into your request path — wrap your existing call, don't replace it.
