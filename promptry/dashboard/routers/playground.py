@@ -64,6 +64,27 @@ def playground_model(body: _PlaygroundModelReq,
     except Exception:
         pass
 
+    # Persist the run so experiments aren't lost when the tab closes — it shows
+    # up in the invocations ledger / cost pages tagged source=playground, and
+    # can be promoted into a golden/suite case later. Best-effort: never fail
+    # the playground call on a storage hiccup.
+    try:
+        from promptry.dashboard.server import get_storage
+        prompt_text = "\n\n".join(m["content"] for m in messages)
+        get_storage().record_invocation(
+            prompt_name="playground",
+            metadata={
+                "source": "playground", "model": body.model,
+                "tokens_in": tokens_in, "tokens_out": tokens_out,
+                "cost": cost, "latency_ms": latency_ms,
+                "temperature": body.temperature,
+            },
+            input_text=prompt_text,
+            output_text=text,
+        )
+    except Exception:
+        pass
+
     return {
         "response": text,
         "latency_ms": latency_ms,
