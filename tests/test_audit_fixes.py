@@ -106,3 +106,35 @@ def test_bisect_recovered_suite_reports_no_active_regression(storage):
     storage.save_eval_run(suite_name="r", overall_pass=True, overall_score=1.0)  # recovered
     out = storage.bisect_regression("r")
     assert out["found"] is False
+
+
+# ---- dashboard security fixes ----
+
+def test_oidc_next_rejects_open_redirect():
+    from promptry.dashboard.oidc import _safe_next
+    assert _safe_next("//evil.com") == "/"
+    assert _safe_next("https://evil.com") == "/"
+    assert _safe_next("/dashboard?tab=cost") == "/dashboard?tab=cost"
+    assert _safe_next("") == "/"
+
+
+def test_client_ip_ignores_xff_without_trusted_proxy(monkeypatch):
+    from promptry.dashboard import auth as authlib
+
+    class _Client:
+        host = "10.0.0.9"
+
+    class _Req:
+        headers = {"x-forwarded-for": "1.2.3.4"}
+        client = _Client()
+
+    monkeypatch.delenv("PROMPTRY_TRUST_PROXY", raising=False)
+    assert authlib.client_ip(_Req()) == "10.0.0.9"  # spoofable header ignored
+    monkeypatch.setenv("PROMPTRY_TRUST_PROXY", "1")
+    assert authlib.client_ip(_Req()) == "1.2.3.4"   # trusted proxy honored
+
+
+def test_verify_password_ct_unknown_user_is_false_but_runs():
+    from promptry.dashboard.auth import verify_password_ct
+    # No stored hash (unknown user) -> False, but PBKDF2 still runs (timing).
+    assert verify_password_ct("anything", None) is False

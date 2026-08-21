@@ -94,10 +94,19 @@ def _unb64(s: str) -> str:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)).decode("utf-8")
 
 
+def _safe_next(path: str) -> str:
+    """Local, single-slash paths only. Rejects protocol-relative ('//evil.com')
+    and absolute URLs so the post-login redirect can't be turned into an open
+    redirect / phishing hop."""
+    if not path or not path.startswith("/") or path.startswith("//"):
+        return "/"
+    return path
+
+
 def sign_state(next_path: str = "/", *, ttl: int = 600) -> str:
     exp = int(time.time()) + ttl
     nonce = os.urandom(8).hex()
-    safe_next = next_path if next_path.startswith("/") else "/"
+    safe_next = _safe_next(next_path)
     payload = f"{exp}.{nonce}.{_b64(safe_next)}"
     sig = authlib._sign(payload, authlib.server_secret())
     return f"{payload}.{sig}"
@@ -122,8 +131,7 @@ def verify_state(state: str) -> Optional[dict]:
         nxt = _unb64(next_b64)
     except (ValueError, TypeError):
         nxt = "/"
-    if not nxt.startswith("/"):
-        nxt = "/"
+    nxt = _safe_next(nxt)
     return {"nonce": nonce, "next": nxt}
 
 

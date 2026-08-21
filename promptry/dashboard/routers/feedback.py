@@ -95,7 +95,10 @@ def list_votes(
 @router.get("/api/votes/analyze")
 def vote_analyze(
     name: str = Query(...),
-    days: int = Query(default=30),
+    days: int = Query(default=30, ge=1),
+    # Runs a (paid) judge model — gate behind editor like the other
+    # cost-incurring routes so a viewer can't rack up judge spend.
+    _actor: authlib.Actor = Depends(authlib.require_role("editor")),
 ):
     from promptry.feedback import analyze_votes
     from promptry.assertions import get_judge

@@ -94,8 +94,9 @@ def login(body: LoginBody, request: Request, response: Response):
             user = storage.get_user_by_email(body.email)
         except Exception:
             user = None
-        if (not user or not user.get("is_active", 1)
-                or not authlib.verify_password(body.password, user.get("password_hash"))):
+        pw_ok = authlib.verify_password_ct(
+            body.password, user.get("password_hash") if user else None)
+        if not user or not user.get("is_active", 1) or not pw_ok:
             authlib.login_throttle.record_failure(throttle_key)
             _audit(request, "auth.login", actor=body.email.strip().lower(),
                    result="denied")

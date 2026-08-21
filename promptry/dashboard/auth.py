@@ -241,6 +241,23 @@ def verify_password(password: str, stored: str | None) -> bool:
     return hmac.compare_digest(dk, expected)
 
 
+_dummy_hash_cache: "str | None" = None
+
+
+def verify_password_ct(password: str, stored: str | None) -> bool:
+    """Like verify_password, but always spends PBKDF2 time — even when there is
+    no stored hash (unknown user) — so login latency can't distinguish a real
+    account from a nonexistent one (user enumeration). Returns True only on a
+    genuine match."""
+    global _dummy_hash_cache
+    if stored:
+        return verify_password(password, stored)
+    if _dummy_hash_cache is None:
+        _dummy_hash_cache = hash_password(secrets.token_hex(16))
+    verify_password(password, _dummy_hash_cache)  # burn equivalent time, discard
+    return False
+
+
 def server_secret() -> str:
     """Stable key for signing user sessions, independent of any shared token
     (multi-user mode may run with no PROMPTRY_AUTH_TOKEN). From
@@ -392,10 +409,21 @@ def require_role(minimum: str):
     return _dep
 
 
+def _trust_proxy() -> bool:
+    """Only honor X-Forwarded-For when the operator says the server sits behind
+    a trusted reverse proxy (PROMPTRY_TRUST_PROXY). Otherwise a direct caller
+    could spoof the header to get a fresh brute-force-throttle bucket per
+    request and defeat the login lockout entirely."""
+    return os.environ.get("PROMPTRY_TRUST_PROXY", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def client_ip(request: Request) -> Optional[str]:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    if _trust_proxy():
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            return fwd.split(",")[0].strip()
     return request.client.host if request.client else None
 
 

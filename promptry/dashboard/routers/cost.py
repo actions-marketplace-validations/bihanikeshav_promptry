@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from promptry.dashboard import auth as authlib
 
@@ -15,7 +15,7 @@ router = APIRouter()
 
 @router.get("/api/cost")
 def cost_data(
-    days: int = Query(default=7),
+    days: int = Query(default=7, ge=1),
     name: Optional[str] = Query(default=None),
     model: Optional[str] = Query(default=None),
 ):
@@ -163,7 +163,9 @@ class _BudgetIn(BaseModel):
     scope: str = "global"          # global | module | prompt
     target: Optional[str] = None
     period: str = "monthly"        # daily | monthly
-    limit_usd: float
+    # Positive, finite dollars only — a negative/zero/NaN/Inf cap corrupts the
+    # percent-used / breach math downstream.
+    limit_usd: float = Field(gt=0, allow_inf_nan=False)
 
 
 @router.get("/api/traces")
