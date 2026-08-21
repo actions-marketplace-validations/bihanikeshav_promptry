@@ -267,6 +267,17 @@ class PostgresStorage(SQLiteStorage):
         self._lock = threading.Lock()
         self._conn = self._connect()
         self._init_schema()
+        # Be honest about what this tier currently is: a correctness-first ALPHA
+        # that uses ONE shared connection behind a global lock, so every query is
+        # serialized. It gives durability/multi-instance-schema, not concurrency
+        # — it is not yet faster than SQLite under load. Connection pooling is
+        # tracked separately; until it lands, don't advertise a scale win.
+        import logging
+        logging.getLogger("promptry").warning(
+            "Postgres storage is ALPHA and currently single-connection "
+            "(serialized); it provides durability, not concurrency. Do not "
+            "expect a throughput gain over SQLite yet."
+        )
 
     def _connect(self):
         import psycopg

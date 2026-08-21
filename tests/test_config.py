@@ -254,6 +254,64 @@ class TestEnvVarOverrides:
         assert cfg.storage.db_path == "/env/wins.db"
 
 
+class TestConfigSourceMerge:
+    """Regression: load_config() must merge ALL config sources (user-level +
+    project) key-by-key, not read only the single highest-precedence file.
+    Before the fix, runtime settings in ~/.promptry/config.toml were silently
+    dropped whenever a project ./promptry.toml existed."""
+
+    def _isolate(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        (home / ".promptry").mkdir(parents=True)
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))  # Windows home
+        monkeypatch.chdir(proj)
+        for key in ("PROMPTRY_DB", "PROMPTRY_STORAGE_MODE", "PROMPTRY_ENDPOINT",
+                    "PROMPTRY_API_KEY", "PROMPTRY_EMBEDDING_MODEL",
+                    "PROMPTRY_SEMANTIC_THRESHOLD"):
+            monkeypatch.delenv(key, raising=False)
+        return home, proj
+
+    def test_user_level_setting_survives_project_file(self, tmp_path, monkeypatch):
+        home, proj = self._isolate(tmp_path, monkeypatch)
+        # User-level file sets two runtime values...
+        (home / ".promptry" / "config.toml").write_text(
+            '[model]\nembedding_model = "user-model"\nsemantic_threshold = 0.55\n',
+            encoding="utf-8",
+        )
+        # ...project file overrides only one of them.
+        (proj / "promptry.toml").write_text(
+            '[model]\nembedding_model = "project-model"\n', encoding="utf-8",
+        )
+        cfg = load_config()
+        assert cfg.model.embedding_model == "project-model"   # project wins
+        assert cfg.model.semantic_threshold == pytest.approx(0.55)  # user survives
+
+    def test_project_only_still_loads(self, tmp_path, monkeypatch):
+        home, proj = self._isolate(tmp_path, monkeypatch)
+        (proj / "promptry.toml").write_text(
+            '[model]\nsemantic_threshold = 0.7\n', encoding="utf-8")
+        cfg = load_config()
+        assert cfg.model.semantic_threshold == pytest.approx(0.7)
+
+    def test_storage_api_key_in_toml_is_ignored(self, tmp_path, monkeypatch):
+        home, proj = self._isolate(tmp_path, monkeypatch)
+        (proj / "promptry.toml").write_text(
+            '[storage]\napi_key = "sekret-on-disk"\n', encoding="utf-8")
+        cfg = load_config()
+        assert cfg.storage.api_key == ""  # never honored from a committed file
+
+    def test_storage_api_key_from_env_is_honored(self, tmp_path, monkeypatch):
+        home, proj = self._isolate(tmp_path, monkeypatch)
+        (proj / "promptry.toml").write_text(
+            '[storage]\napi_key = "sekret-on-disk"\n', encoding="utf-8")
+        monkeypatch.setenv("PROMPTRY_API_KEY", "env-secret")
+        cfg = load_config()
+        assert cfg.storage.api_key == "env-secret"
+
+
 class TestResetConfig:
     """Test reset_config() clears cached config."""
 

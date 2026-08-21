@@ -49,6 +49,7 @@ import os
 from pathlib import Path
 
 from promptry._toml import tomllib
+from promptry.config import _config_sources
 
 # provider -> the env var that holds its key (for status display only).
 PROVIDER_ENV = {
@@ -74,15 +75,6 @@ def config_path() -> Path:
     (see :func:`load_project_config`); on conflicts ``promptry.toml`` wins.
     """
     return Path.cwd() / ".promptry" / "config.toml"
-
-
-def _config_sources() -> list[Path]:
-    """Source files in *increasing* order of precedence (later wins)."""
-    return [
-        Path.home() / ".promptry" / "config.toml",  # user-level fallback
-        Path.cwd() / ".promptry" / "config.toml",   # legacy project file
-        Path.cwd() / "promptry.toml",               # canonical project file
-    ]
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

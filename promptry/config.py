@@ -102,12 +102,27 @@ class Config:
     pricing: dict = field(default_factory=dict)
 
 
-def _find_config_file() -> Path | None:
-    candidates = [
-        Path.cwd() / "promptry.toml",
-        Path.home() / ".promptry" / "config.toml",
+def _config_sources() -> list[Path]:
+    """Canonical config files in *increasing* order of precedence (later wins).
+
+    This is the single source of truth for where promptry reads config. Both the
+    runtime :class:`Config` loader (:func:`load_config`) and the project/team
+    section loader (``promptry.projectconfig``) iterate this same chain, so a
+    setting placed in any of these files is honored consistently — earlier files
+    are a base, later files override key-by-key.
+    """
+    return [
+        Path.home() / ".promptry" / "config.toml",  # user-level fallback
+        Path.cwd() / ".promptry" / "config.toml",   # legacy project file
+        Path.cwd() / "promptry.toml",               # canonical project file
     ]
-    for path in candidates:
+
+
+def _find_config_file() -> Path | None:
+    """The highest-precedence config file that exists, for display ("which file
+    wins"). Runtime loading merges *all* of :func:`_config_sources`, not just
+    this one — see :func:`load_config`."""
+    for path in reversed(_config_sources()):
         if path.is_file():
             return path
     return None
@@ -124,7 +139,14 @@ def _apply_toml(config: Config, data: dict):
         if "endpoint" in s:
             config.storage.endpoint = s["endpoint"]
         if "api_key" in s:
-            config.storage.api_key = s["api_key"]
+            # Security: a remote-storage secret must never live in a committed
+            # TOML. Ignore any on-disk value and require the env var instead.
+            import logging
+            logging.getLogger("promptry").warning(
+                "Ignoring storage.api_key from config file — set the "
+                "PROMPTRY_API_KEY environment variable instead (secrets do not "
+                "belong in committed config)."
+            )
 
     if "tracking" in data:
         t = data["tracking"]
@@ -231,10 +253,23 @@ def _apply_env_overrides(config: Config):
 def load_config() -> Config:
     config = Config()
 
-    config_file = _find_config_file()
-    if config_file:
-        with open(config_file, "rb") as f:
-            data = tomllib.load(f)
+    # Merge every source in increasing-precedence order (later file wins,
+    # key-by-key). Previously only the single highest-precedence file was read,
+    # so runtime settings in ~/.promptry/config.toml were silently dropped the
+    # moment a project ./promptry.toml existed. Now they layer, matching what
+    # projectconfig.load_project_config() already does for team sections.
+    for path in _config_sources():
+        if not path.is_file():
+            continue
+        try:
+            with open(path, "rb") as f:
+                data = tomllib.load(f)
+        except Exception:
+            import logging
+            logging.getLogger("promptry").warning(
+                "Skipping unreadable config file %s", path
+            )
+            continue
         _apply_toml(config, data)
 
     _apply_env_overrides(config)
