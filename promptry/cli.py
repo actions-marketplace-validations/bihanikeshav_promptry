@@ -1654,6 +1654,40 @@ def lint_cmd(
         raise typer.Exit(1)
 
 
+@app.command("env")
+def env_cmd(
+    set_only: bool = typer.Option(False, "--set", help="Show only variables that are currently set."),
+):
+    """List promptry's environment variables — what each does and what's set.
+
+    Secrets are masked. Discover configuration knobs without grepping the source.
+    """
+    from promptry.envvars import PRECEDENCE, inspect
+
+    rows = inspect()
+    if set_only:
+        rows = [r for r in rows if r["set"]]
+    if not rows:
+        console.print("No PROMPTRY_* variables are set.")
+        raise typer.Exit(0)
+
+    table = Table(show_header=True, header_style="bold", title="promptry environment")
+    table.add_column("Variable")
+    table.add_column("Set", justify="center")
+    table.add_column("Value")
+    table.add_column("Description")
+    cur_group = None
+    for r in rows:
+        if r["group"] != cur_group:
+            cur_group = r["group"]
+            table.add_row(f"[dim]— {cur_group}[/dim]", "", "", "")
+        set_str = "[green]●[/green]" if r["set"] else "[dim]○[/dim]"
+        val = r["value"] or "[dim](unset)[/dim]"
+        table.add_row(r["name"], set_str, val, r["desc"])
+    console.print(table)
+    console.print(f"\n[dim]Precedence:[/dim] {PRECEDENCE}")
+
+
 @app.command("cluster")
 def cluster_cmd(
     suite_name: str = typer.Argument(..., help="Suite to analyze."),
