@@ -381,6 +381,7 @@ export function SideNav({
             key={item.to}
             to={item.to}
             end={item.to === "/"}
+            data-tour={"nav-" + item.to}
             style={{
               display: "flex",
               alignItems: "center",

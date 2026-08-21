@@ -457,9 +457,19 @@ textarea.inp {
 }
 .driver-popover.promptry-tour .driver-popover-close-btn {
   color: var(--muted);
+  background: transparent;
+  border: 0;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  font-size: 17px;
+  top: 12px;
+  right: 12px;
+  transition: color 0.12s;
 }
 .driver-popover.promptry-tour .driver-popover-close-btn:hover {
   color: var(--text);
+  background: transparent;
 }
 .driver-popover.promptry-tour .driver-popover-arrow-side-left { border-left-color: var(--surface); }
 .driver-popover.promptry-tour .driver-popover-arrow-side-right { border-right-color: var(--surface); }
