@@ -102,8 +102,8 @@ dev = [
 promptry = "promptry.cli:main"
 
 [project.urls]
-Homepage = "https://promptry.meownikov.xyz"
-Documentation = "https://promptry.meownikov.xyz/docs.html"
+Homepage = "https://promptry.run"
+Documentation = "https://promptry.run/docs.html"
 Repository = "https://github.com/promptry/promptry"
 Issues = "https://github.com/promptry/promptry/issues"
 

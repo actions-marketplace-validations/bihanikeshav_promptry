@@ -9,7 +9,7 @@ from pathlib import Path
 
 CONFIG_TEMPLATE = (
     '# promptry config\n'
-    '# docs: https://promptry.meownikov.xyz\n'
+    '# docs: https://promptry.run\n'
     '\n'
     '[storage]\n'
     '# db_path = "~/.promptry/promptry.db"\n'
@@ -245,7 +245,7 @@ def pipeline(prompt: str) -> str:
 '''
 
 _EXAMPLE_EVAL_YAML = '''# Declarative eval suites -- no Python required.
-# docs: https://promptry.meownikov.xyz
+# docs: https://promptry.run
 #
 # Uncomment and edit. Run with:  promptry run rag-quality --module evals.yaml
 # (Or just `promptry run rag-quality` -- when evals.py is absent, promptry

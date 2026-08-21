@@ -1,6 +1,6 @@
 name: Deploy site to Pages
 
-# Keeps promptry.meownikov.xyz in sync with the repo automatically: the demo is
+# Keeps promptry.run in sync with the repo automatically: the demo is
 # rebuilt from the current dashboard-ui source on every deploy (so it never goes
 # stale against committed code), and the landing/docs/architecture pages pick up
 # the freshly published version + release date at runtime via docs/site-meta.js.

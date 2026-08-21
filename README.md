@@ -8,7 +8,7 @@
 
 **Local-first prompt observability that lives in your repo.** Version your prompts, write eval suites in YAML or Python, track the cost of every call, edit prompts live, and catch regressions in CI. One `pip install`, one SQLite file, zero services — your prompts never leave your laptop.
 
-**[Try the live demo →](https://promptry.meownikov.xyz/demo/)** · [Integration guide](docs/INTEGRATION.md) · [Docs](https://promptry.meownikov.xyz/docs.html)
+**[Try the live demo →](https://promptry.run/demo/)** · [Integration guide](docs/INTEGRATION.md) · [Docs](https://promptry.run/docs.html)
 
 ```bash
 pip install promptry
