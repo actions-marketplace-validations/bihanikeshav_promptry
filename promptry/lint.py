@@ -98,4 +98,67 @@ def lint_prompt(template: str, *, known_vars: list[str] | None = None) -> list[d
     except Exception as e:  # pragma: no cover - safe_substitute rarely raises
         findings.append({"level": "error", "message": f"Template parse error: {e}"})
 
+    # 6. Secrets / PII pasted into the template itself — a real incident class
+    #    (an API key in a committed prompt). Reuse the capture-side scanner.
+    try:
+        from promptry.pii import scan_text
+        hits = scan_text(template)
+        secrets = sorted({h.type for h in hits if h.category == "secret"})
+        if secrets:
+            findings.append({
+                "level": "error",
+                "message": f"Possible secret in the prompt text ({', '.join(secrets)}). "
+                           f"Keep secrets in env/config, never in a prompt template.",
+            })
+    except Exception:  # pragma: no cover - scanner is best-effort
+        pass
+
+    # 7. Prefix-cache: a variable near the top of a long prompt means everything
+    #    after it changes every call and can't be served from the provider's
+    #    prompt cache. Moving inputs to the end maximizes cache hits (and $ saved).
+    first = re.search(_BRACE.pattern + "|" + _VALID.pattern, template)
+    body_len = len(template)
+    if first is not None and body_len >= 400 and first.start() < 0.4 * body_len:
+        findings.append({
+            "level": "warning",
+            "message": "A variable appears near the top — text after it can't be "
+                       "prefix-cached. Put variable inputs at the end to maximize "
+                       "cache hits (cheaper, faster).",
+        })
+
+    # 8. Injection-prone interpolation: untrusted-looking inputs spliced in with
+    #    no delimiters make prompt-injection easier. Nudge toward fencing them.
+    # Names that clearly denote *untrusted / retrieved* content — the real
+    # injection vectors. Deliberately narrow (not "query"/"question"/"input"):
+    # over-flagging every Q&A prompt trains people to ignore the warning.
+    sensitive = {
+        "user_input", "user_message", "untrusted_input", "external_input",
+        "context", "retrieved_context", "retrieved", "document", "documents",
+        "docs", "web_content", "chunk", "chunks",
+    }
+    has_delimiter = ("<" in template) or ("```" in template) or ('"""' in template)
+    risky = [v for v in vars_in_template if v.lower() in sensitive]
+    if risky and not has_delimiter:
+        findings.append({
+            "level": "warning",
+            "message": f"Untrusted input ({', '.join(risky)}) is interpolated without "
+                       f"delimiters. Wrap it in XML tags or a fenced block so injected "
+                       f"instructions are harder to smuggle in.",
+        })
+
+    # 9. Duplicated instruction lines — usually an accidental copy-paste that
+    #    just wastes tokens (and can contradict itself).
+    seen_lines: dict[str, int] = {}
+    for line in template.splitlines():
+        s = line.strip()
+        if len(s) >= 25:
+            seen_lines[s] = seen_lines.get(s, 0) + 1
+    dups = [s for s, n in seen_lines.items() if n > 1]
+    if dups:
+        findings.append({
+            "level": "info",
+            "message": f"{len(dups)} instruction line(s) are duplicated — likely a "
+                       f"copy-paste; trim to save tokens.",
+        })
+
     return findings

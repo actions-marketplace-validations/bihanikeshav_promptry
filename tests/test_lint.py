@@ -149,3 +149,34 @@ class TestCleanPrompt:
     def test_clean_prompt_has_no_findings(self):
         findings = lint_prompt("You are a helpful assistant. Answer {{question}} clearly.")
         assert findings == []
+
+
+class TestSmartLintChecks:
+    def test_prefix_cache_buster_flagged(self):
+        prompt = "Input: {{user_input}}\n" + ("You are a meticulous assistant. " * 40)
+        msgs = [f["message"] for f in lint_prompt(prompt)]
+        assert any("prefix-cach" in m for m in msgs)
+
+    def test_injection_prone_input_flagged_without_delimiters(self):
+        msgs = [f["message"] for f in lint_prompt("Answer using {{context}} then reply.")]
+        assert any("Untrusted input" in m for m in msgs)
+
+    def test_injection_not_flagged_when_delimited(self):
+        prompt = "Use the context.\n<context>\n{{context}}\n</context>\nAnswer."
+        msgs = [f["message"] for f in lint_prompt(prompt)]
+        assert not any("Untrusted input" in m for m in msgs)
+
+    def test_benign_question_var_not_flagged_as_injection(self):
+        msgs = [f["message"] for f in lint_prompt("Answer {{question}} clearly.")]
+        assert not any("Untrusted input" in m for m in msgs)
+
+    def test_secret_in_template_is_error(self):
+        findings = lint_prompt("Call the API with key sk-ABCDefgh0123456789ijklmNOPqrst4567")
+        assert any(f["level"] == "error" and "secret" in f["message"].lower() for f in findings)
+
+    def test_duplicated_instruction_lines_flagged(self):
+        prompt = ("Always respond in valid JSON only please.\n"
+                  "Do the task.\n"
+                  "Always respond in valid JSON only please.\n")
+        msgs = [f["message"] for f in lint_prompt(prompt)]
+        assert any("duplicated" in m for m in msgs)

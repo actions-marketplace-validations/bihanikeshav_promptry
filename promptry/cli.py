@@ -1580,27 +1580,43 @@ def lint_cmd(
     name: Optional[str] = typer.Argument(None, help="Saved prompt name to lint (latest or --version)."),
     file: Optional[Path] = typer.Option(None, "--file", "-f", help="Lint a template from a file instead of the registry."),
     version: Optional[int] = typer.Option(None, "--version", "-v", help="Specific version to lint (with NAME)."),
+    all_prompts: bool = typer.Option(False, "--all", help="Lint every prompt in the registry (latest version of each)."),
 ):
-    """Lint a prompt template for placeholder/format footguns.
+    """Lint prompt templates for footguns — placeholder/format mistakes,
+    prefix-cache-busting variable placement, secrets pasted into the prompt,
+    and un-delimited untrusted input.
 
     Example: promptry lint my-prompt
              promptry lint --file prompt.txt
+             promptry lint --all           # whole registry, CI-gate friendly
 
-    Exit code 1 if any 'error'-level finding is present (CI-gate friendly).
+    Exit code 1 if any 'error'-level finding is present.
     """
-    if not name and not file:
-        console.print("[red]Error:[/red] Provide a prompt NAME or --file.")
-        raise typer.Exit(1)
-    if name and file:
-        console.print("[red]Error:[/red] Provide either NAME or --file, not both.")
+    if sum(bool(x) for x in (name, file, all_prompts)) != 1:
+        console.print("[red]Error:[/red] Provide exactly one of a prompt NAME, --file, or --all.")
         raise typer.Exit(1)
 
+    from promptry.lint import lint_prompt
+
+    # Build the list of (label, template) targets to lint.
+    targets: list[tuple[str, str]] = []
     if file:
         if not file.is_file():
             console.print(f"[red]Error:[/red] File not found: {file}")
             raise typer.Exit(1)
-        template = file.read_text(encoding="utf-8")
-        label = str(file)
+        targets.append((str(file), file.read_text(encoding="utf-8")))
+    elif all_prompts:
+        registry = _get_registry()
+        latest = {}
+        for rec in registry.list():
+            cur = latest.get(rec.name)
+            if cur is None or rec.version > cur.version:
+                latest[rec.name] = rec
+        if not latest:
+            console.print("No prompts in the registry to lint.")
+            raise typer.Exit(0)
+        for rec in sorted(latest.values(), key=lambda r: r.name):
+            targets.append((f"{rec.name} v{rec.version}", rec.content))
     else:
         registry = _get_registry()
         record = registry.get(name, version)
@@ -1608,31 +1624,33 @@ def lint_cmd(
             v_str = f" v{version}" if version else ""
             console.print(f"[red]Error:[/red] Prompt '{name}{v_str}' not found.")
             raise typer.Exit(1)
-        template = record.content
-        label = f"{name} v{record.version}"
-
-    from promptry.lint import lint_prompt
-
-    findings = lint_prompt(template)
-
-    if not findings:
-        console.print(f"[green]OK[/green] {label}: no issues found.")
-        raise typer.Exit(0)
+        targets.append((f"{name} v{record.version}", record.content))
 
     level_style = {"error": "red", "warning": "yellow", "info": "cyan"}
-    table = Table(show_header=True, header_style="bold", title=f"Lint: {label}")
-    table.add_column("Level")
-    table.add_column("Message")
-    has_error = False
-    for f in findings:
-        level = f["level"]
-        has_error = has_error or level == "error"
-        style = level_style.get(level, "")
-        level_str = f"[{style}]{level}[/{style}]" if style else level
-        table.add_row(level_str, f["message"])
-    console.print(table)
+    any_error = False
+    clean = 0
+    for label, template in targets:
+        findings = lint_prompt(template)
+        if not findings:
+            clean += 1
+            if len(targets) == 1:
+                console.print(f"[green]OK[/green] {label}: no issues found.")
+            continue
+        table = Table(show_header=True, header_style="bold", title=f"Lint: {label}")
+        table.add_column("Level")
+        table.add_column("Message")
+        for f in findings:
+            level = f["level"]
+            any_error = any_error or level == "error"
+            style = level_style.get(level, "")
+            level_str = f"[{style}]{level}[/{style}]" if style else level
+            table.add_row(level_str, f["message"])
+        console.print(table)
 
-    if has_error:
+    if len(targets) > 1:
+        console.print(f"\nLinted {len(targets)} prompt(s); {clean} clean.")
+
+    if any_error:
         raise typer.Exit(1)
 
 
