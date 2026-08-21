@@ -42,6 +42,46 @@ jobs:
       - name: Check CLI entry point
         run: promptry --help
 
+  postgres:
+    # Exercise the Postgres scale-tier backend against a real server (a service
+    # container), so the SQL-dialect translator, schema, atomic transactions and
+    # the connection pool are verified — not just reasoned about. tests/
+    # test_postgres_parity.py auto-skips when PROMPTRY_POSTGRES_DSN is unset, so
+    # this job is the only place it runs.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: promptry
+          POSTGRES_PASSWORD: promptry
+          POSTGRES_DB: promptry_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U promptry"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # dev for pytest; postgres for psycopg + psycopg_pool.
+          pip install -e ".[dev,postgres]"
+
+      - name: Run Postgres parity tests
+        env:
+          PROMPTRY_POSTGRES_DSN: postgresql://promptry:promptry@localhost:5432/promptry_test
+        run: pytest tests/test_postgres_parity.py -q
+
   lint:
     runs-on: ubuntu-latest
     steps:

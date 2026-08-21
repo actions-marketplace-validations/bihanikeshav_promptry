@@ -6,9 +6,20 @@ multi-instance / high-write deployments — selected with storage.mode="postgres
 
 Implementation: rather than maintain a second 2000-line copy of every query,
 PostgresStorage subclasses SQLiteStorage and overrides only the connection
-(psycopg, with a small bounded SQL-dialect translator) and schema DDL. All the
-query methods are inherited and run unchanged; the translator maps the handful
-of SQLite idioms they use to Postgres:
+(psycopg + a psycopg_pool connection pool, with a small bounded SQL-dialect
+translator) and schema DDL. All the query methods are inherited and run
+unchanged; the translator maps the handful of SQLite idioms they use to Postgres.
+
+Concurrency: the inherited code wraps every DB access in ``with self._lock:``.
+For SQLite that lock serializes access onto the one file connection; for Postgres
+the same ``with`` block is instead a per-thread *connection scope* (see
+_ConnScope) that checks a connection out of the pool for the operation's
+duration. So N threads run on N pooled connections concurrently — a real scale
+tier, not a serialized one — while a single operation's statements still share
+one connection (and, where needed, one transaction). Pool size is
+``PROMPTRY_POSTGRES_POOL_MAX`` (default 10).
+
+The translator maps these SQLite idioms to Postgres:
 
   ?  ->  %s                          (placeholder)
   literal %  ->  %%                  (so LIKE wildcards survive psycopg)
@@ -226,35 +237,141 @@ class _PgCursor:
         return iter(self._cur)
 
 
-class _PgConn:
-    def __init__(self, conn):
-        self._conn = conn
+class _BufferedCursor:
+    """A cursor whose rows/lastrowid/rowcount are already materialized, so the
+    borrowed connection can go straight back to the pool. Only used on the rare
+    standalone (no active scope) path."""
+
+    def __init__(self, rows, lastrowid, rowcount):
+        self._rows = list(rows or [])
+        self.lastrowid = lastrowid
+        self.rowcount = rowcount
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _ConnScope:
+    """Re-entrant per-thread connection scope. Entering checks a connection out
+    of the pool and binds it to the calling thread for the block's duration;
+    exiting returns it. Nesting is a no-op past the outermost scope. This is the
+    object the inherited SQLiteStorage code holds as ``self._lock`` and enters
+    with ``with self._lock:`` — but instead of a mutex that serializes all
+    threads onto one connection, each thread gets its own pooled connection, so
+    logical operations run concurrently (bounded by pool size) while a single
+    operation's statements still share one connection (and transaction)."""
+
+    def __init__(self, pool: "_PgPool"):
+        self._pool = pool
+
+    def __enter__(self):
+        p = self._pool
+        depth = getattr(p._local, "depth", 0)
+        if depth == 0:
+            p._local.conn = p._raw_pool.getconn()
+            p._local.depth = 1
+        else:
+            p._local.depth = depth + 1
+        return self
+
+    def __exit__(self, *exc):
+        p = self._pool
+        depth = p._local.depth
+        if depth == 1:
+            conn = p._local.conn
+            p._local.conn = None
+            p._local.depth = 0
+            # Return a clean connection to the pool. Autocommit means no open
+            # transaction to leak, but a mid-statement error could; roll back
+            # defensively before handing it back.
+            try:
+                if exc and exc[0] is not None:
+                    conn.rollback()
+            except Exception:
+                pass
+            p._raw_pool.putconn(conn)
+        else:
+            p._local.depth = depth - 1
+        return False
+
+
+class _PgPool:
+    """Pool-backed replacement for the single connection. Presents the minimal
+    surface the inherited code uses (execute/cursor/commit/rollback/raw/
+    executescript) and routes every call to the current thread's scoped
+    connection (see :class:`_ConnScope`)."""
+
+    def __init__(self, dsn: str, *, min_size: int = 1, max_size: int | None = None):
+        from psycopg_pool import ConnectionPool
+        if max_size is None:
+            try:
+                max_size = int(os.environ.get("PROMPTRY_POSTGRES_POOL_MAX", "10"))
+            except ValueError:
+                max_size = 10
+        max_size = max(1, max_size)
+        self._local = threading.local()
+        self._raw_pool = ConnectionPool(
+            dsn, min_size=min(min_size, max_size), max_size=max_size, open=True,
+            kwargs={"autocommit": True, "row_factory": _row_factory},
+        )
+
+    def _current(self):
+        return getattr(self._local, "conn", None)
 
     def execute(self, sql, params=()):
-        return _PgCursor(self._conn.cursor()).execute(sql, params)
+        conn = self._current()
+        if conn is not None:
+            return _PgCursor(conn.cursor()).execute(sql, params)
+        # Standalone (no active scope): borrow, run, buffer, return the conn.
+        with self._raw_pool.connection() as c:
+            cur = _PgCursor(c.cursor()).execute(sql, params)
+            rows = None
+            if cur._cur.description is not None:
+                rows = cur._cur.fetchall()
+            return _BufferedCursor(rows, cur.lastrowid, cur._cur.rowcount)
 
     def cursor(self):
-        return _PgCursor(self._conn.cursor())
+        conn = self._current()
+        if conn is None:  # pragma: no cover - all inherited access is scoped
+            raise RuntimeError("PostgresStorage cursor() needs an active scope")
+        return _PgCursor(conn.cursor())
 
     def commit(self):
-        self._conn.commit()
+        pass  # autocommit — each statement is already durable
 
     def rollback(self):
-        self._conn.rollback()
-
-    def close(self):
-        self._conn.close()
+        conn = self._current()
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
     def raw(self, sql, params=()):
-        """Run PG-native SQL without dialect translation (for schema setup)."""
-        cur = self._conn.cursor()
-        cur.execute(sql, params)
-        return cur
+        """Run PG-native SQL without dialect translation (schema setup)."""
+        conn = self._current()
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return cur
+        with self._raw_pool.connection() as c:
+            cur = c.cursor()
+            cur.execute(sql, params)
+            rows = cur.fetchall() if cur.description is not None else None
+            return _BufferedCursor(rows, None, cur.rowcount)
 
     def executescript(self, sql):
         for stmt in (x for x in sql.split(";") if x.strip()):
-            self._conn.cursor().execute(_translate(stmt)[0])
-        self._conn.commit()
+            self.execute(_translate(stmt)[0])
+
+    def close(self):
+        self._raw_pool.close()
 
 
 class PostgresStorage(SQLiteStorage):
@@ -264,28 +381,18 @@ class PostgresStorage(SQLiteStorage):
             raise ValueError(
                 "PostgresStorage needs a DSN (PROMPTRY_POSTGRES_DSN or [storage] endpoint)")
         self._db_path = "postgres"  # health endpoint reads this
-        self._lock = threading.Lock()
         self._conn = self._connect()
+        # The inherited code guards every DB access with ``with self._lock:``.
+        # For Postgres that block is not a mutex but a per-thread connection
+        # scope, so N threads run concurrently on N pooled connections.
+        self._lock = _ConnScope(self._conn)
         self._init_schema()
-        # Be honest about what this tier currently is: a correctness-first ALPHA
-        # that uses ONE shared connection behind a global lock, so every query is
-        # serialized. It gives durability/multi-instance-schema, not concurrency
-        # — it is not yet faster than SQLite under load. Connection pooling is
-        # tracked separately; until it lands, don't advertise a scale win.
-        import logging
-        logging.getLogger("promptry").warning(
-            "Postgres storage is ALPHA and currently single-connection "
-            "(serialized); it provides durability, not concurrency. Do not "
-            "expect a throughput gain over SQLite yet."
-        )
 
     def _connect(self):
-        import psycopg
-        conn = psycopg.connect(self._dsn, autocommit=True, row_factory=_row_factory)
-        return _PgConn(conn)
+        return _PgPool(self._dsn)
 
     def _init_schema(self):
-        # These statements are already PG-native — run them raw (no translation).
+        # PG-native DDL — run raw (no translation), inside one scoped connection.
         with self._lock:
             for stmt in _SCHEMA:
                 self._conn.raw(stmt)
@@ -303,15 +410,15 @@ class PostgresStorage(SQLiteStorage):
         self, *, results, suite_name, prompt_name=None, prompt_version=None,
         model_version=None, overall_pass=True, overall_score=None,
     ) -> int:
-        """Postgres override for atomicity. The shared connection runs in
-        autocommit mode (so reads don't leave idle-in-transaction snapshots),
-        which makes the inherited commit()/rollback() no-ops — a mid-write
-        failure would leave a committed run row with partial/no results. Run
-        both inserts inside one explicit psycopg transaction instead, so the
-        run and all its result rows land together or not at all."""
+        """Atomicity override. Connections run autocommit (so reads don't leave
+        idle-in-transaction snapshots), which makes the inherited commit()/
+        rollback() no-ops — a mid-write failure would otherwise leave a committed
+        run row with partial results. Wrap both inserts in one explicit psycopg
+        transaction on this thread's scoped connection, so the run and all its
+        result rows land together or not at all."""
         with self._lock:
-            raw = self._conn._conn  # underlying psycopg connection
-            with raw.transaction():
+            conn = self._conn._current()  # this thread's pooled connection
+            with conn.transaction():
                 cur = self._conn.execute(
                     "INSERT INTO eval_runs (suite_name, prompt_name, prompt_version, "
                     "model_version, overall_pass, overall_score) VALUES (?, ?, ?, ?, ?, ?)",
