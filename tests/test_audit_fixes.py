@@ -62,7 +62,9 @@ def test_levenshtein_caps_huge_input_and_flags_truncation():
     start = time.perf_counter()
     with run_context() as results:
         assert_levenshtein(big, other, min_ratio=0.0)
-    assert (time.perf_counter() - start) < 5.0  # would hang without the cap
+    # Without the cap this is billions of cells (hangs); capped it's bounded.
+    # Generous ceiling so a slow CI runner doesn't flake.
+    assert (time.perf_counter() - start) < 15.0
     assert results[0].details["truncated"] is True
 
 

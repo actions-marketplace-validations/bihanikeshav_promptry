@@ -168,6 +168,20 @@ class TestInvocationTypedColumns:
                 output_text TEXT,
                 request_id TEXT
             );
+            -- eval_runs + feedback also exist by this schema version (migrations
+            -- 1 and 5); later index migrations reference them, so a realistic
+            -- pre-typed DB must include them.
+            CREATE TABLE eval_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                suite_name TEXT NOT NULL, prompt_name TEXT, prompt_version INTEGER,
+                model_version TEXT, timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                overall_pass INTEGER NOT NULL DEFAULT 1, overall_score REAL
+            );
+            CREATE TABLE feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT, prompt_name TEXT, rating REAL, comment TEXT,
+                source TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
             """
         )
         # Pre-apply every migration up to (but excluding) the typed-columns
@@ -250,6 +264,20 @@ class TestInvocationTypedColumns:
                 input_text TEXT,
                 output_text TEXT,
                 request_id TEXT
+            );
+            -- eval_runs + feedback also exist by this schema version (migrations
+            -- 1 and 5); later index migrations reference them, so a realistic
+            -- pre-typed DB must include them.
+            CREATE TABLE eval_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                suite_name TEXT NOT NULL, prompt_name TEXT, prompt_version INTEGER,
+                model_version TEXT, timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                overall_pass INTEGER NOT NULL DEFAULT 1, overall_score REAL
+            );
+            CREATE TABLE feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT, prompt_name TEXT, rating REAL, comment TEXT,
+                source TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
             """
         )

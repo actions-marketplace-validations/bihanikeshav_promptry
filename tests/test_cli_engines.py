@@ -36,7 +36,7 @@ class TestLintCLI:
     def test_lint_missing_target_fails(self):
         result = runner.invoke(app, ["lint"])
         assert result.exit_code == 1
-        assert "NAME or --file" in result.output
+        assert "NAME, --file, or --all" in result.output
 
     def test_lint_saved_prompt_no_issues(self):
         runner.invoke(app, ["prompt", "save", "--name", "clean"], input="Please answer in valid JSON only.")

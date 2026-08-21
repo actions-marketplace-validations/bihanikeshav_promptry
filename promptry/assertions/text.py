@@ -126,7 +126,7 @@ def assert_levenshtein(
     # The DP is O(len(actual)*len(expected)); an un-truncated multi-KB LLM output
     # would turn into a billion-cell matrix that hangs the whole suite. Cap each
     # side (Levenshtein is meant for short reference strings anyway) and flag it.
-    _MAX_LEV_LEN = 4000
+    _MAX_LEV_LEN = 2000
     truncated = len(actual) > _MAX_LEV_LEN or len(expected) > _MAX_LEV_LEN
     if truncated:
         actual = actual[:_MAX_LEV_LEN]
