@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import { SideNav } from "./SideNav";
 import { CommandK } from "./CommandK";
 import { getSuites, getPrompts } from "../api/client";
 import type { SuiteSummary, PromptSummary } from "../api/types";
+import { maybeAutoTour } from "../tour";
 
 export interface LayoutContext {
   suites: SuiteSummary[];
@@ -16,11 +17,18 @@ export default function Layout() {
   const [prompts, setPrompts] = useState<PromptSummary[]>([]);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [nonce, setNonce] = useState(0);
+  const location = useLocation();
 
   useEffect(() => {
     getSuites().then(setSuites).catch(() => setSuites([]));
     getPrompts().then(setPrompts).catch(() => setPrompts([]));
   }, [nonce]);
+
+  // First-visit walkthrough: fire once the landing (Overview) route is mounted,
+  // so the tour's content + sidebar anchors exist. Guards on localStorage inside.
+  useEffect(() => {
+    if (location.pathname === "/") maybeAutoTour();
+  }, [location.pathname]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -50,6 +58,7 @@ export default function Layout() {
       />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <main
+          data-tour="content"
           style={{
             flex: 1,
             maxWidth: 1400,

@@ -1,8 +1,9 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { Wordmark } from "./ui";
 import { backendHost, getAuthStatus, getCostData, getMe, logout, type Me } from "../api/client";
 import type { CostResponse } from "../api/types";
+import { startTour } from "../tour";
 
 const ADMIN_ITEMS: NavItem[] = [
   {
@@ -62,7 +63,7 @@ function WorkspaceStats({ counters }: { counters: SideNavCounters }) {
     </div>
   );
   return (
-    <div style={{ marginTop: "auto", padding: "10px 12px 8px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 4, fontSize: 10.5 }}>
+    <div data-tour="stats" style={{ marginTop: "auto", padding: "10px 12px 8px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 4, fontSize: 10.5 }}>
       <div style={{ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--muted)", fontFamily: "var(--font-mono)", marginBottom: 1 }}>Today</div>
       <Row label="spend" value={s ? "$" + s.total_cost.toFixed(2) : "—"} />
       <Row label="calls" value={s ? s.total_calls.toLocaleString() : "—"} />
@@ -286,6 +287,7 @@ export function SideNav({
   counters: SideNavCounters;
 }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const version = useVersion();
   const [me, setMe] = useState<Me | null>(null);
   useEffect(() => {
@@ -321,6 +323,7 @@ export function SideNav({
       }}
     >
       <div
+        data-tour="brand"
         style={{
           padding: "4px 6px 10px",
           display: "flex",
@@ -339,6 +342,7 @@ export function SideNav({
       <button
         onClick={onCmdK}
         className="btn"
+        data-tour="search"
         style={{ justifyContent: "flex-start", gap: 10, margin: "4px 0 10px" }}
       >
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ color: "var(--secondary)" }}>
@@ -364,6 +368,7 @@ export function SideNav({
         Workspace
       </div>
 
+      <div data-tour="nav" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {items.map((item) => {
         const active =
           location.pathname === item.to ||
@@ -431,6 +436,23 @@ export function SideNav({
           </NavLink>
         );
       })}
+      </div>
+
+      <button
+        type="button"
+        className="btn"
+        onClick={() => {
+          navigate("/");
+          window.setTimeout(startTour, 250);
+        }}
+        style={{ justifyContent: "center", gap: 8, marginTop: 6, fontSize: 11.5, color: "var(--secondary)" }}
+      >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+          <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M6.3 6.2a1.8 1.8 0 1 1 2.3 1.9c-.5.2-.6.5-.6.9M8 11.2h.01" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+        </svg>
+        Take a tour
+      </button>
 
       {me?.kind === "user" && (
         <div
