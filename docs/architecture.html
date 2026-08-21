@@ -40,7 +40,7 @@
     <a class="brand" href="index.html">
       <span class="brand-mark"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1a1a1e"/><text x="0" y="27" class="logo-p">p</text><text x="15" y="27" class="logo-r">r</text></svg></span>
       <span class="brand-name"><b>prompt<span class="ry">ry</span></b></span>
-      <span class="ver">v1.0.4</span>
+      <span class="ver">v1.1.0</span>
     </a>
     <div class="nav-links" id="nav-links">
       <a href="index.html#features">Features</a>
@@ -75,8 +75,9 @@
     </h1>
     <p class="hero-sub" style="max-width: 62ch;">
       Promptry is a library with a CLI, a FastAPI dashboard, a GitHub Action, and an MCP server stapled to the same local store.
-      Your code calls <span class="mono">track()</span> and <span class="mono">track_invocation()</span>; everything else &mdash; evals, cost
-      drill-down, the live prompt CMS, budgets, traces &mdash; reads and writes the same SQLite file. No queues, no daemons, no cloud.
+      Your code calls <span class="mono">track()</span> and <span class="mono">track_invocation()</span> &mdash; or just swaps its OpenAI import for
+      <span class="mono">promptry.openai</span> and the ledger fills itself. Everything else &mdash; evals, cost
+      drill-down, the live prompt CMS, budgets, call traces &mdash; reads and writes the same SQLite file. No queues, no daemons, no cloud.
     </p>
   </div>
 </section>
@@ -102,7 +103,7 @@
     <div class="sec-head">
       <div class="sec-kicker">~/data-model</div>
       <h2 class="sec-title">Nine tables. That's it.</h2>
-      <p class="sec-lede">The entire product is a thin layer over this schema, applied through numbered migrations on a <span class="mono">schema_version</span> table. Open the database with <span class="mono">sqlite3</span> and every read the dashboard makes is reproducible on the command line.</p>
+      <p class="sec-lede">The entire core product is a thin layer over this schema, applied through numbered migrations on a <span class="mono">schema_version</span> table. Open the database with <span class="mono">sqlite3</span> and every read the dashboard makes is reproducible on the command line. Opt-in enterprise mode layers a few more tables on top (users, an append-only audit log); the local-first default stays exactly these nine.</p>
     </div>
     <div class="schema-grid">
 
@@ -200,7 +201,7 @@
           <li><span class="k">request_id</span><span class="t">text</span></li>
           <li><span class="k">created_at</span><span class="t">text</span></li>
         </ul>
-        <p class="dim" style="font-size: 12px; margin: 12px 0 0;">The per-call ledger written by <span class="mono">track_invocation()</span>. One row per LLM call &mdash; no dedup. Tokens, cost, latency and model live in <span class="mono">metadata</span>; request/response text is captured only when you opt in.</p>
+        <p class="dim" style="font-size: 12px; margin: 12px 0 0;">The per-call ledger written by <span class="mono">track_invocation()</span> &mdash; or automatically by the <span class="mono">promptry.openai</span> drop-in. One row per LLM call, no dedup. Tokens, cost, latency, model and an optional <span class="mono">trace_id</span> live in <span class="mono">metadata</span>; request/response text is captured only when you opt in. Call traces are a <span class="mono">GROUP BY trace_id</span> over this table &mdash; no separate trace store.</p>
       </div>
 
       <div class="schema-card">
@@ -227,7 +228,7 @@
           <li><span class="k">limit_usd</span><span class="t">real</span></li>
           <li><span class="k">created_at</span><span class="t">text</span></li>
         </ul>
-        <p class="dim" style="font-size: 12px; margin: 12px 0 0;">Spend caps. Current-period spend is summed from the invocations ledger on read; breaches surface in the dashboard.</p>
+        <p class="dim" style="font-size: 12px; margin: 12px 0 0;">Spend caps. Current-period spend is summed from the invocations ledger on read; breaches surface in the dashboard and fan out to Slack, PagerDuty, a webhook, or email when a channel is configured.</p>
       </div>
 
     </div>
@@ -256,7 +257,12 @@
       <div class="tl-step">
         <div class="tl-num">after · track_invocation()</div>
         <div class="tl-title">Per-call row appended</div>
-        <div class="tl-body">One row lands in <span class="mono">invocations</span> with tokens, model, latency. Cost is auto-computed from the rate table. No dedup &mdash; every call counts.</div>
+        <div class="tl-body">One row lands in <span class="mono">invocations</span> with tokens, model, latency. Cost is auto-computed from the rate table. No dedup &mdash; every call counts. The <span class="mono">promptry.openai</span> drop-in writes the same row for you.</div>
+      </div>
+      <div class="tl-step">
+        <div class="tl-num">trace · with trace()</div>
+        <div class="tl-title">Calls stamped with a trace id</div>
+        <div class="tl-body">Calls inside a <span class="mono">with trace("agent")</span> block share a <span class="mono">trace_id</span>. The dashboard groups them into a per-step cost waterfall &mdash; a query, not a new store.</div>
       </div>
       <div class="tl-step">
         <div class="tl-num">run · suite starts</div>
@@ -291,7 +297,7 @@
       <div class="tl-step">
         <div class="tl-num">budget · spend</div>
         <div class="tl-title">Caps &amp; coverage</div>
-        <div class="tl-body">Budget status sums spend from the ledger per period; the coverage check flags any model with no rate (silently $0).</div>
+        <div class="tl-body">Budget status sums spend from the ledger per period; a breach fires a configured alert channel. The coverage check flags any model with no rate (silently $0).</div>
       </div>
       <div class="tl-step">
         <div class="tl-num">debug · bisect</div>
@@ -329,12 +335,20 @@
         <div class="qa-a"><span class="mono">track()</span> versions a prompt's <em>content</em> and dedups by hash &mdash; the right shape for a registry. But a cost dashboard needs every call, even byte-identical ones, so <span class="mono">track_invocation()</span> appends to a separate <span class="mono">invocations</span> table with no dedup. Mixing the two would either double-count templates or silently drop repeat calls. The CMS template lives in <span class="mono">prompts</span>; the per-call payload and telemetry live in <span class="mono">invocations</span>.</div>
       </div>
       <div class="qa-item">
+        <div class="qa-q">Why a drop-in OpenAI client?</div>
+        <div class="qa-a">The fastest capture is the one you don't have to write. <span class="mono">from promptry.openai import OpenAI</span> subclasses the real client and records every <span class="mono">chat</span>, <span class="mono">responses</span>, and <span class="mono">embeddings</span> call &mdash; streaming and failures included &mdash; then delegates everything else through <span class="mono">__getattr__</span>. It writes the same <span class="mono">invocations</span> row as a hand-rolled <span class="mono">track_invocation()</span>, so nothing downstream knows the difference. Not on the OpenAI SDK? The manual call still works from any provider.</div>
+      </div>
+      <div class="qa-item">
         <div class="qa-q">Why a live prompt CMS?</div>
         <div class="qa-a"><span class="mono">render_prompt()</span> serves a dashboard-edited <span class="mono">$placeholder</span> template (cached ~60s), falling back to the in-code default on any miss &mdash; a bad edit can't crash a request. Environment tags gate the rollout: edit freely, then promote a version to <span class="mono">prod</span> when it's ready. <span class="mono">string.Template</span> is used over <span class="mono">str.format</span> so literal braces in JSON examples never break substitution.</div>
       </div>
       <div class="qa-item">
         <div class="qa-q">Why local-first?</div>
         <div class="qa-a">Prompts leak business logic. Suites leak user data. Shipping any of it to a third-party vendor is a legal review you shouldn't have to ask for. Remote mode is opt-in and dual-writes, so local is still the source of truth.</div>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">Why offer Postgres if SQLite is the point?</div>
+        <div class="qa-a">SQLite on one file is the tested default and enough for a laptop, CI, and most single-host deployments. When several processes or machines need one shared backend, <span class="mono">[storage] mode = "postgres"</span> points the whole store at a PostgreSQL server &mdash; same schema, same queries, same dashboard, no code changes. It's a thin dialect translation over the identical storage layer, and it stays alpha and opt-in: you reach for it only when a shared server is the actual requirement.</div>
       </div>
       <div class="qa-item">
         <div class="qa-q">Why no daemon?</div>
@@ -392,7 +406,7 @@
     </div>
     <div class="foot-bottom">
       <span>MIT License · © 2026 Keshav</span>
-      <span class="ver">v1.0.4</span>
+      <span class="ver">v1.1.0</span>
     </div>
   </div>
 </footer>

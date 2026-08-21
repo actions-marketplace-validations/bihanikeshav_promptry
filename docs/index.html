@@ -34,7 +34,7 @@
     <a class="brand" href="index.html">
       <span class="brand-mark"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1a1a1e"/><text x="0" y="27" class="logo-p">p</text><text x="15" y="27" class="logo-r">r</text></svg></span>
       <span class="brand-name"><b>prompt<span class="ry">ry</span></b></span>
-      <span class="ver">v1.0.4</span>
+      <span class="ver">v1.1.0</span>
     </a>
     <div class="nav-links" id="nav-links">
       <a href="#features">Features</a>
@@ -64,10 +64,10 @@
 <section class="hero">
   <div class="shell hero-grid">
     <div>
-      <span class="dateline">~/promptry<span class="sep">·</span>released July 2026<span class="sep">·</span><a id="release-link" href="https://github.com/bihanikeshav/promptry/releases/latest">v1.0.4</a></span>
+      <span class="dateline">~/promptry<span class="sep">·</span>released August 2026<span class="sep">·</span><a id="release-link" href="https://github.com/bihanikeshav/promptry/releases/latest">v1.1.0</a></span>
       <h1 class="h1">Catch prompt regressions <em>before</em> your users do.</h1>
       <p class="hero-sub">
-        Python eval suites that version every prompt, track the cost of every call, and catch drift with statistical tests. Edit prompts live, capture traces, set budgets. One SQLite file on your laptop, no account required.
+        Change one import and every model call is logged — cost, tokens, latency. Python eval suites version every prompt and catch drift with statistical tests. Edit prompts live, group calls into cost-attributed traces, set budgets with alerts. One SQLite file on your laptop, no account required.
       </p>
 
       <div class="install-stack">
@@ -121,12 +121,14 @@
       </div>
       <div class="term-body">
         <div class="term-pane" data-pane="track">
-          <div><span class="t-kw">from</span> promptry <span class="t-kw">import</span> track, suite, assert_semantic</div>
+          <div><span class="t-dim"># change one import — every call is logged</span></div>
+          <div><span class="t-kw">from</span> promptry.openai <span class="t-kw">import</span> OpenAI</div>
           <div>&nbsp;</div>
-          <div>prompt = <span class="t-fn">track</span>(<span class="t-str">"You are a helpful assistant..."</span>, <span class="t-str">"rag-qa"</span>)</div>
-          <div>response = llm.chat(system=prompt, ...)</div>
+          <div>client = <span class="t-fn">OpenAI</span>()</div>
+          <div>client.chat.completions.<span class="t-fn">create</span>(model=<span class="t-str">"gpt-4o-mini"</span>, messages=[...])</div>
+          <div><span class="t-dim">&nbsp;&nbsp;# ↳ cost, tokens, latency, name — recorded</span></div>
           <div>&nbsp;</div>
-          <div><span class="t-dim"># regression suite</span></div>
+          <div><span class="t-dim"># then version prompts + guard them with a suite</span></div>
           <div><span class="t-accent">@suite</span>(<span class="t-str">"rag-regression"</span>)</div>
           <div><span class="t-kw">def</span> <span class="t-fn">test_quality</span>():</div>
           <div>&nbsp;&nbsp;&nbsp;&nbsp;response = my_pipeline(<span class="t-str">"What is photosynthesis?"</span>)</div>
@@ -177,6 +179,11 @@
     </div>
     <div class="caps-diff" role="list">
       <div class="diff-hunk" role="listitem">
+        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Zero-config capture</h3></div>
+        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Bolt a telemetry wrapper around every call site before you see a single number.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Swap <code>from openai import OpenAI</code> for <code>from promptry.openai import OpenAI</code> — cost, tokens, and latency, streaming and failures included. Same idea in JS via <code>wrapOpenAI()</code>.</span></div>
+      </div>
+      <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Prompt versioning</h3></div>
         <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Tweak the prompt, ship it, forget which version is live.</span></div>
         <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Every <code>track()</code> call is content-hashed. Diff any two versions.</span></div>
@@ -204,12 +211,12 @@
       <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Cost tracking</h3></div>
         <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">Bill spikes. Which prompt? Which model? Nobody knows.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Module → prompt → call drill-down, plus daily/monthly budget caps with breach alerts.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Module → prompt → call drill-down, plus daily/monthly budget caps that alert to Slack, PagerDuty, or a webhook on breach.</span></div>
       </div>
       <div class="diff-hunk" role="listitem">
-        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Trace capture + feedback</h3></div>
-        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">A user thumbs-down a bad answer and it vanishes into a log file.</span></div>
-        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Opt-in, sampled request/response capture. Ratings ingest from your app via API.</span></div>
+        <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>Call traces + feedback</h3></div>
+        <div class="diff-row diff-del"><span class="diff-mark">-</span><span class="diff-text">A multi-step agent burns tokens and you can't tell which step; a thumbs-down vanishes into a log file.</span></div>
+        <div class="diff-row diff-add"><span class="diff-mark">+</span><span class="diff-text">Wrap a run in <code>trace()</code> for a per-step cost waterfall. Opt-in, sampled request/response capture. Ratings ingest from your app via API.</span></div>
       </div>
       <div class="diff-hunk" role="listitem">
         <div class="diff-head"><h3 class="hs-title"><span class="hs-hash">#</span>CI + GitHub Action</h3></div>
@@ -233,8 +240,8 @@
         <button class="step on" data-step="0" data-view="prompts" data-side="3">
           <div class="step-num">1</div>
           <div>
-            <div class="step-title">Wrap prompts with <code>track()</code></div>
-            <div class="step-body">One line. <code>track()</code> hashes the prompt, saves the version, and returns the string. Your pipeline doesn't notice.</div>
+            <div class="step-title">Drop in the client, version your prompts</div>
+            <div class="step-body">Swap the OpenAI import and every call is logged automatically. <code>track()</code> hashes each prompt, saves the version, and returns the string — your pipeline doesn't notice.</div>
           </div>
           <div class="step-meta">30s</div>
           <span class="step-progress" aria-hidden="true"></span>
@@ -550,7 +557,7 @@
     </div>
     <div class="foot-bottom">
       <span>MIT License · © 2026 Keshav</span>
-      <span class="ver">v1.0.4</span>
+      <span class="ver">v1.1.0</span>
     </div>
   </div>
 </footer>
