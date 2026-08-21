@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased
+
+Audit-driven correctness/security hardening across every subsystem, plus a few
+sharp new features.
+
+**New**
+- **Smart prompt linter** (`promptry lint`, no LLM): flags prefix-cache-busting
+  variable placement (with a nudge to move inputs to the end), secrets pasted
+  into a prompt template, un-delimited untrusted input (injection risk), and
+  duplicated instruction lines. `promptry lint --all` lints the whole registry
+  for CI.
+- **`promptry ci`** — one command, one exit code: runs every eval suite in a
+  module and lints the registry. Deterministic assertions need no API keys.
+- **`promptry env`** — lists every `PROMPTRY_*` variable, what it does, whether
+  it's set (secrets masked), and the config precedence chain.
+- **Playground runs are persisted** to the invocations ledger (tagged
+  `source=playground`) — experiments survive a tab close and show up in cost.
+
+**Fixed (correctness)**
+- Empty/smoke suites stored `overall_score=0.0`, which read as a regression in
+  the drift series — now tracks the pass verdict.
+- `compare_with_baseline` only compared 3 legacy assertion types; regressions on
+  every newer type (g_eval, faithfulness, grounded, tool-use, contains, …) were
+  silently ignored. Now compares all types present.
+- `bisect_regression` returned the first-ever pass→fail transition (stale); now
+  bisects the current failing streak and reports "no active regression" when
+  passing.
+- `assert_levenshtein` unbounded DP could hang on long output (capped);
+  `assert_matches` caps untrusted subject length; the LLM-judge parser no longer
+  raises `AttributeError` when a judge returns `None`.
+- Streamed tool/function calls were recorded as empty output in the OpenAI
+  drop-in; Responses-API streaming init failures weren't recorded; litellm
+  under-billed Anthropic cache-write tokens. All fixed.
+- `RemoteStorage.save_prompt` dropped the `force` kwarg (crashed dashboard edits
+  in remote mode); the async writer now retries transient Postgres errors too;
+  `PostgresStorage.save_eval_run_atomic` runs in a real transaction (autocommit
+  made it non-atomic).
+
+**Fixed (security / multi-user)**
+- Login brute-force lockout was bypassable via spoofed `X-Forwarded-For`; now
+  only trusted behind a configured proxy (`PROMPTRY_TRUST_PROXY`).
+- Login timing side-channel (user enumeration) closed with a constant-time path.
+- OIDC post-login `next` allowed `//evil.com` open redirects — rejected.
+- `GET /api/votes/analyze` ran a paid judge with no role gate — now editor-only;
+  budget/cost inputs validated.
+
+**Scale**
+- Postgres: transactional eval-run writes, composite indexes matching the hot
+  read paths. SQLite: `synchronous=NORMAL` (safe under WAL) + a 64MB page cache
+  for capture-heavy throughput; matching composite indexes (migration 12).
+
 ## 1.1.0 (2026-08-21)
 
 - **OpenAI drop-in capture (Python + JS at parity):** `from promptry.openai

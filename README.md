@@ -93,6 +93,8 @@ telling you the exact `pip install` to run — it never fails with a bare
 | **Environment promotion** | dev → staging → prod tags gate every edit before it reaches users. Promote a version, roll one back. |
 | **YAML or Python suites** | Declarative `evals.yaml` is the no-code default; `@suite` decorators are the power path for custom pipelines and judges, with full IDE/debugger support. Both are first-class and run through the same CLI. Scaffold either with `promptry new suite`, or build one in the dashboard. |
 | **Deterministic assertions** | Semantic, schema, JSON, regex, grounding, tool-use, exact match, Levenshtein, ROUGE-L, embedding distance. Zero API calls at CI time. |
+| **Prompt linter** | `promptry lint` (no LLM) flags prefix-cache-busting variable placement, secrets pasted into a template, un-delimited untrusted input (injection risk), and duplicated instructions. `--all` lints the whole registry. |
+| **One-command CI** | `promptry ci` runs every suite + lints the registry with one exit code. Deterministic assertions need no API keys and run offline in seconds. |
 | **LLM-as-judge** | Opt-in, not default. Auto-configures from `[judge] model` in `promptry.toml`, or set your own callable via `set_judge()`. |
 | **Drift detection** | Mann-Whitney U on a rolling window with real p-values — on eval scores *and* on live production telemetry (cost, latency, output length, rating). |
 | **Regression diff** | Tells you *what* changed — prompt version, model, or data — not just that it broke. |
