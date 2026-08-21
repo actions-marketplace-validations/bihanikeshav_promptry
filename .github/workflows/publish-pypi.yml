@@ -36,7 +36,7 @@ jobs:
       - name: Generate SBOM (CycloneDX)
         run: |
           pip install .
-          cyclonedx-py environment --output-format JSON --outfile sbom.cdx.json
+          cyclonedx-py environment --output-format JSON --output-file sbom.cdx.json
 
       - name: Sign the distributions (Sigstore, keyless)
         uses: sigstore/gh-action-sigstore-python@v3.0.0
