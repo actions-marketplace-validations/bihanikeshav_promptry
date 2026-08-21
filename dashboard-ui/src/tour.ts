@@ -28,15 +28,6 @@ function buildSteps(): DriveStep[] {
       },
     },
     {
-      element: '[data-tour="search"]',
-      popover: {
-        title: "Search — ⌘K",
-        description: "Fuzzy-find any suite, prompt, or page. Press <span class=\"pt-kbd\">⌘K</span> from anywhere.",
-        side: "right",
-        align: "start",
-      },
-    },
-    {
       // Highlight the whole content area, not just the nav item, so this one step
       // explains the Overview tab *and* what it actually shows.
       element: '[data-tour="content"]',
