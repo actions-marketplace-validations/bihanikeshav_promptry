@@ -8,12 +8,19 @@ multi-user mode.
 """
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from promptry.dashboard import auth as authlib
+
+# Serialize admin-count-sensitive mutations (bootstrap-first-admin, demote/
+# deactivate/delete the last admin) so two concurrent requests can't both pass
+# a count check and leave zero admins / two bootstrap admins. Process-wide;
+# a multi-instance Postgres deployment would want a DB advisory lock too.
+_admin_guard = threading.Lock()
 
 router = APIRouter()
 
@@ -87,19 +94,20 @@ def create_user(body: CreateUser, request: Request):
     if body.role not in authlib.ROLES:
         raise HTTPException(422, detail=f"role must be one of {authlib.ROLES}")
 
-    bootstrap = storage.count_users() == 0
-    role = "admin" if bootstrap else body.role
-    if not bootstrap and not body.password:
-        # Non-bootstrap local accounts need a password (OIDC users are created
-        # via the OIDC callback, not here).
-        raise HTTPException(422, detail="password required")
+    with _admin_guard:
+        bootstrap = storage.count_users() == 0
+        role = "admin" if bootstrap else body.role
+        if not bootstrap and not body.password:
+            # Non-bootstrap local accounts need a password (OIDC users are
+            # created via the OIDC callback, not here).
+            raise HTTPException(422, detail="password required")
 
-    pw_hash = authlib.hash_password(body.password) if body.password else None
-    if storage.get_user_by_email(body.email):
-        raise HTTPException(409, detail="email already exists")
+        pw_hash = authlib.hash_password(body.password) if body.password else None
+        if storage.get_user_by_email(body.email):
+            raise HTTPException(409, detail="email already exists")
 
-    user = storage.create_user(str(body.email), password_hash=pw_hash,
-                               name=body.name, role=role)
+        user = storage.create_user(str(body.email), password_hash=pw_hash,
+                                   name=body.name, role=role)
     authlib.invalidate_multiuser_cache()
     _audit(request, actor, "user.create", target=user["id"],
            detail={"email": user["email"], "role": role,
@@ -122,11 +130,11 @@ def update_user(user_id: int, body: UpdateUser, request: Request,
     demoting = (body.role is not None and body.role != "admin"
                 and target["role"] == "admin")
     deactivating = body.is_active is False and target["role"] == "admin"
-    if (demoting or deactivating) and _active_admin_count(storage) <= 1:
-        raise HTTPException(400, detail="cannot remove the last active admin")
-
-    storage.update_user(user_id, role=body.role, is_active=body.is_active,
-                        name=body.name)
+    with _admin_guard:
+        if (demoting or deactivating) and _active_admin_count(storage) <= 1:
+            raise HTTPException(400, detail="cannot remove the last active admin")
+        storage.update_user(user_id, role=body.role, is_active=body.is_active,
+                            name=body.name)
     _audit(request, actor, "user.update", target=user_id,
            detail=body.model_dump(exclude_none=True))
     updated = storage.get_user_by_id(user_id)
@@ -155,9 +163,10 @@ def delete_user(user_id: int, request: Request,
     target = storage.get_user_by_id(user_id)
     if not target:
         raise HTTPException(404, detail="user not found")
-    if target["role"] == "admin" and _active_admin_count(storage) <= 1:
-        raise HTTPException(400, detail="cannot delete the last active admin")
-    storage.delete_user(user_id)
+    with _admin_guard:
+        if target["role"] == "admin" and _active_admin_count(storage) <= 1:
+            raise HTTPException(400, detail="cannot delete the last active admin")
+        storage.delete_user(user_id)
     authlib.invalidate_multiuser_cache()
     _audit(request, actor, "user.delete", target=user_id,
            detail={"email": target["email"]})

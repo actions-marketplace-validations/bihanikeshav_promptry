@@ -275,3 +275,20 @@ class TestTokenMode:
         # Bearer token -> admin service actor
         r = client.get("/api/users", headers={"Authorization": "Bearer sekret-token"})
         assert r.status_code == 200
+
+
+class TestCostRouteRoleGate:
+    def test_viewer_cannot_run_paid_vote_analyze(self, client):
+        # bootstrap admin, then create a viewer and confirm the paid judge route
+        # is editor-gated (regression for the /api/votes/analyze fix).
+        admin_email, admin_pw = _bootstrap_admin(client)
+        _login(client, admin_email, admin_pw)
+        r = client.post("/api/users", json={"email": "v@b.com",
+                                            "password": "viewer-pass-1",
+                                            "role": "viewer"})
+        assert r.status_code == 200, r.text
+        authlib.invalidate_multiuser_cache()
+        client.cookies.clear()
+        _login(client, "v@b.com", "viewer-pass-1")
+        r = client.get("/api/votes/analyze", params={"name": "x"})
+        assert r.status_code == 403, r.text
