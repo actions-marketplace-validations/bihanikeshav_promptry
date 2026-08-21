@@ -14,7 +14,7 @@
   // Live version: source the published version from the GitHub releases API so
   // the docs never drift from what pip installs. Literals are only a fallback.
   (function () {
-    fetch('https://api.github.com/repos/bihanikeshav/promptry/releases/latest')
+    fetch('https://api.github.com/repos/promptry/promptry/releases/latest')
       .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
       .then(function (j) {
         var tag = String(j.tag_name || '').replace(/^v/, '');
@@ -58,7 +58,7 @@
         <svg class="moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
       </button>
       <a class="nav-demo" href="demo/"><span class="live-dot"></span>Live demo</a>
-      <a class="nav-cta" href="https://github.com/bihanikeshav/promptry">
+      <a class="nav-cta" href="https://github.com/promptry/promptry">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5A11.5 11.5 0 0 0 .5 12c0 5.08 3.29 9.39 7.86 10.92.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.38-3.88-1.38-.52-1.32-1.28-1.67-1.28-1.67-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.3-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.3-.52-1.46.1-3.04 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.18-1.49 3.15-1.18 3.15-1.18.62 1.58.23 2.74.11 3.04.74.81 1.19 1.84 1.19 3.1 0 4.44-2.7 5.4-5.27 5.68.42.36.78 1.07.78 2.16v3.2c0 .32.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z" /></svg>
         GitHub
       </a>
@@ -89,6 +89,7 @@
     <ul>
       <li><a href="#install">Installation</a></li>
       <li><a href="#track">Track your prompts</a></li>
+      <li><a href="#openai">OpenAI drop-in</a></li>
       <li><a href="#context">Track retrieval context</a></li>
       <li><a href="#suites">Write eval suites</a></li>
     </ul>
@@ -119,6 +120,7 @@
       <li><a href="#budgets">Budgets &amp; coverage</a></li>
       <li><a href="#cache">Cache awareness</a></li>
       <li><a href="#traces">Traces &amp; feedback</a></li>
+      <li><a href="#calltraces">Call traces</a></li>
     </ul>
 
     <h5>Analysis</h5>
@@ -167,7 +169,7 @@ $ pip install promptry
 # JavaScript / TypeScript: remote tracking only
 $ npm install promptry-js</code></pre>
 
-    <p>The Python install includes all runtime dependencies: semantic similarity, dashboard, litellm integration, and more.</p>
+    <p>The core install is deliberately small &mdash; CLI, registry, deterministic assertions, drift, cost tracking, dashboard, and MCP server. Heavier capabilities are opt-in extras: semantic similarity (<code>promptry[semantic]</code>), live-model / LLM-judge assertions (<code>promptry[llm]</code>), the Postgres backend (<code>promptry[postgres]</code>), or everything at once (<code>promptry[full]</code>). Calling a feature whose extra isn't installed raises a clear error naming the exact <code>pip install</code> to run.</p>
 
     <h2 id="track">Track your prompts</h2>
     <p>Add one line, don't change anything else:</p>
@@ -205,6 +207,28 @@ response = llm.chat(system=prompt, context=chunks, user=query)</code></pre>
 
 <pre><code>[tracking]
 context_sample_rate = 0.1</code></pre>
+
+    <h2 id="openai">OpenAI drop-in</h2>
+    <p>The fastest way to start capturing is to change one import. Promptry ships a wrapper that mirrors the official client, so nothing else in your code has to change:</p>
+
+<pre><code><span style="color: var(--accent-3)">from</span> promptry.openai <span style="color: var(--accent-3)">import</span> OpenAI   <span style="color: var(--ink-3)"># was: from openai import OpenAI</span>
+
+client = OpenAI()
+client.chat.completions.create(model=<span style="color: var(--accent-2)">"gpt-4o-mini"</span>, messages=[...])</code></pre>
+
+    <p>Every chat, responses, and embeddings call is recorded automatically: cost, tokens, the cached-token split, latency, model, and a name inferred from the call site. Streaming responses and failed calls are captured too. <code>AsyncOpenAI</code> works identically &mdash; same import swap, same behavior.</p>
+
+    <p>Three keyword options can be passed per call. They're stripped before the request reaches OpenAI, so the underlying API never sees them:</p>
+
+<pre><code>client.chat.completions.create(
+    model=<span style="color: var(--accent-2)">"gpt-4o-mini"</span>,
+    messages=[...],
+    promptry_task=<span style="color: var(--accent-2)">"rag.answer"</span>,      <span style="color: var(--ink-3)"># name the call instead of inferring it</span>
+    promptry_capture=<span style="color: var(--accent-3)">True</span>,           <span style="color: var(--ink-3)"># store request/response text</span>
+    promptry_sample_rate=<span style="color: var(--accent)">0.1</span>,        <span style="color: var(--ink-3)"># sample that text at 10%</span>
+)</code></pre>
+
+    <p>The wrapper writes the same <code>invocations</code> row as a manual <code>track_invocation()</code>, and delegates every other attribute to the real client, so nothing downstream changes. The JS equivalent is <code>wrapOpenAI(new OpenAI())</code> from <code>promptry-js/openai</code> &mdash; see the <a href="#js">JavaScript client</a> section.</p>
 
     <h2 id="suites">Write eval suites</h2>
     <p>A suite is a plain Python function, registered with <code>@suite</code>:</p>
@@ -258,7 +282,7 @@ system = render_prompt(<span style="color: var(--accent-2)">"rag.qa"</span>, DEF
 
     <p>If an env tag isn't set yet, <code>render_prompt(env=…)</code> falls back to the latest version. The flow: edit on <code>dev</code> → check it in the playground → promote to <code>prod</code> when it's ready → roll back by promoting an older version (a revert always sticks, even to byte-identical older content).</p>
 
-    <p class="dim" style="font-size: 12.5px;">Migrating a legacy prompt that gained hundreds of baked versions (template + interpolated data)? Move the template to <code>render_prompt</code> and the per-call data to <code>track_invocation</code> (below), then collapse the old churn from the dashboard (<code>POST /api/prompts/{name}/prune</code>). See the <a href="https://github.com/bihanikeshav/promptry/blob/main/docs/PROMPT_CMS_MIGRATION.md">migration guide</a>.</p>
+    <p class="dim" style="font-size: 12.5px;">Migrating a legacy prompt that gained hundreds of baked versions (template + interpolated data)? Move the template to <code>render_prompt</code> and the per-call data to <code>track_invocation</code> (below), then collapse the old churn from the dashboard (<code>POST /api/prompts/{name}/prune</code>). See the <a href="https://github.com/promptry/promptry/blob/main/docs/PROMPT_CMS_MIGRATION.md">migration guide</a>.</p>
 
     <h1 id="assertions" style="margin-top: 72px;">Assertions</h1>
     <p>Promptry ships a family of assertion primitives. Each one records its score, pass/fail, and details into <code>eval_results</code>, so the dashboard and the comparison engine see every check &mdash; not just the first failure.</p>
@@ -477,6 +501,11 @@ Missing: <span style="color: var(--danger)">llama-3.3-70b, mixtral-8x7b</span></
 
     <p>Fix it by adding a <code>[pricing.*]</code> override in <a href="#projectconfig"><code>.promptry/config.toml</code></a>, or pull current rates from litellm with <code>POST /api/cost/refresh-rates</code>.</p>
 
+    <p><strong>Alerting.</strong> A budget breach &mdash; and drift alerts &mdash; can fan out to notification channels instead of just highlighting in the UI: Slack or a generic webhook, PagerDuty, and email, plus an optional OpenTelemetry export. Channels are configured on the dashboard's <strong>Settings</strong> page, which can also fire a test alert so you can confirm delivery before a real breach.</p>
+
+<pre><code><span style="color: var(--ink-3)"># GET  /api/alerts/status — list configured channels</span>
+<span style="color: var(--ink-3)"># POST /api/alerts/test   — fire a test alert to every channel</span></code></pre>
+
     <h2 id="cache">Cache awareness</h2>
     <p>LLM providers each expose prompt caching differently. Promptry reads the cache usage fields that each provider reports, calculates the right cost, and shows the hit rate in <code>promptry cost-report</code> and the dashboard.</p>
 
@@ -508,6 +537,19 @@ Missing: <span style="color: var(--danger)">llama-3.3-70b, mixtral-8x7b</span></
     <p>The invocation list can then filter to low-rated calls (<code>min_rating</code>) or sort by cost, so you can find the expensive <em>and</em> the disliked ones first. Each row carries its latest rating; the invocation page shows the full feedback thread.</p>
 
     <p class="dim" style="font-size: 12.5px;">For an offline workflow &mdash; record real production (input, output) triples to an append-only JSONL file and replay them through your current pipeline in CI &mdash; see <code>promptry.capture</code> (<code>get_recorder()</code> / <code>replay_captures()</code>). It's separate from the SQLite ledger and never touches the network.</p>
+
+    <h2 id="calltraces">Call traces</h2>
+    <p>A multi-step agent makes several LLM calls per request. Wrap them in a <code>trace</code> to group them into one cost-attributed unit:</p>
+
+<pre><code><span style="color: var(--accent-3)">import</span> promptry
+
+<span style="color: var(--accent-3)">with</span> promptry.trace(<span style="color: var(--accent-2)">"checkout_agent"</span>):
+    client.chat.completions.create(...)   <span style="color: var(--ink-3)"># step 1</span>
+    client.chat.completions.create(...)   <span style="color: var(--ink-3)"># step 2</span></code></pre>
+
+    <p>Every call made inside the block shares a <code>trace_id</code>, stored in each invocation's <code>metadata</code>. The dashboard's <strong>Call traces</strong> page renders a per-step token/$ waterfall, so you can see exactly which step of the agent burned the tokens.</p>
+
+    <p>This is deliberately not a separate trace store or distributed tracing. A trace is just a <code>GROUP BY trace_id</code> over the existing <code>invocations</code> ledger &mdash; still one SQLite file, no extra infrastructure. The JS equivalent is <code>trace(name, async () =&gt; { … })</code> from <code>promptry-js</code>.</p>
 
     <h1 id="models" style="margin-top: 72px;">Model comparison</h1>
     <p>When you're evaluating a model upgrade, promptry compares the candidate against the full statistical distribution of your baseline model's history, not a single snapshot.</p>
@@ -661,6 +703,19 @@ mode = <span style="color: var(--accent-2)">"async"</span>    <span style="color
       <li><strong>off</strong> &mdash; no writes at all. Use this if you only manage prompts through the CLI.</li>
     </ul>
 
+    <p><strong>PostgreSQL (scale tier, alpha).</strong> When several processes or machines need one shared backend, point promptry at Postgres instead of a local file. Install the extra and select the mode:</p>
+
+<pre><code>$ pip install <span style="color: var(--accent-2)">'promptry[postgres]'</span></code></pre>
+
+<pre><code>[storage]
+mode = <span style="color: var(--accent-2)">"postgres"</span>
+<span style="color: var(--ink-3)"># DSN in the file…</span>
+<span style="color: var(--ink-3)"># endpoint = "postgresql://user:pass@host:5432/promptry"</span></code></pre>
+
+    <p>The DSN can live under <code>endpoint = "postgresql://…"</code> in <code>promptry.toml</code>, but the preferred form is the <code>PROMPTRY_POSTGRES_DSN</code> environment variable so the connection string stays out of a committed file. Tables auto-create on first connect.</p>
+
+    <p>It's a thin dialect translation over the same storage layer SQLite uses &mdash; same schema, same queries, same dashboard, no code changes. SQLite on one file stays the tested default; reach for Postgres only when a shared backend is actually needed.</p>
+
     <h1 id="watch" style="margin-top: 72px;">Watch mode</h1>
     <p>Like <code>pytest --watch</code> for prompts. <code>promptry watch</code> re-runs your suites every time a file in your eval module changes.</p>
 
@@ -688,7 +743,7 @@ promptry watch --debounce 300</code></pre>
       pull-requests: write
     steps:
       - <span style="color: var(--accent-3)">uses</span>: actions/checkout@v4
-      - <span style="color: var(--accent-3)">uses</span>: bihanikeshav/promptry@v1
+      - <span style="color: var(--accent-3)">uses</span>: promptry/promptry@v1
         <span style="color: var(--accent-3)">with</span>:
           suite: rag-regression
           module: evals
@@ -754,6 +809,21 @@ init({ endpoint: <span style="color: var(--accent-2)">'https://your-server.com/i
 <span style="color: var(--accent-3)">await</span> flush();</code></pre>
 
     <p>The JS client only ships events. All heavy lifting (evals, drift, comparison) stays in Python &mdash; both clients POST to the same endpoint, so all telemetry lands in the same place.</p>
+
+    <p>The same OpenAI capture and call-trace grouping as Python are available in JS. <code>wrapOpenAI</code> records every call automatically, and <code>trace</code> groups a multi-step agent under one <code>trace_id</code>:</p>
+
+<pre><code><span style="color: var(--accent-3)">import</span> { init, trace } <span style="color: var(--accent-3)">from</span> <span style="color: var(--accent-2)">'promptry-js'</span>;
+<span style="color: var(--accent-3)">import</span> { wrapOpenAI } <span style="color: var(--accent-3)">from</span> <span style="color: var(--accent-2)">'promptry-js/openai'</span>;
+<span style="color: var(--accent-3)">import</span> OpenAI <span style="color: var(--accent-3)">from</span> <span style="color: var(--accent-2)">'openai'</span>;
+
+init({ endpoint: <span style="color: var(--accent-2)">'https://your-server.com/ingest'</span> });
+<span style="color: var(--accent-3)">const</span> client = wrapOpenAI(<span style="color: var(--accent-3)">new</span> OpenAI());
+<span style="color: var(--accent-3)">await</span> trace(<span style="color: var(--accent-2)">'checkout_agent'</span>, <span style="color: var(--accent-3)">async</span> () =&gt; {
+  <span style="color: var(--accent-3)">await</span> client.chat.completions.create({ <span style="color: var(--ink-3)">/* step 1 */</span> });
+  <span style="color: var(--accent-3)">await</span> client.chat.completions.create({ <span style="color: var(--ink-3)">/* step 2 */</span> });
+});</code></pre>
+
+    <p><code>wrapOpenAI</code> is exported from the <code>promptry-js/openai</code> subpath, not the package root; <code>init</code>, <code>trace</code>, and <code>task</code> come from the root <code>promptry-js</code>.</p>
 
     <h1 id="cli" style="margin-top: 72px;">CLI reference</h1>
     <p>Every command supports <code>--help</code> for full usage.</p>
@@ -843,12 +913,12 @@ out = <span style="color: var(--accent)">2.0</span></code></pre>
     <p><strong>API keys never go in this file.</strong> They live in your environment (read by litellm); the Settings page only reports <em>which</em> providers have a key present, never the values. Edit it from the dashboard's <strong>Settings</strong> page (<code>GET</code>/<code>POST /api/config</code>) or by hand &mdash; pricing overrides are merged into the live rate table on save.</p>
 
     <h1 id="examples" style="margin-top: 72px;">Examples</h1>
-    <p>Check the <a href="https://github.com/bihanikeshav/promptry/tree/main/examples"><code>examples/</code></a> directory for working demos:</p>
+    <p>Check the <a href="https://github.com/promptry/promptry/tree/main/examples"><code>examples/</code></a> directory for working demos:</p>
 
     <ul>
-      <li><a href="https://github.com/bihanikeshav/promptry/blob/main/examples/basic_rag.py"><code>basic_rag.py</code></a> &mdash; self-contained RAG pipeline with tracking, eval suites, and safety testing. No API keys needed.</li>
-      <li><a href="https://github.com/bihanikeshav/promptry/blob/main/examples/llm_judge.py"><code>llm_judge.py</code></a> &mdash; wiring up <code>assert_llm</code> with OpenAI, Anthropic, or local models.</li>
-      <li><a href="https://github.com/bihanikeshav/promptry/blob/main/examples/assertion_pipeline.py"><code>assertion_pipeline.py</code></a> &mdash; chaining <code>assert_json_valid</code>, <code>assert_matches</code>, <code>assert_grounded</code>, and <code>check_all</code> into validation pipelines for document extraction.</li>
+      <li><a href="https://github.com/promptry/promptry/blob/main/examples/basic_rag.py"><code>basic_rag.py</code></a> &mdash; self-contained RAG pipeline with tracking, eval suites, and safety testing. No API keys needed.</li>
+      <li><a href="https://github.com/promptry/promptry/blob/main/examples/llm_judge.py"><code>llm_judge.py</code></a> &mdash; wiring up <code>assert_llm</code> with OpenAI, Anthropic, or local models.</li>
+      <li><a href="https://github.com/promptry/promptry/blob/main/examples/assertion_pipeline.py"><code>assertion_pipeline.py</code></a> &mdash; chaining <code>assert_json_valid</code>, <code>assert_matches</code>, <code>assert_grounded</code>, and <code>check_all</code> into validation pipelines for document extraction.</li>
     </ul>
 
 <pre><code>pip install -e .
@@ -911,18 +981,18 @@ promptry run doc-classify --module examples.assertion_pipeline</code></pre>
       <div>
         <h5>Resources</h5>
         <ul>
-          <li><a href="https://github.com/bihanikeshav/promptry/tree/main/examples">Examples</a></li>
+          <li><a href="https://github.com/promptry/promptry/tree/main/examples">Examples</a></li>
           <li><a href="https://pypi.org/project/promptry/">PyPI</a></li>
           <li><a href="https://www.npmjs.com/package/promptry-js">npm</a></li>
-          <li><a href="https://github.com/bihanikeshav/promptry/releases">Changelog</a></li>
+          <li><a href="https://github.com/promptry/promptry/releases">Changelog</a></li>
         </ul>
       </div>
       <div>
         <h5>Community</h5>
         <ul>
-          <li><a href="https://github.com/bihanikeshav/promptry">GitHub</a></li>
-          <li><a href="https://github.com/bihanikeshav/promptry/issues">Issues</a></li>
-          <li><a href="https://github.com/bihanikeshav/promptry/discussions">Discussions</a></li>
+          <li><a href="https://github.com/promptry/promptry">GitHub</a></li>
+          <li><a href="https://github.com/promptry/promptry/issues">Issues</a></li>
+          <li><a href="https://github.com/promptry/promptry/discussions">Discussions</a></li>
         </ul>
       </div>
     </div>
