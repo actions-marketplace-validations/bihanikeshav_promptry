@@ -58,6 +58,35 @@ jobs:
       - name: Lint
         run: ruff check promptry/
 
+  dashboard:
+    # Build the dashboard UI from source on every change. Both the shipped
+    # dashboard (promptry/dashboard/static) and the marketing demo (docs/demo)
+    # are the SAME dashboard-ui source compiled with/without DEMO=1 — building
+    # both here proves neither target has broken, so they can't silently diverge.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard-ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shipped dashboard
+        run: npm run build          # -> ../promptry/dashboard/static
+
+      - name: Build demo (DEMO=1)
+        run: npm run build:demo
+        env:
+          DEMO: "1"
+
   js:
     runs-on: ubuntu-latest
     defaults:

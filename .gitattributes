@@ -1,0 +1,10 @@
+# The shipped dashboard bundle is generated (Vite build of dashboard-ui). Keep
+# its bytes exactly as built — never apply EOL conversion — so a Windows checkout
+# can't corrupt the JS/CSS that gets packaged into the wheel, and so the bundle
+# stays byte-stable across machines.
+promptry/dashboard/static/** -text
+
+# Generated price feed: keep it stable, don't diff it as prose.
+prices.json -text
+promptry/data/prices.json -text
+docs/prices.json -text

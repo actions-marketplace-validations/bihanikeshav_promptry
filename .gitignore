@@ -43,3 +43,6 @@ mockdb/rag_lab/responses_cache.json
 
 # Claude Code local workspace (settings, worktrees, scratch)
 .claude/
+
+# Generated demo build — rebuilt from dashboard-ui by the Pages deploy (DEMO=1)
+/docs/demo/

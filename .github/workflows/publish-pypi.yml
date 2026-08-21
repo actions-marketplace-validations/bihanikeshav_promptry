@@ -17,6 +17,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard-ui/package-lock.json
+
+      # Build the dashboard UI from source into promptry/dashboard/static so the
+      # wheel/sdist always ships a frontend matching this exact commit — never a
+      # stale committed bundle. Same source the demo builds from (DEMO flag aside).
+      - name: Build dashboard UI
+        working-directory: dashboard-ui
+        run: |
+          npm ci
+          npm run build   # -> ../promptry/dashboard/static
+
       - name: Install build tools
         run: pip install build cyclonedx-bom
 
