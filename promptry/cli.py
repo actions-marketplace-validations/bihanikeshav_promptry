@@ -1688,6 +1688,63 @@ def env_cmd(
     console.print(f"\n[dim]Precedence:[/dim] {PRECEDENCE}")
 
 
+@app.command("ci")
+def ci_cmd(
+    module: str = typer.Option("evals", "--module", "-m", help="Module or YAML file with suite definitions."),
+    lint: bool = typer.Option(True, "--lint/--no-lint", help="Also lint the prompt registry (errors fail CI)."),
+):
+    """One command for CI: run every eval suite in MODULE and lint the prompt
+    registry, with a single exit code. Deterministic assertions need no API
+    keys and cost nothing — the whole gate can run offline in seconds.
+    """
+    import time as _t
+
+    from promptry.evaluator import list_suites
+    from promptry.runner import run_suite
+
+    _discover_suites(module, err=console)
+    suites = list_suites()
+
+    failed = 0
+    total_assertions = 0
+    start = _t.perf_counter()
+    for s in suites:
+        result = run_suite(s.name)
+        n = sum(len(t.assertions) for t in result.tests)
+        total_assertions += n
+        ok = result.overall_pass
+        failed += 0 if ok else 1
+        mark = "[green]PASS[/green]" if ok else "[red]FAIL[/red]"
+        console.print(f"  {mark} {s.name}  ({n} assertion(s), score {result.overall_score:.3f})")
+
+    linted = 0
+    lint_errors = 0
+    if lint:
+        from promptry.lint import lint_prompt
+        latest = {}
+        for rec in _get_registry().list():
+            cur = latest.get(rec.name)
+            if cur is None or rec.version > cur.version:
+                latest[rec.name] = rec
+        linted = len(latest)
+        for rec in latest.values():
+            for f in lint_prompt(rec.content):
+                if f["level"] == "error":
+                    lint_errors += 1
+                    console.print(f"  [red]lint[/red] {rec.name}: {f['message']}")
+
+    elapsed = _t.perf_counter() - start
+    console.print(
+        f"\n{len(suites)} suite(s), {total_assertions} assertion(s), "
+        f"{linted} prompt(s) linted · {elapsed:.2f}s · "
+        f"no API keys required for deterministic assertions"
+    )
+    if failed or lint_errors:
+        console.print(f"[red]CI FAILED[/red] — {failed} suite failure(s), {lint_errors} lint error(s).")
+        raise typer.Exit(1)
+    console.print("[green]CI PASSED[/green]")
+
+
 @app.command("cluster")
 def cluster_cmd(
     suite_name: str = typer.Argument(..., help="Suite to analyze."),
